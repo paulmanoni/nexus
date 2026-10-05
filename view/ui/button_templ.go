@@ -385,8 +385,9 @@ func buttonInner(p ButtonProps) templ.Component {
 		if templ_7745c5c3_Err != nil {
 			return templ_7745c5c3_Err
 		}
-		templ_7745c5c3_Rec.Open(templ_7745c5c3_Buffer)
-		templ_7745c5c3_Err = Icon("spinner").Render(ctx, templ_7745c5c3_Buffer)
+		if templ_7745c5c3_Rec.Guard(ctx, templ_7745c5c3_Buffer, "ui.buttonInner#1", nil) {
+			templ_7745c5c3_Err = Icon("spinner").Render(ctx, templ_7745c5c3_Buffer)
+		}
 		templ_7745c5c3_Rec.Close(templ_7745c5c3_Buffer)
 		if templ_7745c5c3_Err != nil {
 			return templ_7745c5c3_Err

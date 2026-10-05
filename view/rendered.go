@@ -38,6 +38,16 @@ type recorder struct {
 	out   *bytes.Buffer
 	mark  int        // where out's unrecorded tail starts
 	stack []*recNode // open frames and loops, innermost last
+
+	// A tracked render (assign.go) also records the page's spots — the
+	// parts of templates Guard opens — into table, and skips a spot of prev
+	// whose reads are not in changed.
+	track   *tracker
+	table   *spotTable
+	prev    *spotTable
+	changed uint64
+	again   map[uint64]bool // spots to render although unchanged
+	gen     uint64          // the page render this is, for the components it keeps
 }
 
 // recNode is a frame (comp false) or a loop (comp true) being recorded.
@@ -45,6 +55,20 @@ type recNode struct {
 	comp  bool
 	parts []recPart  // a frame's statics and dynamics, in order
 	items []*recNode // a loop's item frames
+
+	key    uint64 // its place on the page: its parent's key and its own
+	kids   int    // the frames and loops opened in it so far
+	reads  uint64 // the Assigns read in it, its children's included
+	taint  bool   // it can't be skipped: it made a signal, holds a shard, …
+	nested []uint64
+
+	guarded  bool         // a spot: Guard opened it
+	boundary bool         // a live component: its Assigns are its own
+	comps    []*component // the live components in it
+	label    string       // the spot's place in the template
+	kept     *spot        // the spot was skipped: its previous render stands
+	scope    *scope       // the component scope it ran in, and where its log was
+	logStart int
 }
 
 type recPart struct {
@@ -83,7 +107,13 @@ func (c Rec) S(w io.Writer, n int, s string) error {
 		return templruntime.WriteString(w, n, s)
 	}
 	c.r.flush()
-	c.r.top().parts = append(c.r.top().parts, recPart{static: true, text: s})
+	top := c.r.top()
+	if n := len(top.parts); n > 0 && top.parts[n-1].static {
+		// Nothing was written since the last static: an empty dynamic, so
+		// the frame's statics don't depend on what its values are.
+		top.parts = append(top.parts, recPart{})
+	}
+	top.parts = append(top.parts, recPart{static: true, text: s})
 	err := templruntime.WriteString(w, n, s)
 	_ = c.r.w.Flush()
 	c.r.mark = c.r.out.Len()
@@ -96,10 +126,53 @@ func (c Rec) Open(io.Writer) {
 		return
 	}
 	c.r.flush()
-	c.r.stack = append(c.r.stack, &recNode{})
+	c.r.push(&recNode{}, 'o')
 }
 
-// Close ends the frame Open started, as a dynamic of the frame around it.
+// Guard starts a spot: a nested frame, as Open does, that a tracked render
+// may skip. The compiler guards a part of a template that reads nothing of
+// the template's own variables — only what it reaches through recv, the
+// component's receiver (nil when it uses none), and ctx. When none of the
+// Assigns it read last time has changed, Guard reports false: the code is
+// not run, and Close keeps what the spot rendered before. label names the
+// spot in its file.
+func (c Rec) Guard(ctx context.Context, w io.Writer, label string, recv any) bool {
+	r := c.r
+	if r == nil {
+		return true
+	}
+	r.flush()
+	n := &recNode{guarded: r.table != nil, label: label}
+	n.key = spotKey(r.top().key, label)
+	r.stack = append(r.stack, n)
+	if !n.guarded {
+		return true
+	}
+	if (recv != nil && recv != r.track.page) || r.track.off != "" {
+		// Another value's method, or an untracked component: what it reads
+		// isn't tracked.
+		n.taint = true
+		return true
+	}
+	sc := scopeFrom(ctx)
+	if r.prev != nil {
+		if s := r.prev.spots[n.key]; s != nil && s.value != nil && !s.taint && s.label == label && s.reads&r.changed == 0 && !r.again[n.key] && clean(s.comps) {
+			n.kept, n.reads = s, s.reads
+			r.carry(s, n.key)
+			if sc != nil {
+				replay(sc, s.effects)
+			}
+			return false
+		}
+	}
+	if sc != nil {
+		n.scope, n.logStart = sc, len(sc.log)
+	}
+	return true
+}
+
+// Close ends the frame Open or Guard started, as a dynamic of the frame
+// around it.
 func (c Rec) Close(io.Writer) {
 	if c.r == nil || len(c.r.stack) < 2 || c.r.top().comp {
 		return
@@ -115,7 +188,7 @@ func (c Rec) ForStart(io.Writer) {
 		return
 	}
 	c.r.flush()
-	c.r.stack = append(c.r.stack, &recNode{comp: true})
+	c.r.push(&recNode{comp: true}, 'f')
 }
 
 func (c Rec) Item(io.Writer) {
@@ -123,8 +196,8 @@ func (c Rec) Item(io.Writer) {
 		return
 	}
 	c.r.endItem()
-	if c.r.top().comp {
-		c.r.stack = append(c.r.stack, &recNode{})
+	if loop := c.r.top(); loop.comp {
+		c.r.stack = append(c.r.stack, &recNode{key: mix(loop.key, uint64(len(loop.items)))})
 	}
 }
 
@@ -142,10 +215,110 @@ func (c Rec) ForEnd(io.Writer) {
 
 func (r *recorder) top() *recNode { return r.stack[len(r.stack)-1] }
 
+// push opens n inside the innermost node, keyed by its order there.
+func (r *recorder) push(n *recNode, kind byte) {
+	p := r.top()
+	n.key = mix(p.key, uint64(kind)<<56|uint64(p.kids))
+	p.kids++
+	r.stack = append(r.stack, n)
+}
+
+// pop closes the innermost node: a spot it rendered goes into the table,
+// and what it read and holds into its parent.
 func (r *recorder) pop() *recNode {
 	n := r.top()
 	r.stack = r.stack[:len(r.stack)-1]
+	if r.table == nil {
+		return n
+	}
+	if n.guarded && n.kept == nil {
+		s := &spot{label: n.label, reads: n.reads, taint: n.taint, nested: n.nested, comps: n.comps}
+		if n.scope != nil && len(n.scope.log) > n.logStart {
+			s.effects = append([]string(nil), n.scope.log[n.logStart:]...)
+		}
+		r.table.spots[n.key] = s
+	}
+	p := r.top()
+	if n.boundary {
+		p.reads |= n.reads & errsBit // the rest are the component's own
+	} else {
+		p.reads |= n.reads
+	}
+	p.taint = p.taint || n.taint
+	p.comps = append(p.comps, n.comps...)
+	if n.guarded {
+		p.nested = append(p.nested, n.key)
+	} else {
+		p.nested = append(p.nested, n.nested...)
+	}
 	return n
+}
+
+// read notes that the part of the page being rendered read an Assign.
+func (r *recorder) read(bit uint64) { r.top().reads |= bit }
+
+// carry moves a skipped spot, and the spots inside it, into the new table.
+func (r *recorder) carry(s *spot, key uint64) {
+	r.table.spots[key] = s
+	r.table.kept++
+	for _, c := range s.comps {
+		c.seen = r.gen
+	}
+	for _, k := range s.nested {
+		if inner := r.prev.spots[k]; inner != nil {
+			r.carry(inner, k)
+		}
+	}
+}
+
+// replay applies a skipped spot's effects on the scope it ran in: the
+// components it entered and the signals it made.
+func replay(sc *scope, effects []string) {
+	for _, name := range effects {
+		if name == "" {
+			sc.states++
+			sc.log = append(sc.log, "")
+		} else {
+			sc.enter(name)
+		}
+	}
+}
+
+// clean reports whether none of comps changed since it last rendered.
+func clean(comps []*component) bool {
+	for _, c := range comps {
+		if c.dirty() {
+			return false
+		}
+	}
+	return true
+}
+
+// static writes s as a static of the frame being recorded, for markup the
+// view package itself writes around a component.
+func (c Rec) static(w io.Writer, s string) error {
+	if c.r == nil {
+		_, err := io.WriteString(w, s)
+		return err
+	}
+	c.r.flush()
+	top := c.r.top()
+	if n := len(top.parts); n > 0 && top.parts[n-1].static {
+		top.parts = append(top.parts, recPart{})
+	}
+	top.parts = append(top.parts, recPart{static: true, text: s})
+	_, err := io.WriteString(c.r.w, s)
+	_ = c.r.w.Flush()
+	c.r.mark = c.r.out.Len()
+	return err
+}
+
+// taintFrom marks the part of the page ctx renders as one that can't be
+// skipped: it opens a shard, which the render around it keeps track of.
+func taintFrom(ctx context.Context) {
+	if r, _ := ctx.Value(recorderKey{}).(*recorder); r != nil && len(r.stack) > 0 {
+		r.top().taint = true
+	}
 }
 
 // endItem closes the open item frame of the innermost loop, if one is open.
@@ -181,39 +354,78 @@ func (r *recorder) tree() *rframe {
 		}
 	}
 	r.flush()
-	return normalize(r.stack[0])
+	var keyed map[*rframe][]keyAt
+	if r.table != nil {
+		keyed = map[*rframe][]keyAt{}
+		r.table.keyed = keyed
+	}
+	return normalize(r.stack[0], keyed)
 }
 
 // rframe is a recorded frame in the shape it travels: len(s) == len(d)+1,
-// each dynamic a string, an *rframe or an *rcomp.
+// each dynamic a string, an *rframe or an *rcomp — or, in a tracked render,
+// a *kept spot.
 type rframe struct {
 	fp string // the fingerprint of s
 	s  []string
 	d  []any
 }
 
+// keyAt says that dynamic i is the spot key.
+type keyAt struct {
+	i   int
+	key uint64
+}
+
 type rcomp struct{ items []*rframe }
 
-func normalize(n *recNode) *rframe {
+// kept is a spot a tracked render skipped: what it rendered before stands.
+type kept struct {
+	s   *spot
+	key uint64
+}
+
+// normalize turns a recorded node into a frame. keyed, for a tracked
+// render, collects which dynamics of each frame are spots.
+func normalize(n *recNode, keyed map[*rframe][]keyAt) *rframe {
 	f := &rframe{s: []string{""}}
+	key := func(i int, k uint64) {
+		if keyed != nil {
+			keyed[f] = append(keyed[f], keyAt{i, k})
+		}
+	}
 	for _, p := range n.parts {
 		switch {
 		case p.static:
 			f.s[len(f.s)-1] += p.text
+			continue
 		case p.node != nil && p.node.comp:
 			c := &rcomp{items: make([]*rframe, len(p.node.items))}
 			for i, it := range p.node.items {
-				c.items[i] = normalize(it)
+				c.items[i] = normalize(it, keyed)
 			}
 			f.d = append(f.d, c)
-			f.s = append(f.s, "")
+		case p.node != nil && p.node.kept != nil:
+			key(len(f.d), p.node.key)
+			f.d = append(f.d, &kept{p.node.kept, p.node.key})
 		case p.node != nil:
-			f.d = append(f.d, flatten(normalize(p.node)))
-			f.s = append(f.s, "")
+			inner := normalize(p.node, keyed)
+			v := flatten(inner)
+			if p.node.guarded {
+				key(len(f.d), p.node.key)
+			}
+			if keyed != nil && len(inner.d) == 1 && v == inner.d[0] {
+				// The frame passed its one dynamic through: so do its spots.
+				for _, k := range keyed[inner] {
+					key(len(f.d), k.key)
+				}
+				delete(keyed, inner)
+			}
+			f.d = append(f.d, v)
 		default:
 			f.d = append(f.d, p.text)
-			f.s = append(f.s, "")
 		}
+		f.s = append(f.s, "")
 	}
 	f.fp = fingerprint(f.s)
 	return f
@@ -230,6 +442,42 @@ func flatten(f *rframe) any {
 		return f.d[0]
 	}
 	return f
+}
+
+// spotTable is what a tracked render recorded of its spots, for the next
+// to skip the ones that didn't change: kept by the connection beside the
+// tree the browser holds.
+type spotTable struct {
+	owner *tracker
+	epoch uint64 // the owner's version counter when it rendered
+	spots map[uint64]*spot
+	kept  int // the spots it skipped
+	// keyed says which dynamics of the render's frames are spots, until
+	// the render is diffed.
+	keyed map[*rframe][]keyAt
+}
+
+// spot is one part of the page as last rendered.
+type spot struct {
+	label   string
+	reads   uint64
+	taint   bool
+	nested  []uint64     // the spots directly inside it
+	comps   []*component // the live components in it: it is stale when one changed
+	effects []string     // the components it entered and signals it made in its scope, to replay
+	value   any          // its shadow (rdiff.go), once the render is diffed
+}
+
+func spotKey(parent uint64, label string) uint64 {
+	return mix(parent, maphash.String(fpSeeds[0], label))
+}
+
+// mix combines a parent key with a child's (splitmix64).
+func mix(a, b uint64) uint64 {
+	z := a*0x9e3779b97f4a7c15 + b + 0x632be59bd9b4e019
+	z = (z ^ (z >> 30)) * 0xbf58476d1ce4e5b9
+	z = (z ^ (z >> 27)) * 0x94d049bb133111eb
+	return z ^ (z >> 31)
 }
 
 // fingerprint identifies a frame's statics within the process: 128 bits of
@@ -282,5 +530,7 @@ func writeDyn(b *strings.Builder, d any) {
 		for _, it := range d.items {
 			it.write(b)
 		}
+	case *kept:
+		panic("view: a skipped spot has no markup")
 	}
 }

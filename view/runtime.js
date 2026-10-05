@@ -732,6 +732,7 @@
       ws.onmessage = function (m) {
         var msg = JSON.parse(m.data);
         if (msg.resume) state.resume = msg.resume;
+        if (msg.uploads) startUploads(msg.uploads);
         if (msg.redirect) {
           // Not a live page this connection can open: load it.
           state.closed = true;
@@ -1172,37 +1173,99 @@
   // queued - so a page that mounted afresh has the form back.
   function recover(state, root, ws) {
     Array.from(root.querySelectorAll("form")).forEach(function (form) {
-      var event = changeEvents.get(form);
-      if (!event) return;
+      var change = changeEvents.get(form);
+      if (!change) return;
       var ref = ++state.ref;
       state.recovering.add(ref);
-      ws.send(JSON.stringify({ ref: ref, event: event, form: formFields(form) }));
+      ws.send(JSON.stringify(target({ ref: ref, event: change.event, form: formFields(form) }, form, change.comp)));
+    });
+  }
+
+  // target addresses an event of a live component's method (comp, its
+  // type) to the instance el is inside: the nearest component of the type.
+  function target(msg, el, comp) {
+    if (!comp) return msg;
+    var c = el.closest("[data-nx-ct]");
+    while (c && c.getAttribute("data-nx-ct") !== comp) c = c.parentElement && c.parentElement.closest("[data-nx-ct]");
+    if (c) msg.c = comp + "#" + c.getAttribute("data-nx-c");
+    return msg;
+  }
+
+  // ---- uploads (view.Upload) ----------------------------------------------
+
+  var uploadFiles = {}; // ref -> the File chosen, until its request starts
+  var uploadXHRs = {}; // ref -> its request, while it runs
+  var uploadSeq = 0;
+
+  // onUploadChange offers the files chosen in an upload input to the page;
+  // the server answers with where to send the ones it accepts.
+  function onUploadChange(e) {
+    var input = e.target;
+    if (!input || !input.getAttribute || !input.hasAttribute("data-nx-upload") || !input.files) return;
+    var name = input.getAttribute("data-nx-upload");
+    var live = liveState(input, name);
+    if (!live) return;
+    var files = [];
+    Array.from(input.files).forEach(function (f) {
+      var ref = "u" + Date.now().toString(36) + (++uploadSeq);
+      uploadFiles[ref] = f;
+      files.push({ ref: ref, name: f.name, size: f.size, type: f.type || "" });
+    });
+    input.value = "";
+    if (files.length) liveSend(live, target({ event: "__upload", upload: { name: name, files: files } }, input, input.getAttribute("data-nx-upload-ct")));
+  }
+
+  // startUploads sends each accepted file to its URL; the server follows
+  // the bytes and the page renders the progress.
+  function startUploads(urls) {
+    Object.keys(urls).forEach(function (ref) {
+      var file = uploadFiles[ref];
+      delete uploadFiles[ref];
+      if (!file) return;
+      var xhr = new XMLHttpRequest();
+      uploadXHRs[ref] = xhr;
+      xhr.open("POST", urls[ref]);
+      var h = csrfHeaders({ "Content-Type": "application/octet-stream" });
+      Object.keys(h).forEach(function (k) { xhr.setRequestHeader(k, h[k]); });
+      xhr.onloadend = function () { delete uploadXHRs[ref]; };
+      xhr.send(file);
     });
   }
 
   nx.live = {
-    // send is what view.Send renders into an on* attribute.
-    send: function (el, event, args) {
+    // cancelUpload is what view.CancelUpload renders: stop an entry's
+    // request and have the page drop it.
+    cancelUpload: function (el, name, ref, comp) {
+      var xhr = uploadXHRs[ref];
+      if (xhr) xhr.abort();
+      delete uploadXHRs[ref];
+      delete uploadFiles[ref];
+      var live = liveState(el, name);
+      if (live) liveSend(live, target({ event: "__cancel_upload", upload: { name: name, ref: ref } }, el, comp));
+    },
+    // send is what view.Send renders into an on* attribute; comp names the
+    // live component type the method belongs to.
+    send: function (el, event, args, comp) {
       var live = liveState(el, event);
-      if (live) liveSend(live, { event: event, args: args });
+      if (live) liveSend(live, target({ event: event, args: args }, el, comp));
     },
     // submit is what view.Submit renders into a form's onsubmit.
-    submit: function (e, form, event) {
+    submit: function (e, form, event, comp) {
       if (e) e.preventDefault();
       var live = liveState(form, event);
       if (!live) return;
       form.setAttribute("aria-busy", "true");
-      var ref = liveSend(live, { event: event, form: formFields(form) });
+      var ref = liveSend(live, target({ event: event, form: formFields(form) }, form, comp));
       live.state.submits[ref] = form;
     },
     // change is what view.Change renders into a form's oninput/onchange:
     // the fields go to the server after typing pauses.
-    change: function (e, form, event) {
-      changeEvents.set(form, event);
+    change: function (e, form, event, comp) {
+      changeEvents.set(form, { event: event, comp: comp });
       clearTimeout(changeTimers.get(form));
       changeTimers.set(form, setTimeout(function () {
         var live = liveState(form, event);
-        if (live) liveSend(live, { event: event, form: formFields(form) });
+        if (live) liveSend(live, target({ event: event, form: formFields(form) }, form, comp));
       }, 150));
     },
   };
@@ -1251,6 +1314,7 @@
       syncLive();
       document.addEventListener("click", onNavClick);
       document.addEventListener("submit", onFormSubmit, true);
+      document.addEventListener("change", onUploadChange, true);
       window.addEventListener("online", reconnectAll);
       document.addEventListener("visibilitychange", function () {
         if (document.visibilityState === "visible") reconnectAll();

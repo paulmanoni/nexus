@@ -27,26 +27,36 @@ import (
 // returns an InvalidInput error (nexus.Invalid()), the page re-renders with them (view.Errors)
 // and the form keeps what was typed; on success the form resets to its
 // server-rendered values.
-func Submit(method any) templ.ComponentScript { return formScript("submit", methodName(method)) }
+func Submit(method any) templ.ComponentScript {
+	mi := methodOf(method)
+	return formScript("submit", mi.name, componentType(mi.recv))
+}
 
 // Change sends the form's fields to method as they change (debounced), for
 // validation as the user types — on a form's oninput or onchange:
 //
 //	<form onsubmit={ view.Submit(b.Add) } oninput={ view.Change(b.Validate) }>
-func Change(method any) templ.ComponentScript { return formScript("change", methodName(method)) }
+func Change(method any) templ.ComponentScript {
+	mi := methodOf(method)
+	return formScript("change", mi.name, componentType(mi.recv))
+}
 
 // SubmitTo and ChangeTo are Submit and Change for the method named name on
 // recv, for a live page whose type is generic (see SendTo).
 func SubmitTo(recv any, name string) templ.ComponentScript {
-	return formScript("submit", namedMethod(recv, name))
+	return formScript("submit", namedMethod(recv, name), componentType(LiveKey(reflect.TypeOf(recv))))
 }
 
 func ChangeTo(recv any, name string) templ.ComponentScript {
-	return formScript("change", namedMethod(recv, name))
+	return formScript("change", namedMethod(recv, name), componentType(LiveKey(reflect.TypeOf(recv))))
 }
 
-func formScript(kind, name string) templ.ComponentScript {
-	return templ.ComponentScript{Call: htmlAttr("__nx.live." + kind + "(event,this," + jsonString(name) + ")")}
+func formScript(kind, name, comp string) templ.ComponentScript {
+	call := "__nx.live." + kind + "(event,this," + jsonString(name)
+	if comp != "" {
+		call += "," + jsonString(comp)
+	}
+	return templ.ComponentScript{Call: htmlAttr(call + ")")}
 }
 
 // Value marks a form field server-owned and gives it v as its value: when it
@@ -79,6 +89,9 @@ type formErrorsKey struct{}
 //
 //	if msg := view.Errors(ctx).Field("name"); msg != "" { <p class="error">{ msg }</p> }
 func Errors(ctx context.Context) FormErrors {
+	if r, _ := ctx.Value(recorderKey{}).(*recorder); r != nil && len(r.stack) > 0 {
+		r.read(errsBit)
+	}
 	e, _ := ctx.Value(formErrorsKey{}).(*nexus.Error)
 	return FormErrors{errs: e}
 }

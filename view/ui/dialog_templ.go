@@ -297,8 +297,9 @@ func Dialog(p DialogProps) templ.Component {
 			if templ_7745c5c3_Err != nil {
 				return templ_7745c5c3_Err
 			}
-			templ_7745c5c3_Rec.Open(templ_7745c5c3_Buffer)
-			templ_7745c5c3_Err = Icon("x").Render(ctx, templ_7745c5c3_Buffer)
+			if templ_7745c5c3_Rec.Guard(ctx, templ_7745c5c3_Buffer, "ui.Dialog#1", nil) {
+				templ_7745c5c3_Err = Icon("x").Render(ctx, templ_7745c5c3_Buffer)
+			}
 			templ_7745c5c3_Rec.Close(templ_7745c5c3_Buffer)
 			if templ_7745c5c3_Err != nil {
 				return templ_7745c5c3_Err
@@ -330,8 +331,9 @@ func Dialog(p DialogProps) templ.Component {
 			if templ_7745c5c3_Err != nil {
 				return templ_7745c5c3_Err
 			}
-			templ_7745c5c3_Rec.Open(templ_7745c5c3_Buffer)
-			templ_7745c5c3_Err = Icon("x").Render(ctx, templ_7745c5c3_Buffer)
+			if templ_7745c5c3_Rec.Guard(ctx, templ_7745c5c3_Buffer, "ui.Dialog#2", nil) {
+				templ_7745c5c3_Err = Icon("x").Render(ctx, templ_7745c5c3_Buffer)
+			}
 			templ_7745c5c3_Rec.Close(templ_7745c5c3_Buffer)
 			if templ_7745c5c3_Err != nil {
 				return templ_7745c5c3_Err

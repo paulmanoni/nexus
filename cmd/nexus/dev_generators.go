@@ -24,6 +24,35 @@ type devGenerator struct {
 	name    string
 	watches func(path string) bool
 	run     func() (summary string, err error) // summary "" = nothing changed
+	// notes are the warnings of the last run, when they changed since the
+	// ones shown before (nil: nothing new to show).
+	notes func() []string
+}
+
+// warningNotes keeps the last warnings shown, to show them again only when
+// they change.
+type warningNotes struct {
+	last, next string
+	lines      []string
+}
+
+func (n *warningNotes) set(root string, ws []*viewgen.PositionError) {
+	n.lines = n.lines[:0]
+	for _, w := range ws {
+		n.lines = append(n.lines, viewsError(root, w).Error())
+	}
+	n.next = strings.Join(n.lines, "\n")
+}
+
+func (n *warningNotes) take() []string {
+	if n.next == n.last {
+		return nil
+	}
+	n.last = n.next
+	if len(n.lines) == 0 {
+		return []string{"warnings resolved"}
+	}
+	return append([]string(nil), n.lines...)
 }
 
 // devGenerators are the generators this project needs — today, views when
@@ -67,14 +96,17 @@ func viewsError(root string, err error) error {
 // github.com/paulmanoni/nexus/v2/view) and writes the generated Go to disk,
 // for editors on plain gopls (nexus dev --view-files).
 func viewsGenerator(root string) devGenerator {
+	notes := &warningNotes{}
 	return devGenerator{
 		name:    "views",
 		watches: viewsWatch,
+		notes:   notes.take,
 		run: func() (string, error) {
-			changed, err := viewgen.Module(root)
+			changed, warnings, err := viewgen.WriteModule(root)
 			if err != nil {
 				return "", viewsError(root, err)
 			}
+			notes.set(root, warnings)
 			if len(changed) == 0 {
 				return "", nil
 			}
@@ -90,14 +122,17 @@ func viewsGenerator(root string) devGenerator {
 // watcher alone would not restart the app.
 func viewsCheckGenerator(root string, rebuild func()) devGenerator {
 	var last string
+	notes := &warningNotes{}
 	return devGenerator{
 		name:    "views",
 		watches: viewsWatch,
+		notes:   notes.take,
 		run: func() (string, error) {
 			plan, err := viewgen.Generate(root)
 			if err != nil {
 				return "", viewsError(root, err)
 			}
+			notes.set(root, plan.Warnings)
 			h := sha256.New()
 			paths := make([]string, 0, len(plan.Files))
 			for path := range plan.Files {
@@ -219,5 +254,11 @@ func (r *generatorRunner) run(i int) {
 	}
 	if summary != "" {
 		fmt.Fprintf(r.out, "  %s● %s · %s (%s)%s\n", ansiDim, g.name, summary, elapsed, ansiReset)
+	}
+	if g.notes == nil {
+		return
+	}
+	for _, line := range g.notes() {
+		fmt.Fprintf(r.out, "    %s[%s]%s %s\n", ansiYellow, g.name, ansiReset, line)
 	}
 }

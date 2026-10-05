@@ -140,6 +140,11 @@ func projectChecks(dir string) []doctorCheck {
 		} else {
 			add(doctorCheck{Name: "views", Detail: "generated files up to date"})
 		}
+		if plan, err := viewgen.Generate(dir); err == nil && len(plan.Warnings) > 0 {
+			add(doctorCheck{Name: "live pages", Level: checkWarn,
+				Detail: fmt.Sprintf("%d place(s) keep a live page from rendering only what changed — first: %s", len(plan.Warnings), viewsError(dir, plan.Warnings[0])),
+				Fix:    "keep a live page's state in view.Assign fields, read in Render (nexus lsp marks each place)"})
+		}
 	}
 
 	// auth: where issued tokens and session records live.

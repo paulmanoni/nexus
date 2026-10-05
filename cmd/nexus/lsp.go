@@ -215,6 +215,7 @@ type lspProxy struct {
 	goDiags    map[string][]any           // .templ path → gopls diagnostics mapped from its Go
 	nexusDiags map[string][]lspDiagnostic // .go path → codegen errors
 	goplsDiags map[string][]any           // .go path → gopls's latest diagnostics
+	viewWarns  map[string][]lspDiagnostic // .templ or .go path → views compiler warnings
 	started    bool
 	dirty      bool
 	timer      *time.Timer
@@ -231,7 +232,7 @@ func newLSPProxy(editor, gopls *rpcConn, log io.Writer) *lspProxy {
 		templBufs: map[string][]byte{}, virtual: map[string]*virtualFile{},
 		maps: map[string]*viewgen.TemplMap{}, viewDiags: map[string][]lspDiagnostic{},
 		goDiags: map[string][]any{}, nexusDiags: map[string][]lspDiagnostic{},
-		goplsDiags: map[string][]any{},
+		goplsDiags: map[string][]any{}, viewWarns: map[string][]lspDiagnostic{},
 	}
 }
 
@@ -542,6 +543,7 @@ func (p *lspProxy) regenerate() {
 	var maps map[string]*viewgen.TemplMap
 	viewsOK := true
 	var genErrs []error
+	var warns map[string][]lspDiagnostic
 	if len(bufs) > 0 || viewgen.HasTemplates(root) {
 		plan, err := viewgen.GenerateWith(root, viewgen.Options{Sources: bufs, Editor: true})
 		if err != nil {
@@ -557,6 +559,7 @@ func (p *lspProxy) regenerate() {
 				}
 			}
 			maps = plan.Maps
+			warns = warningDiagnostics(plan.Warnings)
 		}
 	}
 	handlersOK := true
@@ -617,6 +620,15 @@ func (p *lspProxy) regenerate() {
 	}
 	for path := range p.nexusDiags {
 		goTouched[path] = true
+	}
+	if warns != nil {
+		for path := range p.viewWarns {
+			markTouched(path, templTouched, goTouched)
+		}
+		for path := range warns {
+			markTouched(path, templTouched, goTouched)
+		}
+		p.viewWarns = warns
 	}
 	p.viewDiags, p.nexusDiags = map[string][]lspDiagnostic{}, map[string][]lspDiagnostic{}
 	for path, ds := range diags {
@@ -693,6 +705,9 @@ func (p *lspProxy) publishTempl(path string) {
 	if len(p.viewDiags[path]) == 0 {
 		ds = append(ds, p.goDiags[path]...)
 	}
+	for _, d := range p.viewWarns[path] {
+		ds = append(ds, d)
+	}
 	p.mu.Unlock()
 	p.publish(path, ds)
 }
@@ -703,8 +718,31 @@ func (p *lspProxy) publishGo(path string) {
 	for _, d := range p.nexusDiags[path] {
 		ds = append(ds, d)
 	}
+	for _, d := range p.viewWarns[path] {
+		ds = append(ds, d)
+	}
 	p.mu.Unlock()
 	p.publish(path, ds)
+}
+
+// warningDiagnostics turns the views compiler's warnings into editor
+// warnings, by file.
+func warningDiagnostics(ws []*viewgen.PositionError) map[string][]lspDiagnostic {
+	out := map[string][]lspDiagnostic{}
+	for _, w := range ws {
+		path, _ := filepath.Abs(filepath.FromSlash(w.File))
+		pos := lspPosition{Line: uint32(max(w.Line-1, 0)), Character: uint32(max(w.Col-1, 0))}
+		out[path] = append(out[path], lspDiagnostic{Range: lspRange{pos, pos}, Severity: 2, Source: "nexus", Message: w.Msg})
+	}
+	return out
+}
+
+func markTouched(path string, templ, goFiles map[string]bool) {
+	if strings.HasSuffix(path, ".templ") {
+		templ[path] = true
+	} else {
+		goFiles[path] = true
+	}
 }
 
 func (p *lspProxy) publish(path string, ds []any) {

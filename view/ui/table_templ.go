@@ -746,8 +746,9 @@ func tableFooter(p TableProps) templ.Component {
 			if templ_7745c5c3_Err != nil {
 				return templ_7745c5c3_Err
 			}
-			templ_7745c5c3_Rec.Open(templ_7745c5c3_Buffer)
-			templ_7745c5c3_Err = Icon("chevron-left").Render(ctx, templ_7745c5c3_Buffer)
+			if templ_7745c5c3_Rec.Guard(ctx, templ_7745c5c3_Buffer, "ui.tableFooter#1", nil) {
+				templ_7745c5c3_Err = Icon("chevron-left").Render(ctx, templ_7745c5c3_Buffer)
+			}
 			templ_7745c5c3_Rec.Close(templ_7745c5c3_Buffer)
 			if templ_7745c5c3_Err != nil {
 				return templ_7745c5c3_Err
@@ -914,8 +915,9 @@ func tableFooter(p TableProps) templ.Component {
 			if templ_7745c5c3_Err != nil {
 				return templ_7745c5c3_Err
 			}
-			templ_7745c5c3_Rec.Open(templ_7745c5c3_Buffer)
-			templ_7745c5c3_Err = Icon("chevron-right").Render(ctx, templ_7745c5c3_Buffer)
+			if templ_7745c5c3_Rec.Guard(ctx, templ_7745c5c3_Buffer, "ui.tableFooter#2", nil) {
+				templ_7745c5c3_Err = Icon("chevron-right").Render(ctx, templ_7745c5c3_Buffer)
+			}
 			templ_7745c5c3_Rec.Close(templ_7745c5c3_Buffer)
 			if templ_7745c5c3_Err != nil {
 				return templ_7745c5c3_Err
@@ -1072,8 +1074,9 @@ func EmptyState(message string) templ.Component {
 		if templ_7745c5c3_Err != nil {
 			return templ_7745c5c3_Err
 		}
-		templ_7745c5c3_Rec.Open(templ_7745c5c3_Buffer)
-		templ_7745c5c3_Err = Icon("inbox", "size-5").Render(ctx, templ_7745c5c3_Buffer)
+		if templ_7745c5c3_Rec.Guard(ctx, templ_7745c5c3_Buffer, "ui.EmptyState#1", nil) {
+			templ_7745c5c3_Err = Icon("inbox", "size-5").Render(ctx, templ_7745c5c3_Buffer)
+		}
 		templ_7745c5c3_Rec.Close(templ_7745c5c3_Buffer)
 		if templ_7745c5c3_Err != nil {
 			return templ_7745c5c3_Err
@@ -1138,8 +1141,9 @@ func SearchInput(id, name, value, placeholder string) templ.Component {
 		if templ_7745c5c3_Err != nil {
 			return templ_7745c5c3_Err
 		}
-		templ_7745c5c3_Rec.Open(templ_7745c5c3_Buffer)
-		templ_7745c5c3_Err = Icon("search").Render(ctx, templ_7745c5c3_Buffer)
+		if templ_7745c5c3_Rec.Guard(ctx, templ_7745c5c3_Buffer, "ui.SearchInput#1", nil) {
+			templ_7745c5c3_Err = Icon("search").Render(ctx, templ_7745c5c3_Buffer)
+		}
 		templ_7745c5c3_Rec.Close(templ_7745c5c3_Buffer)
 		if templ_7745c5c3_Err != nil {
 			return templ_7745c5c3_Err
@@ -1222,8 +1226,9 @@ func SearchInput(id, name, value, placeholder string) templ.Component {
 		if templ_7745c5c3_Err != nil {
 			return templ_7745c5c3_Err
 		}
-		templ_7745c5c3_Rec.Open(templ_7745c5c3_Buffer)
-		templ_7745c5c3_Err = Icon("spinner").Render(ctx, templ_7745c5c3_Buffer)
+		if templ_7745c5c3_Rec.Guard(ctx, templ_7745c5c3_Buffer, "ui.SearchInput#2", nil) {
+			templ_7745c5c3_Err = Icon("spinner").Render(ctx, templ_7745c5c3_Buffer)
+		}
 		templ_7745c5c3_Rec.Close(templ_7745c5c3_Buffer)
 		if templ_7745c5c3_Err != nil {
 			return templ_7745c5c3_Err

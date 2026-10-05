@@ -38,6 +38,19 @@ type scope struct {
 	path   string
 	kids   map[string]int
 	states int
+	log    []string // the components entered in it, and "" for each signal made, in order: a skipped spot replays its share (rendered.go)
+}
+
+// enter counts a component entered in this scope and returns its index
+// among those of its name.
+func (sc *scope) enter(name string) int {
+	if sc.kids == nil {
+		sc.kids = map[string]int{}
+	}
+	i := sc.kids[name]
+	sc.kids[name] = i + 1
+	sc.log = append(sc.log, name)
+	return i
 }
 
 type (
@@ -75,11 +88,7 @@ func Enter(ctx context.Context, name string) context.Context {
 		if parent == nil {
 			parent = &scope{}
 		}
-		if parent.kids == nil {
-			parent.kids = map[string]int{}
-		}
-		i := parent.kids[name]
-		parent.kids[name] = i + 1
+		i := parent.enter(name)
 		path = parent.path + "/" + name + "." + strconv.Itoa(i)
 	}
 	return context.WithValue(ctx, scopeKey{}, &scope{path: path})
@@ -100,6 +109,7 @@ func State[T any](ctx context.Context, initial T) *Signal[T] {
 	}
 	h := sha256.Sum256([]byte(sc.path + "#" + strconv.Itoa(sc.states)))
 	sc.states++
+	sc.log = append(sc.log, "")
 	s := &Signal[T]{id: "s" + hex.EncodeToString(h[:5]), v: initial}
 	if r := renderFrom(ctx); r != nil {
 		if raw, ok := r.restore[s.id]; ok {

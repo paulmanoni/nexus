@@ -28,6 +28,11 @@ type Plan struct {
 	// Maps holds, under Options.Editor, each *_templ.go file's source map
 	// back to its .templ, keyed like Files.
 	Maps map[string]*TemplMap
+
+	// Warnings point at what keeps a live page from rendering only what
+	// changed (view.Assign): fields in .go files, reads in .templ files.
+	// They never fail the build.
+	Warnings []*PositionError
 }
 
 // TemplMap ties a generated *_templ.go to the .templ it came from.
@@ -51,15 +56,21 @@ type Options struct {
 // unit, and writes the result into the tree. It returns the files it
 // changed — written or removed — so a watcher can tell a no-op apart.
 func Module(root string) ([]string, error) {
+	changed, _, err := WriteModule(root)
+	return changed, err
+}
+
+// WriteModule is Module that also returns the compiler's warnings.
+func WriteModule(root string) (changed []string, warnings []*PositionError, err error) {
 	plan, err := Generate(root)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
-	var changed []string
+	warnings = plan.Warnings
 	for _, path := range plan.paths() {
 		wrote, err := writeIfChanged(path, plan.Files[path])
 		if err != nil {
-			return changed, err
+			return changed, warnings, err
 		}
 		if wrote {
 			changed = append(changed, path)
@@ -70,10 +81,10 @@ func Module(root string) ([]string, error) {
 		if err == nil {
 			changed = append(changed, path)
 		} else if !os.IsNotExist(err) {
-			return changed, err
+			return changed, warnings, err
 		}
 	}
-	return changed, nil
+	return changed, warnings, nil
 }
 
 // HasTemplates reports whether the tree under root holds a .templ file —
@@ -221,6 +232,16 @@ func GenerateWith(root string, opts Options) (*Plan, error) {
 	}
 	if len(errList) > 0 {
 		return nil, errors.Join(errList...)
+	}
+	for _, u := range units {
+		pages := map[string]bool{}
+		for _, r := range u.results {
+			plan.Warnings = append(plan.Warnings, r.Warnings...)
+			for name := range r.Pages {
+				pages[name] = true
+			}
+		}
+		plan.Warnings = append(plan.Warnings, pageWarnings(u.pkg, pages)...)
 	}
 
 	type registering struct{ dir, path string }

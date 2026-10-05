@@ -1,0 +1,14 @@
+package pets
+
+import (
+	"strconv"
+
+	"github.com/paulmanoni/nexus/v2/view"
+)
+
+templ (c *Cheer) Render() {
+	<p id="cheer-line" class="text-sm">
+		<button id="cheer" class="underline" onclick={ view.Send(c.Cheer) }>cheer</button>
+		<span id="cheers">{ strconv.Itoa(c.Cheers.Get()) }</span> cheers for { strconv.Itoa(c.Pets.Get()) } pets
+	</p>
+}

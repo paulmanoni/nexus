@@ -11,11 +11,12 @@ import (
 
 // Board is a live page: its state lives on the server, one copy per
 // connected page. Adoptions are shared: every event broadcasts, and every
-// open board refreshes.
+// open board refreshes. Its fields are view.Assigns, so an event renders
+// only the parts of the board whose fields changed.
 type Board struct {
-	Pets    []Pet
-	Adopted map[string]bool
-	Draft   PetInput // the add form, as last validated
+	Pets    view.Assign[[]Pet]
+	Adopted view.Assign[map[string]bool]
+	Draft   view.Assign[PetInput] // the add form, as last validated
 }
 
 // PetInput is the add form: bound from its fields by their form tags.
@@ -43,18 +44,18 @@ func (in PetInput) check(store *Store) error {
 
 // Validate runs as the add form is typed into.
 func (b *Board) Validate(ctx context.Context, store *Store, in PetInput) error {
-	b.Draft = in
+	b.Draft.Set(in)
 	return in.check(store)
 }
 
 // Add is the add form's submit: every open board gets the new pet.
 func (b *Board) Add(ctx context.Context, store *Store, in PetInput) error {
-	b.Draft = in
+	b.Draft.Set(in)
 	if err := in.check(store); err != nil {
 		return err
 	}
 	store.Add(Pet{Name: strings.TrimSpace(in.Name), Kind: strings.TrimSpace(in.Kind)})
-	b.Draft = PetInput{}
+	b.Draft.Set(PetInput{})
 	view.Broadcast(ctx, adoptions, in.Name)
 	return nil
 }
@@ -66,8 +67,8 @@ const adoptions = "adoptions"
 
 func (b *Board) Mount(ctx context.Context, sock *view.Socket, store *Store) error {
 	sock.Subscribe(adoptions)
-	b.Pets = store.All()
-	b.Adopted = store.Adopted()
+	b.Pets.Set(store.All())
+	b.Adopted.Set(store.Adopted())
 	return nil
 }
 
@@ -95,14 +96,15 @@ func (b *Board) Clear(ctx context.Context, store *Store) error {
 
 // Info runs on every board when anyone's adoption or a new pet arrives.
 func (b *Board) Info(ctx context.Context, store *Store, msg view.Message) error {
-	b.Pets = store.All()
-	b.Adopted = store.Adopted()
+	b.Pets.Set(store.All())
+	b.Adopted.Set(store.Adopted())
 	return nil
 }
 
 // Module mounts the live board and the registry, declared like a
 // nexus.Resource.
 var Module = nexus.Module("pets",
+	view.LiveComponent[*Cheer](),
 	view.Live[*Board]("/board").
 		Provide(NewBoard),
 	view.Live[*Registry]("/registry").

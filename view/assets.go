@@ -97,7 +97,7 @@ var runtimeVersions = sync.OnceValues(func() (string, string) { return version(i
 //	</head>
 func Script() templ.Component {
 	imp, rt := runtimeVersions()
-	return templ.Raw(`<style>nx-t,nx-if,nx-shard{display:contents}nx-if[hidden]{display:none}nx-island{display:block}</style>` +
+	return templ.Raw(`<style>nx-t,nx-if,nx-shard,nx-c{display:contents}nx-if[hidden]{display:none}nx-island{display:block}</style>` +
 		`<script type="module" src="/_view/import.js?v=` + imp + `"></script>` +
 		`<script src="/_view/twins.js?v=` + twinsVersion() + `" defer></script>` +
 		`<script src="/_view/runtime.js?v=` + rt + `" defer></script>`)

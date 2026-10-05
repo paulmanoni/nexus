@@ -15,15 +15,15 @@ templ (b *Board) Render() {
 		@ui.Section("Pets") {
 			{{ note := view.State(ctx, "") }}
 			<input id="note" class="w-full rounded-md border px-3 py-2" value={ note.Get() } oninput={ view.Do(func(e view.Event) { note.Set(e.Target.Value) }) } placeholder="A note — kept while the board updates"/>
-			<p><b id="adopted">{ strconv.Itoa(len(b.Adopted)) }</b> adopted</p>
-			@AdoptionMeter(MeterProps{Adopted: len(b.Adopted), Total: len(b.Pets)}) {
+			<p><b id="adopted">{ strconv.Itoa(len(b.Adopted.Get())) }</b> adopted</p>
+			@AdoptionMeter(MeterProps{Adopted: len(b.Adopted.Get()), Total: len(b.Pets.Get())}) {
 				<p class="text-sm text-muted-foreground">loading the meter…</p>
 			}
 			<ul class="space-y-2">
-				for _, p := range b.Pets {
+				for _, p := range b.Pets.Get() {
 					<li id={ "pet-" + p.Name } class="flex items-center gap-2">
 						<span class="w-24">{ p.Name }</span>
-						if b.Adopted[p.Name] {
+						if b.Adopted.Get()[p.Name] {
 							<span class="text-muted-foreground">adopted</span>
 							@button.Button(button.Props{ID: "return-" + p.Name, Variant: button.VariantOutline, Attributes: templ.Attributes{"onclick": view.Send(b.Return, p.Name)}}) {
 								return
@@ -37,12 +37,13 @@ templ (b *Board) Render() {
 				}
 			</ul>
 			<button id="clear" class="underline" onclick={ view.Send(b.Clear) }>clear all</button>
+			@view.Component[*Cheer]("cheer", CheerProps{Pets: len(b.Pets.Get())})
 		}
 		@ui.Section("Add a pet") {
 			<form id="add" class="space-y-2" onsubmit={ view.Submit(b.Add) } oninput={ view.Change(b.Validate) }>
-				<input id="add-name" name="name" class="w-full rounded-md border px-3 py-2" value={ b.Draft.Name } placeholder="Name"/>
+				<input id="add-name" name="name" class="w-full rounded-md border px-3 py-2" value={ b.Draft.Get().Name } placeholder="Name"/>
 				<p id="name-err" class="text-sm text-destructive">{ view.Errors(ctx).Field("name") }</p>
-				<input id="add-kind" name="kind" class="w-full rounded-md border px-3 py-2" value={ b.Draft.Kind } placeholder="Kind"/>
+				<input id="add-kind" name="kind" class="w-full rounded-md border px-3 py-2" value={ b.Draft.Get().Kind } placeholder="Kind"/>
 				<p id="kind-err" class="text-sm text-destructive">{ view.Errors(ctx).Field("kind") }</p>
 				@button.Button(button.Props{ID: "add-submit", Type: button.TypeSubmit}) {
 					Add

@@ -107,4 +107,17 @@ func TestBoardInBrowser(t *testing.T) {
 	p.Click("#clear")
 	p.Expect("#adopted").Text("0")
 	other.Expect("#adopt-Biscuit").Exists()
+
+	// A live component: its events reach it, its count is its own page's,
+	// and the board's props reach it without resetting it.
+	p.Click("#cheer").Click("#cheer")
+	p.Expect("#cheers").Text("2")
+	other.Expect("#cheers").Text("0")
+	before := p.Text("#cheer-line")
+	p.Fill("name", "Pip").Fill("kind", "mouse").Click("#add-submit")
+	p.Expect("#pet-Pip").Exists()
+	p.Expect("#cheers").Text("2")
+	if after := p.Text("#cheer-line"); after == before || !strings.Contains(after, "cheers for") {
+		t.Fatalf("the board's pet count reaches the component: %q, then %q", before, after)
+	}
 }

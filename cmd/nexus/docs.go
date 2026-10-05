@@ -833,6 +833,29 @@ declared like a Resource; the DI instance is the template:
     func (b *Board) Adopt(ctx context.Context, name string) error      // an event: deps, then args
     templ (b *Board) Render() { <button onclick={ view.Send(b.Adopt, p.Name) }>adopt</button> }
 
+Keep the state in view.Assign fields and an event renders only what changed:
+
+    type Board struct{ Pets view.Assign[[]Pet]; Filter view.Assign[string] }
+    b.Filter.Set(f)                 // in Mount, Params, Info or an event; Update(func(*T)) in place
+    for _, p := range b.Pets.Get()  // in Render: Get notes what depends on it
+
+A page whose fields are all Assigns (signals may sit beside them) skips each
+loop, branch and component call that uses no template locals when the Assigns
+(and view.Errors) it read didn't change; Render must read Assigns only — under
+nexus dev and in tests a skipping render is checked against a full one, and
+nexus lsp / generate views / doctor warn on a plain field or a service call in
+Render. A page with any other field renders everything.
+Live components have state and events of their own on a live page:
+view.LiveComponent[*Cart]() registers one, @view.Component[*Cart]("cart",
+CartProps{…}) places it (one instance per id while rendered). Mount(ctx,
+deps…, props) first, Update(ctx, deps…, props) on new props (or Mount again),
+view.UpdateComponent[*Cart](ctx, "cart", props) from a page event or Info;
+view.Send(c.Toggle) in its template reaches its own instance.
+Uploads: a view.Upload field — p.Avatar.Allow(view.UploadConfig{Accept:
+[]string{"image/*"}, MaxSize: 5 << 20}) in Mount, <input type="file"
+{ p.Avatar.Input()... }/>, p.Avatar.Entries() for progress, and
+p.Avatar.Consume(func(e view.UploadEntry, f *os.File) error {…}) in the
+submit event; view.CancelUpload(&p.Avatar, e.Ref) removes one.
 After each event the page is re-rendered and patched in place (focus kept);
 an element with an id and data-nx-ignore stays as the browser has it until a
 render gives it another id (a chart a script drew, an app shell's menus).

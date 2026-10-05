@@ -230,6 +230,210 @@ func (b *Board) Add(ctx context.Context, store *Store, in PetInput) error {
   library's `Props.Attributes`
   (`templ.Attributes{"onclick": view.Send(b.Adopt, p.Name)}`).
 
+### Tracked state: `view.Assign`
+
+Keep a live page's state in `view.Assign` fields and an event renders only the
+parts of the page whose fields changed — LiveView's change tracking:
+
+```go
+type Orders struct {
+	Status view.Assign[string]
+	Rows   view.Assign[[]Order]
+}
+
+func (p *Orders) Filter(ctx context.Context, svc *OrderService, status string) error {
+	p.Status.Set(status)
+	p.Rows.Set(svc.List(ctx, status))
+	return nil
+}
+```
+
+```templ
+templ (p *Orders) Render() {
+	<h1>Orders · { p.Status.Get() }</h1>
+	for _, o := range p.Rows.Get() {
+		@OrderRow(o)
+	}
+}
+```
+
+`Get` reads (and, in `Render`, notes what depends on it), `Set` replaces —
+setting an equal value of a comparable type is not a change — and
+`Update(func(*T))` changes a slice or map in place. The compiler opens a
+*spot* around each loop, branch and component call that uses none of the
+template's own variables (parameters, loop variables, <code v-pre>{{ }}</code>
+locals) — only the receiver, `ctx` and package-level names; on the next event
+a spot whose `Assign`s didn't change is not run at all, and the browser keeps
+what it showed. `view.Errors(ctx)` is tracked the same way.
+
+- A page is tracked when its fields are all `Assign`s (signals may sit beside
+  them). A page with any other field renders everything, as before — convert
+  it a field at a time. Tag a field `view:"-"` when `Render` doesn't read it,
+  or it doesn't change once the page is mounted (a configuration pointer,
+  permissions worked out in `Mount`): it leaves the page tracked.
+- Split `Render` along what changes together. A part is skipped as a whole,
+  so a template that builds one view model for the whole page (`@page(p.view())`)
+  re-renders everything on every event; one that renders
+  `@table(p.tableView())`, `@form(p.formView())`, … — each built from the
+  fields it shows — re-renders only the parts an event touched. On a
+  1,000-row list, typing in its form went from ~10 ms of server work per
+  keystroke to under 0.5 ms. For a page that uses `Assign`s, `nexus lsp` marks each
+  other field, and each place its templates read one, as a warning;
+  `nexus generate views`, `nexus dev` and `nexus doctor` print the same.
+- On a tracked page, a service called from a template
+  (`view.Use[*Store](ctx).Count()`) is flagged too: what it returns isn't an
+  `Assign`, so the parts that show it wouldn't re-render when it changes. Load
+  it into an `Assign` in `Mount`, `Info` or an event instead. (`view.Use` of a
+  state struct is fine: the server never changes its signals.)
+- `auth.Can` and `auth.Current` in a template need nothing: a page's identity
+  is fixed for its connection, and ending a session closes the connection.
+- `Render` must depend on `Assign`s alone — not on plain fields, services
+  called from the template, or the clock. Under `nexus dev` and in tests every
+  render that skips spots is checked against a full one: a spot that rendered
+  differently is logged with its place in the template, and the full render is
+  sent (`NEXUS_VIEW_VERIFY=1` turns the check on elsewhere, `0` off).
+- `Set` and `Update` belong to the page's own goroutine: `Mount`, `Params`,
+  `Info` and events.
+
+### Live components
+
+A live component is a part of a live page with state and events of its own —
+Phoenix LiveView's LiveComponents. Its methods follow a page's conventions,
+with props in place of path parameters:
+
+```go
+type Cart struct {
+	Items view.Assign[[]Item]
+	Open  view.Assign[bool]
+}
+
+type CartProps struct{ User string }
+
+func (c *Cart) Mount(ctx context.Context, svc *CartService, p CartProps) error {
+	c.Items.Set(svc.Items(ctx, p.User))
+	return nil
+}
+
+func (c *Cart) Toggle(ctx context.Context) error {
+	c.Open.Update(func(o *bool) { *o = !*o })
+	return nil
+}
+```
+
+```templ
+templ (c *Cart) Render() {
+	<button onclick={ view.Send(c.Toggle) }>Cart ({ strconv.Itoa(len(c.Items.Get())) })</button>
+	if c.Open.Get() { … }
+}
+```
+
+Register it once with `view.LiveComponent[*Cart]()` (pass constructors to
+give it a DI template, as `view.Live` does) and place it in any live page by
+an id unique among its type's on the page:
+
+```templ
+@view.Component[*Cart]("cart", CartProps{User: p.User.Get()})
+```
+
+- **State per placement.** The page keeps one instance per id while its
+  template renders it and drops one it stops rendering; rendered again, it
+  mounts afresh.
+- **Props.** `Mount(ctx, deps…, props P)` runs on the first render. When the
+  page renders it with different props, `Update(ctx, deps…, props P)` runs —
+  or, without one, `Mount` again. A page event or `Info` can hand it new props
+  with `view.UpdateComponent[*Cart](ctx, "cart", props)`.
+- **Events reach their own instance.** `view.Send(c.Toggle)` (and `Submit`,
+  `Change`) in its template goes to the instance it was clicked in — no target
+  to name. Its validation errors show through `view.Errors(ctx)` as a page's do.
+- **Only what changed renders.** With `Assign` fields, a component's event
+  runs the component's changed parts and the page spots it sits in; the rest
+  of the page, and the other components, are skipped. A component the page
+  re-renders with the same props is skipped as a whole.
+- It renders inside `<nx-c data-nx-c="id">` (laid out as if it weren't there).
+  A component has no `Params` or `Info`: the page passes it data.
+
+### Uploads
+
+A `view.Upload` field is a file input of a live page (or live component),
+LiveView's `allow_upload`: files go to the server as soon as they're chosen,
+the page renders their progress, and an event takes them when the form is
+submitted.
+
+```go
+type Profile struct {
+	Name   view.Assign[string]
+	Avatar view.Upload
+}
+
+func (p *Profile) Mount(ctx context.Context) error {
+	p.Avatar.Allow(view.UploadConfig{Accept: []string{"image/*"}, MaxEntries: 1, MaxSize: 5 << 20})
+	return nil
+}
+
+func (p *Profile) Save(ctx context.Context, disk *Uploads, in ProfileForm) error {
+	return p.Avatar.Consume(func(e view.UploadEntry, f *os.File) error {
+		return disk.Put(ctx, "avatars/"+e.Name, f)
+	})
+}
+```
+
+```templ
+<form onsubmit={ view.Submit(p.Save) }>
+	<input type="file" { p.Avatar.Input()... }/>
+	for _, e := range p.Avatar.Entries() {
+		<p>
+			{ e.Name } { strconv.Itoa(e.Progress) }%
+			if e.Err != "" {
+				<span class="error">{ e.Err }</span>
+			}
+			<button type="button" onclick={ view.CancelUpload(&p.Avatar, e.Ref) }>×</button>
+		</p>
+	}
+	<button disabled?={ p.Avatar.Busy() }>Save</button>
+</form>
+```
+
+- **Checked on choice.** `Accept` (extensions or MIME types, `image/*`),
+  `MaxEntries` (default 1; a single-file input replaces its file) and `MaxSize`
+  (default 8 MiB). Each file becomes an entry; a refused one has `Err` set.
+- **Sent at once, one HTTP request per file**, to the page's own route — its
+  gates apply, the request must come from the user who opened the page, and
+  its URL works once. The bytes stream to a temporary file; `Progress`,
+  `Received` and `Done` follow and the page re-renders as they do. The app's
+  body limit doesn't apply; `MaxSize` does.
+- **`Consume(fn)`** hands each finished file to `fn`, open for reading, then
+  deletes it and its entry. `view.CancelUpload(&p.Avatar, ref)` stops one and
+  removes it. What's left when the page ends is deleted.
+- An `Upload` is page state like an `Assign`: it doesn't keep a page from
+  tracking its changes, and only the parts that show its entries re-render.
+
+### Coming from Phoenix LiveView
+
+| LiveView | nexus |
+|---|---|
+| `defmodule MyAppWeb.OrdersLive` + `live "/orders", OrdersLive` | a struct + `view.Live[*Orders]("/orders", gates…)` |
+| `mount(params, session, socket)` | `Mount(ctx, [*view.Socket], deps…, pathParams…) error` |
+| `handle_params(params, uri, socket)` | `Params(ctx, deps…, u *url.URL) error` |
+| `handle_event("cancel", params, socket)` + `phx-click="cancel"` | `Cancel(ctx, deps…, args…) error` + `onclick={ view.Send(p.Cancel, id) }` |
+| `phx-submit` / `phx-change` | `view.Submit(p.Save)` / `view.Change(p.Validate)` with a `form:`-tagged struct |
+| `handle_info(msg, socket)` + `Phoenix.PubSub.subscribe` | `Info(ctx, deps…, msg view.Message) error` + `sock.Subscribe(topic)`, `view.Broadcast` |
+| PubSub across nodes | `view.UseRelay(viewrelay.New(…))` (Redis) |
+| `assign(socket, :rows, rows)` / `socket.assigns.rows` | `p.Rows.Set(rows)` / `p.Rows.Get()` on a `view.Assign` field |
+| `update(socket, :count, &(&1 + 1))` | `p.Count.Update(func(n *int) { *n++ })` |
+| change tracking (only changed assigns re-render) | the same, for pages whose fields are all `Assign`s |
+| `render(assigns)` + HEEx | `templ (p *Orders) Render()` |
+| function components | templ components |
+| `live_component` + `phx-target={@myself}` | `@view.Component[*Cart](id, props)` — events reach their instance without a target |
+| `update(assigns, socket)` / `send_update` | `Update(ctx, deps…, props) error` / `view.UpdateComponent[*Cart](ctx, id, props)` |
+| `push_patch` / `push_navigate` / `<.link patch navigate>` | `view.PushPatch` / `view.PushNavigate` / `@view.Link(href)` |
+| `phx-update="ignore"` | `data-nx-ignore` on an element with an `id` |
+| JS hooks | islands (Vue/React/TS components), `view.State` signals for browser-only state |
+| form recovery on reconnect | the same (`view.Change` forms are re-sent) |
+| — | **resume**: a reconnect within `view.ResumeGrace` keeps the page's state |
+| `Phoenix.LiveViewTest` | `viewtest.Mount` (the real runtime in Go), `viewtest.Browser` (Chrome) |
+| `allow_upload` / `live_file_input` / `consume_uploaded_entries` | a `view.Upload` field / `{ p.Avatar.Input()... }` / `p.Avatar.Consume(fn)` |
+| streams, presence | not yet |
+
 ### Form fields
 
 A live page re-renders after every event, and the browser patches the page

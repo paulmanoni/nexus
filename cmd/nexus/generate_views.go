@@ -35,9 +35,12 @@ of date (a CI drift gate).`,
 			if check {
 				return checkViews(root, stdout)
 			}
-			changed, err := viewgen.Module(root)
+			changed, warnings, err := viewgen.WriteModule(root)
 			for _, path := range changed {
 				fmt.Fprintf(stdout, "wrote %s\n", displayRel(path))
+			}
+			for _, w := range warnings {
+				fmt.Fprintf(stderr, "warning: %s\n", viewsError(root, w))
 			}
 			if err != nil {
 				return err

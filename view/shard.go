@@ -128,6 +128,7 @@ func (d *shardDef) serve(c *httpx.Ctx) {
 // first in a component registered with Shard.
 func ShardStart() templ.Component {
 	return templ.ComponentFunc(func(ctx context.Context, w io.Writer) error {
+		taintFrom(ctx)
 		r := renderFrom(ctx)
 		if r == nil {
 			return errors.New("view: a shard rendered outside a view page — register the page with view.Page or view.HTML")

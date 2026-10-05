@@ -10,6 +10,7 @@ import (
 	"go/token"
 	"os"
 	"path/filepath"
+	"reflect"
 	"regexp"
 	"sort"
 	"strconv"
@@ -171,7 +172,7 @@ func usedTypes(t *parser.HTMLTemplate) []string {
 // by hand, state structs (types with *view.Signal fields) and view.Expose
 // calls.
 func Scan(dir string) (*Package, error) {
-	pkg := &Package{Shards: map[string]bool{}, Pages: map[string]bool{}, States: map[string][]string{}, Exposed: map[string]bool{}}
+	pkg := &Package{Shards: map[string]bool{}, Pages: map[string]bool{}, States: map[string][]string{}, Exposed: map[string]bool{}, Structs: map[string]*Fields{}}
 	matches, err := filepath.Glob(filepath.Join(dir, "*.go"))
 	if err != nil {
 		return nil, err
@@ -184,9 +185,16 @@ func Scan(dir string) (*Package, error) {
 		if err != nil {
 			return nil, err
 		}
-		file, err := goparser.ParseFile(token.NewFileSet(), path, src, 0)
+		fset := token.NewFileSet()
+		file, err := goparser.ParseFile(fset, path, src, 0)
 		if err != nil {
 			continue
+		}
+		view := "view"
+		for _, im := range file.Imports {
+			if p, _ := strconv.Unquote(im.Path.Value); p == ViewImport && im.Name != nil {
+				view = im.Name.Name
+			}
 		}
 		ast.Inspect(file, func(n ast.Node) bool {
 			switch n := n.(type) {
@@ -194,6 +202,9 @@ func Scan(dir string) (*Package, error) {
 				st, ok := n.Type.(*ast.StructType)
 				if !ok {
 					return true
+				}
+				if fields := structFields(fset, src, st, view); len(fields.Assigns) > 0 {
+					pkg.Structs[n.Name.Name] = fields
 				}
 				for _, f := range st.Fields.List {
 					if !strings.Contains(string(src[f.Type.Pos()-1:f.Type.End()-1]), "view.Signal") {
@@ -225,6 +236,40 @@ func Scan(dir string) (*Package, error) {
 		})
 	}
 	return pkg, nil
+}
+
+// structFields sorts a struct's fields into view.Assigns and the others;
+// signals are neither.
+func structFields(fset *token.FileSet, src []byte, st *ast.StructType, view string) *Fields {
+	out := &Fields{}
+	for _, f := range st.Fields.List {
+		typ := string(src[f.Type.Pos()-1 : f.Type.End()-1])
+		if f.Tag != nil {
+			if tag, err := strconv.Unquote(f.Tag.Value); err == nil && reflect.StructTag(tag).Get("view") == "-" {
+				continue
+			}
+		}
+		switch {
+		case strings.HasPrefix(typ, view+".Assign["):
+			for _, name := range f.Names {
+				out.Assigns = append(out.Assigns, name.Name)
+			}
+			continue
+		case strings.HasPrefix(typ, "*"+view+".Signal["):
+			continue
+		}
+		pos := fset.Position(f.Pos())
+		at := &PositionError{File: filepath.ToSlash(pos.Filename), Line: pos.Line, Col: pos.Column}
+		if len(f.Names) == 0 {
+			out.Plain = append(out.Plain, Field{Name: strings.TrimPrefix(typ, "*"), Type: typ, At: at})
+		}
+		for _, name := range f.Names {
+			p := fset.Position(name.Pos())
+			out.Plain = append(out.Plain, Field{Name: name.Name, Type: typ,
+				At: &PositionError{File: at.File, Line: p.Line, Col: p.Column}})
+		}
+	}
+	return out
 }
 
 // isViewCall reports whether e is a call view.name(…) or view.name[T](…).

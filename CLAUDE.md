@@ -320,7 +320,18 @@ frames; statics sent once per connection by fingerprint id, then only changed dy
 loop steps `{"k":[…]}`, long markup by ref `{"r":id}`, opaque markup as a token patch `{"p":…}`) — rdiff.go,
 mirrored by runtime.js; uninstrumented code (hand-written components, plain `templ generate`) is one
 dynamic (`go run …/view/viewgen/cmd/instrument <dir>`; `make view-ui` for the kit); only modules that
-require nexus/v2 are instrumented. Reconnect = jittered backoff + queued events + **resume**: the server
+require nexus/v2 are instrumented. **Change tracking:** a live page whose fields are all `view.Assign[T]` (`Get`/`Set`/`Update`)
+skips spots (`Rec.Guard`: loops/branches/component calls using no template locals) whose Assigns and `view.Errors`
+didn't change; checked against a full render under nexus dev/tests (`NEXUS_VIEW_VERIFY`); the compiler warns
+(lsp/generate views/dev/doctor, `viewgen.Plan.Warnings`) on a plain field of such a page and a `view.Use` service call in its Render.
+**Live components** (LiveComponents): `view.LiveComponent[*T](ctors…)` registers, `@view.Component[*T](id, props)`
+places (instance per id while rendered); `Mount(ctx, deps…, props)`, optional `Update` on new props,
+`view.UpdateComponent[*T](ctx, id, props)`; `view.Send(c.M)` reaches its own instance (Send names the component type,
+the browser finds the nearest `<nx-c data-nx-ct>`); with Assigns a component event renders only it + spots around it. A field tagged `view:"-"` (not read by Render, or fixed after
+Mount) leaves a page tracked. Split Render along what changes together (`@table(p.tableView())`…): a part is skipped whole.
+**Uploads**: a `view.Upload` field (`Allow(view.UploadConfig{Accept, MaxEntries, MaxSize})` in Mount), `<input type="file"
+{ p.Avatar.Input()... }/>`, `Entries()` (Progress/Done/Err), `Busy()`, `Consume(func(e, *os.File) error)` in the submit event,
+`view.CancelUpload(&p.Avatar, ref)`; files POST to `<page>/_upload?t=` (gates, owner-bound, one-shot) into temp files. Reconnect = jittered backoff + queued events + **resume**: the server
 parks the page (state + subscriptions) for `view.ResumeGrace` (30s) under a token; same page + same identity
 carries on; otherwise a fresh mount, and the browser first re-sends each `view.Change` form (LiveView form
 recovery) before queued events, holding the fresh render until those replies arrive. Scale: a page runs on its own goroutine after

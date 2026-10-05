@@ -56,6 +56,11 @@ type Result struct {
 	// maps onto it, and back, through SourceMap.
 	RawGo     []byte
 	SourceMap *parser.SourceMap
+
+	// Warnings don't stop the build (track.go); Pages are the types whose
+	// method components it compiled that use view.Assign.
+	Warnings []*PositionError
+	Pages    map[string]bool
 }
 
 // Component is what the package pass needs to know about one component.
@@ -83,7 +88,8 @@ type Package struct {
 	ImportPath string
 	// Lookup returns the signal fields of state type typ in another package.
 	Lookup  func(importPath, typ string) []string
-	Exposed map[string]bool // types exposed in Go with view.Expose
+	Exposed map[string]bool    // types exposed in Go with view.Expose
+	Structs map[string]*Fields // struct types that have view.Assign fields
 	// Live has the generated Go record a live page's render tree
 	// (Instrument): set for a module that depends on nexus, whose view
 	// package the recorder calls.
@@ -121,6 +127,7 @@ func File(name, src string, pkg *Package) (*Result, error) {
 		pkg:        pkg,
 		importView: strings.Contains(src, strconv.Quote(ViewImport)),
 		imports:    map[string]string{},
+		livePages:  map[string]bool{},
 	}
 	var doc string
 	var docAt parser.Position
@@ -157,6 +164,7 @@ func File(name, src string, pkg *Package) (*Result, error) {
 		Package: strings.TrimSpace(strings.TrimPrefix(tf.Package.Expression.Value, "package")),
 		Go:      out, Twins: f.twins, Components: f.components, Imports: f.imports,
 		RawGo: buf.Bytes(), SourceMap: gen.SourceMap,
+		Warnings: f.warnings, Pages: f.livePages,
 	}, nil
 }
 
@@ -168,6 +176,8 @@ type fileRewriter struct {
 	imports    map[string]string
 	components []*Component
 	errs       []error
+	warnings   []*PositionError
+	livePages  map[string]bool
 }
 
 // collectImports records the import lines of a file-level Go block.
@@ -230,6 +240,8 @@ type component struct {
 	uses     bool            // uses any reactive feature
 	calls    []string        // components it renders
 	method   bool            // a method component (a live page's Render)
+	recvName string          // a method component's receiver, and its type
+	recvType string
 }
 
 func (f *fileRewriter) template(t *parser.HTMLTemplate, doc string, docAt parser.Position) {
@@ -263,6 +275,7 @@ func (f *fileRewriter) template(t *parser.HTMLTemplate, doc string, docAt parser
 		return
 	}
 	info.Uses = usedTypes(t)
+	c.trackWarnings(t)
 	t.Children = c.nodes(t.Children)
 	if c.method {
 		if info.Method != "" || info.HasGates {
@@ -318,6 +331,13 @@ func (c *component) signature(t *parser.HTMLTemplate) bool {
 		recv := fd.Recv.List[0].Type
 		if star, ok := recv.(*ast.StarExpr); ok {
 			recv = star.X
+		}
+		if generic := recvType(recv); generic != "?" && generic != "" {
+			// A generic type's too (Page[R, I]), for its warnings.
+			c.recvType = generic
+			if names := fd.Recv.List[0].Names; len(names) == 1 && names[0].Name != "_" {
+				c.recvName = names[0].Name
+			}
 		}
 		if id, ok := recv.(*ast.Ident); ok {
 			c.name = id.Name + "." + fd.Name.Name

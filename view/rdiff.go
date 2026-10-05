@@ -1,6 +1,7 @@
 package view
 
 import (
+	"encoding/binary"
 	"hash/maphash"
 	"strconv"
 )
@@ -30,9 +31,15 @@ import (
 // treeDiffer is a connection's server side: the tree the browser holds and
 // the statics it has been sent.
 type treeDiffer struct {
-	prev *rframe
-	ids  map[string]int // fingerprint → the id the browser knows its statics by
-	strs map[string]int // long markup's sig → the id the browser keeps it under
+	prev  *rframe
+	ids   map[string]int // fingerprint → the id the browser knows its statics by
+	strs  map[string]int // long markup's sig → the id the browser keeps it under
+	spots *spotTable     // the spots of prev, for a tracked render to skip
+
+	// What a diff under way gave ids, undone when it can't finish, and the
+	// skipped spots it needed the markup of.
+	newIDs, newStrs []string
+	missing         []uint64
 }
 
 // Markup of at least refMinLen bytes is kept by the connection, up to
@@ -45,24 +52,46 @@ const (
 
 // reset forgets everything the browser held: the next reply is the whole
 // tree with every static.
-func (t *treeDiffer) reset() { t.prev, t.ids, t.strs = nil, nil, nil }
+func (t *treeDiffer) reset() { t.prev, t.ids, t.strs, t.spots = nil, nil, nil, nil }
 
 // next returns the reply for a new render: the change from the previous
 // tree, or (full) the tree itself.
 func (t *treeDiffer) next(root *rframe) (msg any, full bool) {
+	msg, full, _ = t.nextSpots(root, nil)
+	return msg, full
+}
+
+// nextSpots is next for a tracked render, whose spots table holds. When the
+// reply would need the markup of spots the render skipped — a new frame
+// around them, or the whole tree — it returns their keys and leaves the
+// differ as it was: render them, and try again.
+func (t *treeDiffer) nextSpots(root *rframe, table *spotTable) (msg any, full bool, missing []uint64) {
 	if t.ids == nil {
 		t.ids, t.strs = map[string]int{}, map[string]int{}
 	}
+	t.newIDs, t.newStrs, t.missing = t.newIDs[:0], t.newStrs[:0], nil
 	prev := t.prev
-	defer func() { t.prev = shadow(root) }()
 	if prev == nil || prev.fp != root.fp {
-		return t.frame(root), true
+		msg, full = t.frame(root), true
+	} else if u := t.frameChange(prev, root); u == nil {
+		msg = map[string]any{"u": map[string]any{}}
+	} else {
+		msg = u
 	}
-	u := t.frameChange(prev, root)
-	if u == nil {
-		return map[string]any{"u": map[string]any{}}, false
+	if missing = t.missing; missing != nil {
+		for _, k := range t.newIDs {
+			delete(t.ids, k)
+		}
+		for _, k := range t.newStrs {
+			delete(t.strs, k)
+		}
+		return nil, false, missing
 	}
-	return u, false
+	t.prev, t.spots = shadow(root, table), table
+	if table != nil {
+		table.keyed = nil
+	}
+	return msg, full, nil
 }
 
 // frame encodes a whole frame.
@@ -72,6 +101,7 @@ func (t *treeDiffer) frame(f *rframe) map[string]any {
 	if !known {
 		id = len(t.ids)
 		t.ids[f.fp] = id
+		t.newIDs = append(t.newIDs, f.fp)
 		out["s"] = f.s
 	}
 	out["t"] = id
@@ -95,6 +125,9 @@ func (t *treeDiffer) dyn(v any) any {
 		return map[string]any{"c": items}
 	case string:
 		return t.str(v)
+	case *kept:
+		t.missing = append(t.missing, v.key)
+		return nil
 	}
 	return v
 }
@@ -113,6 +146,7 @@ func (t *treeDiffer) str(s string) any {
 	}
 	id := len(t.strs)
 	t.strs[k] = id
+	t.newStrs = append(t.newStrs, k)
 	return map[string]any{"r": id, "v": s}
 }
 
@@ -133,16 +167,22 @@ func (t *treeDiffer) frameChange(a, b *rframe) map[string]any {
 
 func (t *treeDiffer) dynChange(a, b any) (any, bool) {
 	switch b := b.(type) {
+	case *kept:
+		if sameShadow(a, b.s.value) {
+			return nil, false
+		}
+		t.missing = append(t.missing, b.key)
+		return nil, true
 	case string:
 		old, ok := a.(strSig)
 		if !ok {
 			return t.str(b), true
 		}
-		k := sig(b)
+		k := sigArr(b)
 		if old.h == k {
 			return nil, false
 		}
-		if _, kept := t.strs[k]; !kept && old.long != "" && len(b) > longMarkup {
+		if _, kept := t.strs[string(k[:])]; !kept && old.long != "" && len(b) > longMarkup {
 			if p, ok := stringPatch(old.long, b); ok {
 				return map[string]any{"p": p}, true
 			}
@@ -243,24 +283,61 @@ func itemKeys(items []*rframe) []string {
 func hashFrame(h *maphash.Hash, f *rframe) {
 	h.WriteString(f.fp)
 	for _, d := range f.d {
-		switch d := d.(type) {
-		case string:
-			h.WriteByte(1)
-			h.WriteString(sig(d))
-		case strSig:
-			h.WriteByte(1)
-			h.WriteString(d.h)
-		case *rframe:
-			h.WriteByte(2)
-			hashFrame(h, d)
-		case *rcomp:
-			h.WriteByte(3)
-			for _, it := range d.items {
-				hashFrame(h, it)
-			}
-			h.WriteByte(4)
+		hashDyn(h, d)
+	}
+}
+
+// hashDyn hashes a dynamic the same whether it is rendered, a shadow, or a
+// skipped spot standing for its shadow.
+func hashDyn(h *maphash.Hash, d any) {
+	switch d := d.(type) {
+	case string:
+		h.WriteByte(1)
+		k := sigArr(d)
+		h.Write(k[:])
+	case strSig:
+		h.WriteByte(1)
+		h.Write(d.h[:])
+	case *rframe:
+		h.WriteByte(2)
+		hashFrame(h, d)
+	case *rcomp:
+		h.WriteByte(3)
+		for _, it := range d.items {
+			hashFrame(h, it)
+		}
+		h.WriteByte(4)
+	case *kept:
+		hashDyn(h, d.s.value)
+	}
+}
+
+// dynSig is hashDyn's sum.
+func dynSig(d any) string {
+	var a, b maphash.Hash
+	a.SetSeed(fpSeeds[0])
+	b.SetSeed(fpSeeds[1])
+	hashDyn(&a, d)
+	hashDyn(&b, d)
+	return sum128(&a, &b)
+}
+
+// sameShadow reports whether a shadow is the one a skipped spot stands for.
+func sameShadow(a, b any) bool {
+	switch a := a.(type) {
+	case strSig:
+		bs, ok := b.(strSig)
+		return ok && a.h == bs.h
+	case *rframe:
+		if bf, ok := b.(*rframe); ok && a == bf {
+			return true
+		}
+	case *rcomp:
+		if bc, ok := b.(*rcomp); ok && a == bc {
+			return true
 		}
 	}
+	return b != nil && dynSig(a) == dynSig(b)
 }
 
 // stringPatch is the token patch from old to new markup, when it is clearly
@@ -282,38 +359,59 @@ func stringPatch(old, new string) ([]any, bool) {
 const longMarkup = 1024
 
 type strSig struct {
-	h    string // sig of the markup
-	long string // the markup itself, when longer than longMarkup
+	h    [16]byte // sig of the markup
+	long string   // the markup itself, when longer than longMarkup
 }
+
+// emptyShadow is every empty dynamic's shadow: one value, not one each.
+var emptyShadow any = strSig{h: sigArr("")}
 
 // sig is a 128-bit maphash of s, as a string.
 func sig(s string) string {
-	var a, b maphash.Hash
-	a.SetSeed(fpSeeds[0])
-	b.SetSeed(fpSeeds[1])
-	a.WriteString(s)
-	b.WriteString(s)
-	return sum128(&a, &b)
+	k := sigArr(s)
+	return string(k[:])
 }
 
-func shadow(f *rframe) *rframe {
+// sigArr is sig as an array: no allocation.
+func sigArr(s string) [16]byte {
+	var out [16]byte
+	binary.LittleEndian.PutUint64(out[:8], maphash.String(fpSeeds[0], s))
+	binary.LittleEndian.PutUint64(out[8:], maphash.String(fpSeeds[1], s))
+	return out
+}
+
+// shadow also gives each spot of table the shadow it rendered.
+func shadow(f *rframe, table *spotTable) *rframe {
 	out := &rframe{fp: f.fp, d: make([]any, len(f.d))}
 	for i, d := range f.d {
 		switch d := d.(type) {
 		case string:
-			ss := strSig{h: sig(d)}
+			if d == "" {
+				out.d[i] = emptyShadow
+				continue
+			}
+			ss := strSig{h: sigArr(d)}
 			if len(d) > longMarkup {
 				ss.long = d
 			}
 			out.d[i] = ss
 		case *rframe:
-			out.d[i] = shadow(d)
+			out.d[i] = shadow(d, table)
 		case *rcomp:
 			c := &rcomp{items: make([]*rframe, len(d.items))}
 			for j, it := range d.items {
-				c.items[j] = shadow(it)
+				c.items[j] = shadow(it, table)
 			}
 			out.d[i] = c
+		case *kept:
+			out.d[i] = d.s.value
+		}
+	}
+	if table != nil {
+		for _, k := range table.keyed[f] {
+			if s := table.spots[k.key]; s != nil {
+				s.value = out.d[k.i]
+			}
 		}
 	}
 	return out

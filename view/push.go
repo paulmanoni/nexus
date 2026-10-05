@@ -51,6 +51,10 @@ func (s *Socket) close() {
 		}
 	}
 	s.topics = nil
+	for _, u := range s.uploads {
+		u.clear()
+	}
+	s.uploads = nil
 }
 
 // Broadcast sends data to every live page subscribed to topic — from an
