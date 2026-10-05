@@ -6,6 +6,27 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [2.18.0] - 2026-10-05
+
+### Changed (breaking)
+
+- view: **one kind of live view.** A live view is a struct that embeds
+  `view.LiveView` (by value); routed it is a page — `view.Live[*T](path, gates…)`
+  or `//nexus:live <path>` on the type — and embedded it is a part of a page —
+  `@view.Component[*T](id, props)`, with no registration unless it takes
+  dependencies (`view.Live[*T]("")`, or `//nexus:live` with no path).
+  - Input is one props struct: `Mount(ctx, deps…, props)`; routed, bound from
+    `path:`/`query:` tags and checked by `validate:` (422 on failure); embedded,
+    the parent's. `Update(ctx, deps…, props)` runs on a URL patch or new props
+    (else Mount again). `Params` is gone.
+  - `view.LiveView` gives `Connected`, `Subscribe`, `Track`/`Untrack`,
+    `PushPatch`/`PushNavigate`, `PutFlash`/`Flash` and `ID`. The `*view.Socket`
+    parameter and `view.PushPatch(ctx, …)` / `view.PushNavigate(ctx, …)` are gone.
+  - Embedded views subscribe (their own `Info`) and track presence on their
+    own; one the page stops rendering takes them along.
+  - `view.LiveComponent` is gone. `.Provide` on `view.Live` is optional: without
+    a provider the type starts from its zero value.
+
 ## [2.17.0] - 2026-10-05
 
 ### Added
