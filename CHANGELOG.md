@@ -6,6 +6,24 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [2.19.1] - 2026-10-06
+
+### Fixed
+
+- view: **random ids from component libraries no longer change every
+  render.** templUI and shadcn-templ name an element rendered without an id
+  `id-` + `crypto/rand.Text()`; a live render now renames each after its place
+  on the page. Before, every event changed those ids in the browser, a page
+  with such a component in its layout never skipped a part (each event logged
+  "rendered differently … the full render was sent"), and a page never joined
+  its HTTP render, so connecting sent it again. A live page's HTTP render is
+  now recorded like the connection's.
+- views compiler: **a struct a live page embeds by value is looked into**, as
+  the runtime does since 2.19.0. A page embedding a list helper whose fields
+  are Assigns (or `view:"-"`) — from its own package or another of the
+  module — was warned about as "keeps the live page rendering in full"; now
+  only a plain field inside an embedded struct is, at that field.
+
 ## [2.19.0] - 2026-10-05
 
 ### Added
