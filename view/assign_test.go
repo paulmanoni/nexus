@@ -443,7 +443,7 @@ func TestAssignRandomEvents(t *testing.T) {
 		if server.spots != nil {
 			skipped += server.spots.kept
 		}
-		want, _, err := in.render(ctx, false)
+		want, _, err := in.render(ctx)
 		if err != nil {
 			t.Fatal(err)
 		}

@@ -6,6 +6,7 @@ import (
 	"encoding/binary"
 	"hash/maphash"
 	"io"
+	"strconv"
 	"strings"
 
 	templruntime "github.com/a-h/templ/runtime"
@@ -50,6 +51,8 @@ type recorder struct {
 	gen     uint64          // the page render this is, for the components it keeps
 
 	streamNext bool // the next loop is a view.Stream's
+
+	ids map[string]string // the random ids of this render, and what they became
 }
 
 // recNode is a frame (comp false) or a loop (comp true) being recorded.
@@ -61,6 +64,7 @@ type recNode struct {
 
 	key    uint64 // its place on the page: its parent's key and its own
 	kids   int    // the frames and loops opened in it so far
+	idn    int    // the random ids first seen in it so far
 	reads  uint64 // the Assigns read in it, its children's included
 	taint  bool   // it can't be skipped: it made a signal, holds a shard, …
 	nested []uint64
@@ -349,9 +353,90 @@ func (r *recorder) endItem() {
 func (r *recorder) flush() {
 	_ = r.w.Flush()
 	if r.out.Len() > r.mark {
-		r.top().parts = append(r.top().parts, recPart{text: string(r.out.Bytes()[r.mark:])})
+		text := string(r.out.Bytes()[r.mark:])
+		if stable := r.stableIDs(text); stable != text {
+			r.out.Truncate(r.mark)
+			r.out.WriteString(stable)
+			text = stable
+		}
+		r.top().parts = append(r.top().parts, recPart{text: text})
 		r.mark = r.out.Len()
 	}
+}
+
+// stableIDs replaces the random ids in s with ones named after where they
+// first appear on the page. Component libraries (templUI, shadcn-templ)
+// give an element they render without an id a random one —
+// "id-" + crypto/rand.Text() — so the same state would render differently
+// every time: each event would change those ids in the browser, a tracked
+// render (assign.go) could never match a full one, and the HTTP render
+// never the connection's. A place on the page — the frame it is first
+// written in, and how many random ids came before it there — is the same in
+// every render of the same state, so the id is too; one written again
+// later in the render keeps the name it was first given.
+func (r *recorder) stableIDs(s string) string {
+	i := strings.Index(s, randomIDPrefix)
+	if i < 0 {
+		return s
+	}
+	var b strings.Builder
+	last := 0
+	for ; i >= 0; i = nextRandomID(s, i+1) {
+		end := i + len(randomIDPrefix) + randomIDLen
+		if !isRandomID(s, i) {
+			continue
+		}
+		raw := s[i:end]
+		id, ok := r.ids[raw]
+		if !ok {
+			n := r.top()
+			id = randomIDPrefix + "nx" + strconv.FormatUint(mix(n.key, uint64(n.idn)), 36)
+			n.idn++
+			if r.ids == nil {
+				r.ids = map[string]string{}
+			}
+			r.ids[raw] = id
+		}
+		b.WriteString(s[last:i])
+		b.WriteString(id)
+		last = end
+	}
+	if last == 0 {
+		return s
+	}
+	b.WriteString(s[last:])
+	return b.String()
+}
+
+const (
+	randomIDPrefix = "id-"
+	randomIDLen    = 26 // crypto/rand.Text: base32, A–Z and 2–7
+)
+
+func nextRandomID(s string, from int) int {
+	if j := strings.Index(s[from:], randomIDPrefix); j >= 0 {
+		return from + j
+	}
+	return -1
+}
+
+// isRandomID reports whether s holds a random id at i: "id-" and 26
+// characters of rand.Text's alphabet, not part of a longer word.
+func isRandomID(s string, i int) bool {
+	end := i + len(randomIDPrefix) + randomIDLen
+	if end > len(s) || (i > 0 && idChar(s[i-1])) || (end < len(s) && idChar(s[end])) {
+		return false
+	}
+	for _, c := range []byte(s[i+len(randomIDPrefix) : end]) {
+		if !(c >= 'A' && c <= 'Z' || c >= '2' && c <= '7') {
+			return false
+		}
+	}
+	return true
+}
+
+func idChar(c byte) bool {
+	return c >= 'a' && c <= 'z' || c >= 'A' && c <= 'Z' || c >= '0' && c <= '9' || c == '-' || c == '_'
 }
 
 // tree finishes the render: the root frame, every open frame closed, and

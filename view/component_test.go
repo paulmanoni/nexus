@@ -213,7 +213,7 @@ func TestComponentRandomEvents(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		want, _, err := in.render(ctx, false)
+		want, _, err := in.render(ctx)
 		if err != nil {
 			t.Fatal(err)
 		}

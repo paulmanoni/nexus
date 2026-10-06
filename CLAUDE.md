@@ -311,7 +311,7 @@ conventions `Mount(ctx, deps…, [props P]) error` (P a struct: routed → bound
 props; else Mount again), `templ (x *T) Render()`, events = exported `func(ctx, deps…, args…) error`
 (deps are pointer/interface params) sent with `view.Send(x.Method, args…)`; the page is re-rendered
 and patched in place (focus/typing kept; signals win over the server copy; an element with an `id` and
-`data-nx-ignore` is left as the browser has it until its id changes — script-drawn charts, app shells). Push: `x.Subscribe(topics…)`
+`data-nx-ignore` is left as the browser has it until its id changes — script-drawn charts, app shells; a component library's random ids — templUI/shadcn-templ `id-`+`rand.Text()` — are renamed after their place on the page, so one state renders one markup). Push: `x.Subscribe(topics…)`
 in Mount (embedded views too) + `view.Broadcast(ctx, topic, data)` from anywhere → the subscribed views' optional
 `Info(ctx, deps…, msg view.Message) error`, then re-render; across replicas with `view.UseRelay(r)` (`view.Relay`: Publish/Subscribe bytes;
 Redis pub/sub `extension/cache/redis/viewrelay.New(Config{URL})`, `view.NewMemoryRelay()`), data as JSON —

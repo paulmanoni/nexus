@@ -476,10 +476,11 @@ func (in *instance) routedProps(param func(string) string, u *url.URL) (reflect.
 	return bindProps(in.def.props, param, u)
 }
 
-// render renders the instance: its Render() component into HTML, and — for
-// the live connection (tree true) — into its render tree. A panic becomes an
-// error.
-func (in *instance) render(ctx context.Context, tree bool) (_ []byte, _ *rframe, err error) {
+// render renders the instance: its Render() component into HTML and its
+// render tree. The page's first render, over HTTP, is recorded too, so its
+// markup is what the connection renders (stable ids, rendered.go). A panic
+// becomes an error.
+func (in *instance) render(ctx context.Context) (_ []byte, _ *rframe, err error) {
 	defer func() {
 		if r := recover(); r != nil {
 			err = fmt.Errorf("Render panicked: %v", r)
@@ -493,13 +494,6 @@ func (in *instance) render(ctx context.Context, tree bool) (_ []byte, _ *rframe,
 	ctx = context.WithValue(ctx, formErrorsKey{}, in.errs)
 	in.gen++
 	ctx = withInstance(ctx, in)
-	if !tree {
-		if err := comp.Render(withRender(ctx, &render{}), &buf); err != nil {
-			return nil, nil, err
-		}
-		in.sweep(in.gen)
-		return buf.Bytes(), nil, nil
-	}
 	ctx, rec := withRecorder(ctx, &buf)
 	if err := comp.Render(withRender(ctx, &render{}), rec.w); err != nil {
 		rec.tree()
@@ -627,7 +621,7 @@ func (d *liveDef) pageHandler() any {
 		}
 		socket := strings.TrimSuffix(c.Request.URL.Path, "/") + "/_live"
 		return templ.ComponentFunc(func(ctx context.Context, w io.Writer) error {
-			body, _, err := in.render(ctx, false)
+			body, _, err := in.render(ctx)
 			if err != nil {
 				return err
 			}

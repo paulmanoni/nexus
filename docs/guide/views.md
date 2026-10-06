@@ -191,6 +191,13 @@ func (o *Order) Update(ctx context.Context, svc *OrderService, p OrderProps) err
   something a script drew into, like a chart canvas, or a shell whose menus
   and collapsed state the user set. A render that gives it a new `id` (a chart
   whose data changed) replaces it.
+- **Component libraries' random ids are made stable.** templUI and
+  shadcn-templ give an element rendered without an `id` a random one
+  (`id-` + `crypto/rand.Text()`). A live render renames each after its place on
+  the page, so the same state renders the same markup: events don't churn
+  those ids, tracked renders skip what didn't change, and the HTTP render
+  joins the connection's. Pass an `ID` when script or CSS outside the
+  component needs to find the element.
 - The first request renders the page on the server; the page then connects
   (`<path>/_live`), mounts again with `Connected()` true, and reconnects if the
   socket drops, resuming its state (see [What travels](#what-travels)). Gates
