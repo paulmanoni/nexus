@@ -90,6 +90,11 @@ type Package struct {
 	Lookup  func(importPath, typ string) []string
 	Exposed map[string]bool    // types exposed in Go with view.Expose
 	Structs map[string]*Fields // struct types that have view.Assign fields
+	// AllStructs is every struct type, for the structs a page embeds.
+	AllStructs map[string]*Fields
+	// LookupStruct returns the fields of struct type typ in another package
+	// of the module, its embedded structs' included; nil when unknown.
+	LookupStruct func(importPath, typ string) *Fields
 	// Live has the generated Go record a live page's render tree
 	// (Instrument): set for a module that depends on nexus, whose view
 	// package the recorder calls.

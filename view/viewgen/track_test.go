@@ -110,3 +110,84 @@ templ (p *Plain) Render() {
 		}
 	}
 }
+
+// A struct a page embeds by value is part of it, as at run time: its
+// Assigns are the page's, from this package or another of the module, and
+// only a plain field in it is pointed out.
+func TestTrackWarningsEmbedded(t *testing.T) {
+	root := t.TempDir()
+	writeTree(t, root, map[string]string{
+		"go.mod":  "module example.com/app\n\ngo 1.26\n",
+		"main.go": "package main\n\nfunc main() {}\n",
+		"kit/list.go": `package kit
+
+import "github.com/paulmanoni/nexus/v2/view"
+
+type List struct {
+	view.LiveView
+	Page view.Assign[int]
+	base string ` + "`view:\"-\"`" + `
+}
+
+type Leaky struct {
+	Page  view.Assign[int]
+	Cache map[string]int
+}
+`,
+		"orders/orders.go": `package orders
+
+import (
+	"example.com/app/kit"
+	"github.com/paulmanoni/nexus/v2/view"
+)
+
+type paging struct {
+	Size view.Assign[int]
+}
+
+type Orders struct {
+	kit.List
+	paging
+	Rows view.Assign[[]string]
+}
+
+type Archive struct {
+	kit.Leaky
+	Rows view.Assign[[]string]
+}
+`,
+		"orders/orders.templ": `package orders
+
+import "strconv"
+
+templ (o *Orders) Render() {
+	<p>{ strconv.Itoa(o.Page.Get()) } { strconv.Itoa(o.Size.Get()) }</p>
+}
+
+templ (a *Archive) Render() {
+	<p>{ strconv.Itoa(len(a.Cache)) }</p>
+}
+`,
+	})
+	plan, err := GenerateWith(root, Options{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var got []string
+	for _, w := range plan.Warnings {
+		rel, _ := filepath.Rel(root, filepath.FromSlash(w.File))
+		got = append(got, filepath.ToSlash(rel)+":"+strconv.Itoa(w.Line)+": "+w.Msg)
+	}
+	want := []string{
+		"orders/orders.templ:10: a.Cache is not a view.Assign",
+		"kit/list.go:13: Archive.Cache keeps the live page Archive rendering in full",
+	}
+	if len(got) != len(want) {
+		t.Fatalf("warnings:\n%s", strings.Join(got, "\n"))
+	}
+	for i, w := range want {
+		if !strings.HasPrefix(got[i], w) {
+			t.Fatalf("warning %d = %s\nwant prefix %s", i, got[i], w)
+		}
+	}
+}

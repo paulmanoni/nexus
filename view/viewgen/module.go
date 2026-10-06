@@ -165,6 +165,13 @@ func GenerateWith(root string, opts Options) (*Plan, error) {
 		dir := filepath.Join(modDir, filepath.FromSlash(strings.TrimPrefix(strings.TrimPrefix(path, modPath), "/")))
 		return scan(dir).States[typ]
 	}
+	lookupStruct := func(path, typ string) *Fields {
+		if path != modPath && !strings.HasPrefix(path, modPath+"/") {
+			return nil
+		}
+		dir := filepath.Join(modDir, filepath.FromSlash(strings.TrimPrefix(strings.TrimPrefix(path, modPath), "/")))
+		return scan(dir).fieldsOf(typ)
+	}
 	scan = func(dir string) *Package {
 		if p, ok := scanned[dir]; ok {
 			return p
@@ -173,7 +180,7 @@ func GenerateWith(root string, opts Options) (*Plan, error) {
 		if err != nil {
 			p = &Package{}
 		}
-		p.ImportPath, p.Lookup, p.Live = importPath(dir), lookup, live
+		p.ImportPath, p.Lookup, p.LookupStruct, p.Live = importPath(dir), lookup, lookupStruct, live
 		scanned[dir] = p
 		return p
 	}

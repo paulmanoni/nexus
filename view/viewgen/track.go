@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"go/scanner"
 	"go/token"
+	"slices"
 	"sort"
 	"strings"
 
@@ -28,13 +29,54 @@ import (
 type Fields struct {
 	Assigns []string
 	Plain   []Field
+	Embeds  []Field // structs embedded by value: their fields are the struct's
 }
 
-// Field is a struct field that isn't an Assign or a signal.
+// Field is a struct field that isn't an Assign or a signal — or, among
+// Embeds, a struct embedded by value: Name is its type's name, Import its
+// package's path when it is another package's.
 type Field struct {
-	Name string
-	Type string
-	At   *PositionError
+	Name   string
+	Type   string
+	At     *PositionError
+	Import string
+}
+
+// fieldsOf is the fields of struct type name with the structs it embeds
+// by value flattened in, as the runtime tracks a page: an embedded struct's
+// Assigns are the page's, and so are its plain fields. An embedded struct
+// that can't be found (outside the module) counts as one plain field. Nil
+// when name isn't a struct of the package.
+func (p *Package) fieldsOf(name string) *Fields {
+	return p.flatten(name, map[string]bool{})
+}
+
+func (p *Package) flatten(name string, seen map[string]bool) *Fields {
+	base := p.AllStructs[name]
+	if base == nil {
+		base = p.Structs[name]
+	}
+	if base == nil || seen[p.ImportPath+"."+name] {
+		return nil
+	}
+	seen[p.ImportPath+"."+name] = true
+	out := &Fields{Assigns: slices.Clone(base.Assigns), Plain: slices.Clone(base.Plain)}
+	for _, e := range base.Embeds {
+		var inner *Fields
+		switch {
+		case e.Import == "":
+			inner = p.flatten(e.Name, seen)
+		case p.LookupStruct != nil:
+			inner = p.LookupStruct(e.Import, e.Name)
+		}
+		if inner == nil {
+			out.Plain = append(out.Plain, e)
+			continue
+		}
+		out.Assigns = append(out.Assigns, inner.Assigns...)
+		out.Plain = append(out.Plain, inner.Plain...)
+	}
+	return out
 }
 
 // tracked reports whether a page of this type tracks its changes.
@@ -45,7 +87,7 @@ func (c *component) trackWarnings(t *parser.HTMLTemplate) {
 	if c.recvType == "" {
 		return
 	}
-	info := c.pkg.Structs[c.recvType]
+	info := c.pkg.fieldsOf(c.recvType)
 	if info == nil || len(info.Assigns) == 0 {
 		return
 	}
@@ -213,8 +255,8 @@ func pageWarnings(pkg *Package, pages map[string]bool) []*PositionError {
 	sort.Strings(names)
 	var out []*PositionError
 	for _, name := range names {
-		info := pkg.Structs[name]
-		if info == nil {
+		info := pkg.fieldsOf(name)
+		if info == nil || len(info.Assigns) == 0 {
 			continue
 		}
 		for _, f := range info.Plain {

@@ -177,7 +177,7 @@ func usedTypes(t *parser.HTMLTemplate) []string {
 // by hand, state structs (types with *view.Signal fields) and view.Expose
 // calls.
 func Scan(dir string) (*Package, error) {
-	pkg := &Package{Shards: map[string]bool{}, Pages: map[string]bool{}, States: map[string][]string{}, Exposed: map[string]bool{}, Structs: map[string]*Fields{}}
+	pkg := &Package{Shards: map[string]bool{}, Pages: map[string]bool{}, States: map[string][]string{}, Exposed: map[string]bool{}, Structs: map[string]*Fields{}, AllStructs: map[string]*Fields{}}
 	matches, err := filepath.Glob(filepath.Join(dir, "*.go"))
 	if err != nil {
 		return nil, err
@@ -196,10 +196,17 @@ func Scan(dir string) (*Package, error) {
 			continue
 		}
 		view := "view"
+		imports := map[string]string{} // selector → import path
 		for _, im := range file.Imports {
-			if p, _ := strconv.Unquote(im.Path.Value); p == ViewImport && im.Name != nil {
+			p, _ := strconv.Unquote(im.Path.Value)
+			if p == ViewImport && im.Name != nil {
 				view = im.Name.Name
 			}
+			name := importName(p)
+			if im.Name != nil {
+				name = im.Name.Name
+			}
+			imports[name] = p
 		}
 		ast.Inspect(file, func(n ast.Node) bool {
 			switch n := n.(type) {
@@ -208,7 +215,9 @@ func Scan(dir string) (*Package, error) {
 				if !ok {
 					return true
 				}
-				if fields := structFields(fset, src, st, view); len(fields.Assigns) > 0 {
+				fields := structFields(fset, src, st, view, imports)
+				pkg.AllStructs[n.Name.Name] = fields
+				if len(fields.Assigns) > 0 {
 					pkg.Structs[n.Name.Name] = fields
 				}
 				for _, f := range st.Fields.List {
@@ -243,9 +252,21 @@ func Scan(dir string) (*Package, error) {
 	return pkg, nil
 }
 
+// importName is the name a package is imported by when no name is given:
+// its path's last element, before a major version suffix.
+func importName(p string) string {
+	parts := strings.Split(p, "/")
+	name := parts[len(parts)-1]
+	if len(parts) > 1 && len(name) > 1 && name[0] == 'v' && strings.Trim(name[1:], "0123456789") == "" {
+		name = parts[len(parts)-2]
+	}
+	return name
+}
+
 // structFields sorts a struct's fields into view.Assigns and the others;
-// signals are neither.
-func structFields(fset *token.FileSet, src []byte, st *ast.StructType, view string) *Fields {
+// signals are neither. A struct embedded by value is set apart: its fields
+// are the page's (Package.fieldsOf).
+func structFields(fset *token.FileSet, src []byte, st *ast.StructType, view string, imports map[string]string) *Fields {
 	out := &Fields{}
 	for _, f := range st.Fields.List {
 		typ := string(src[f.Type.Pos()-1 : f.Type.End()-1])
@@ -265,6 +286,15 @@ func structFields(fset *token.FileSet, src []byte, st *ast.StructType, view stri
 		}
 		pos := fset.Position(f.Pos())
 		at := &PositionError{File: filepath.ToSlash(pos.Filename), Line: pos.Line, Col: pos.Column}
+		if len(f.Names) == 0 && !strings.HasPrefix(typ, "*") {
+			name, _, _ := strings.Cut(typ, "[") // List[R] → List
+			e := Field{Name: name, Type: typ, At: at}
+			if sel, typName, ok := strings.Cut(name, "."); ok {
+				e.Name, e.Import = typName, imports[sel]
+			}
+			out.Embeds = append(out.Embeds, e)
+			continue
+		}
 		if len(f.Names) == 0 {
 			out.Plain = append(out.Plain, Field{Name: strings.TrimPrefix(typ, "*"), Type: typ, At: at})
 		}
