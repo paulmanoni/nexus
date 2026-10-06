@@ -13,6 +13,7 @@ import (
 
 	"golang.org/x/mod/modfile"
 
+	"github.com/paulmanoni/nexus/orm/ormgen"
 	"github.com/paulmanoni/nexus/v2/config"
 	"github.com/paulmanoni/nexus/v2/view/viewgen"
 )
@@ -147,6 +148,12 @@ func projectChecks(dir string) []doctorCheck {
 		}
 	}
 
+	// The ORM: Go new enough, the generated code builds, and which models
+	// read by reflection instead.
+	if mf != nil && requires(mf, "github.com/paulmanoni/nexus/orm") {
+		out = append(out, ormChecks(dir, mf)...)
+	}
+
 	// auth: where issued tokens and session records live.
 	if uses, store := authTokenStore(dir); uses {
 		if store == "" {
@@ -196,6 +203,52 @@ func authTokenStore(dir string) (uses bool, store string) {
 		return nil
 	})
 	return uses, store
+}
+
+func requires(mf *modfile.File, path string) bool {
+	for _, r := range mf.Require {
+		if r.Mod.Path == path {
+			return true
+		}
+	}
+	return false
+}
+
+// ormChecks is the ORM's lines of the report.
+func ormChecks(dir string, mf *modfile.File) []doctorCheck {
+	var out []doctorCheck
+	if mf.Go == nil || version.Compare("go"+mf.Go.Version, "go1.27") < 0 {
+		v := "none"
+		if mf.Go != nil {
+			v = mf.Go.Version
+		}
+		out = append(out, doctorCheck{Name: "orm", Level: checkFail, Detail: "go.mod says go " + v + "; the orm needs go 1.27 (generic methods)", Fix: "go mod edit -go=1.27"})
+		return out
+	}
+	var skipped []string
+	files, err := ormgen.Generate(dir, ormgen.Config{Skipped: func(model, reason string) {
+		skipped = append(skipped, model+" ("+reason+")")
+	}})
+	switch {
+	case err != nil:
+		out = append(out, doctorCheck{Name: "orm", Level: checkFail, Detail: "generating the row scanners: " + err.Error(), Fix: "fix the error; nexus dev and build stop on it too"})
+	case len(skipped) > 0:
+		out = append(out, doctorCheck{Name: "orm", Level: checkWarn,
+			Detail: fmt.Sprintf("%s generated; %s read by reflection: %s", countOf(len(files), "package"), countOf(len(skipped), "model"), strings.Join(skipped, ", ")),
+			Fix:    "declare a model at package level in the module, not generic, to have its scanner generated"})
+	default:
+		out = append(out, doctorCheck{Name: "orm", Detail: countOf(len(files), "package") + " with generated scanners"})
+	}
+	if entries, err := os.ReadDir(filepath.Join(dir, "migrations")); err == nil {
+		n := 0
+		for _, e := range entries {
+			if migrationFileRE.MatchString(e.Name()) {
+				n++
+			}
+		}
+		out = append(out, doctorCheck{Name: "migrations", Detail: countOf(n, "migration") + " in migrations/ — nexus makemigrations --check tells whether the models match"})
+	}
+	return out
 }
 
 func orDefault(s, def string) string {

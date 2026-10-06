@@ -22,6 +22,7 @@ import (
 
 	"github.com/spf13/cobra"
 
+	"github.com/paulmanoni/nexus/cmd/nexus/v2/internal/handlergen"
 	"github.com/paulmanoni/nexus/v2/view/viewgen"
 )
 
@@ -520,7 +521,7 @@ func offsetOf(buf []byte, pos lspPosition) int {
 	return off
 }
 
-// regenerate recompiles views and handler registrations and syncs gopls's
+// regenerate recompiles views, handler registrations and the ORM files and syncs gopls's
 // buffers and the diagnostics with the result. A generator that fails
 // keeps its previous files, so the rest of the code keeps type-checking.
 func (p *lspProxy) regenerate() {
@@ -563,7 +564,16 @@ func (p *lspProxy) regenerate() {
 		}
 	}
 	handlersOK := true
-	if results, err := allHandlerArtifacts(root, handlerGenFileName); err != nil {
+	results, err := allHandlerArtifacts(root, handlerGenFileName)
+	if err == nil {
+		// The ORM's scanners and typed field sets (UserFields), test
+		// files' models included, read from the saved files.
+		var orm []handlergen.Result
+		if orm, err = ormArtifacts(root, true); err == nil {
+			results = append(results, orm...)
+		}
+	}
+	if err != nil {
 		handlersOK = false
 		genErrs = append(genErrs, err)
 	} else {

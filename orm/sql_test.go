@@ -25,20 +25,21 @@ func TestSQL(t *testing.T) {
 		d    Dialect
 		want string
 	}{
-		{postgres{}, `SELECT "id", "name", "age" FROM "users" WHERE (("age" >= $1 AND "name" ILIKE $2 ESCAPE '!') AND NOT ("id" IN ($3, $4))) ORDER BY "age" DESC LIMIT 10 OFFSET 20`},
-		{mysql{}, "SELECT `id`, `name`, `age` FROM `users` WHERE ((`age` >= ? AND LOWER(`name`) LIKE LOWER(?) ESCAPE '!') AND NOT (`id` IN (?, ?))) ORDER BY `age` DESC LIMIT 10 OFFSET 20"},
+		{postgres{}, `SELECT "users"."id", "users"."name", "users"."age" FROM "users" WHERE (("users"."age" >= $1 AND "users"."name" ILIKE $2 ESCAPE '!') AND NOT ("users"."id" IN ($3, $4))) ORDER BY "users"."age" DESC LIMIT 10 OFFSET 20`},
+		{mysql{}, "SELECT `users`.`id`, `users`.`name`, `users`.`age` FROM `users` WHERE ((`users`.`age` >= ? AND LOWER(`users`.`name`) LIKE LOWER(?) ESCAPE '!') AND NOT (`users`.`id` IN (?, ?))) ORDER BY `users`.`age` DESC LIMIT 10 OFFSET 20"},
 	} {
-		b := &builder{d: c.d, m: m.meta}
-		got, err := q.selectSQL(b, "")
+		b := q.q.builder(c.d)
+		cols, _ := q.q.columns(b, nil)
+		got, err := q.q.selectSQL(b, cols)
 		if err != nil || got != c.want {
 			t.Errorf("%s:\n got %s\nwant %s (%v)", c.d.Name(), got, c.want, err)
 		}
-		if want := []any{18, "%a!_!%%", 1, 2}; !reflect.DeepEqual(b.args, want) {
-			t.Errorf("%s args = %v, want %v", c.d.Name(), b.args, want)
+		if want := []any{18, "%a!_!%%", 1, 2}; !reflect.DeepEqual(b.args(), want) {
+			t.Errorf("%s args = %v, want %v", c.d.Name(), b.args(), want)
 		}
 	}
-	b := &builder{d: mysql{}, m: m.meta}
-	if got := m.Offset(5).pageSQL(b); got != " LIMIT 18446744073709551615 OFFSET 5" {
+	b := newBuilder(mysql{}, m.meta)
+	if got := m.Offset(5).q.pageSQL(b); got != " LIMIT 18446744073709551615 OFFSET 5" {
 		t.Errorf("mysql offset alone: %q", got)
 	}
 }
@@ -104,16 +105,17 @@ func TestFunctionSQL(t *testing.T) {
 		{mysql{}, "SELECT `id` FROM `users` WHERE year((`created`)) >= ?"},
 		{sqlite{}, `SELECT "id" FROM "users" WHERE CAST(strftime('%Y', ("created")) AS INTEGER) >= ?`},
 	} {
-		b := &builder{d: c.d, m: m.meta, ann: map[string]Expr{"created": rawSQL(c.d.Quote("created"))}}
-		w, err := m.Filter(Q{"created__year__gte": 2026}).whereSQL(b)
+		b := newBuilder(c.d, m.meta)
+		b.ann = map[string]Expr{"created": rawSQL(c.d.Quote("created"))}
+		w, err := m.Filter(Q{"created__year__gte": 2026}).q.whereSQL(b)
 		if got := `SELECT ` + c.d.Quote("id") + ` FROM ` + c.d.Quote("users") + w; err != nil || got != c.want {
 			t.Errorf("%s:\n got %s\nwant %s (%v)", c.d.Name(), got, c.want, err)
 		}
 	}
-	b := &builder{d: postgres{}, m: m.meta}
+	b := newBuilder(postgres{}, m.meta)
 	s, err := SQL("{0} || '{{x}}' || {1}", F("name"), "!").exprSQL(b)
-	if err != nil || s != `"name" || '{x}' || $1` || b.args[0] != "!" {
-		t.Fatalf("template = %s %v %v", s, b.args, err)
+	if err != nil || s != `"users"."name" || '{x}' || $1` || b.args()[0] != "!" {
+		t.Fatalf("template = %s %v %v", s, b.args(), err)
 	}
 	if _, err := SQL("{2}", 1).exprSQL(b); err == nil {
 		t.Fatal("a missing argument was accepted")

@@ -28,15 +28,17 @@ type releaseOptions struct {
 	dir     string
 	yes     bool
 	remote  string
-	cliPath string // module path of the CLI to install-check ("" = none)
+	cliPath string            // module path of the CLI to install-check ("" = none)
+	modules map[string]string // dir → version, for modules versioned on their own
 }
 
 // releaseModule is one go.mod in the repo.
 type releaseModule struct {
-	Dir      string // relative to the repo root, "." for the root
-	Path     string // module path
-	Requires bool   // requires the root module
-	Publish  bool   // tagged (examples aren't)
+	Dir      string   // relative to the repo root, "." for the root
+	Path     string   // module path
+	Requires bool     // requires the root module
+	Publish  bool     // tagged (examples aren't)
+	Deps     []string // the repo's modules it requires
 }
 
 func newReleaseCmd(stdout, stderr io.Writer) *cobra.Command {
@@ -45,15 +47,20 @@ func newReleaseCmd(stdout, stderr io.Writer) *cobra.Command {
 		Use:   "release <version>",
 		Short: "Release the root module and every submodule at one version",
 		Long: `Release this repository's Go modules at <version> (vX.Y.Z), in the order
-the module graph needs:
+the module graph needs. A module whose path names another major (a v0
+module beside a v2 root) is versioned on its own: --module dir=vX.Y.Z tags
+it, and the modules requiring it move in a later wave, once its tag is
+pushed.
+
 
   1. check: the version's major matches the root module path, CHANGELOG.md
      has a "## [X.Y.Z]" section, tracked files are committed (go.work aside),
      and no go.work replace points outside the repo
   2. tag the root vX.Y.Z and push it
-  3. move every module that requires the root onto vX.Y.Z (go get, go mod
-     tidy, go build — with GOPROXY=direct so a tag minutes old resolves),
-     commit, tag the published ones <dir>/vX.Y.Z, push
+  3. move every module that requires a released module onto its new version
+     (go get, go mod tidy, go build — with GOPROXY=direct so a tag minutes
+     old resolves), commit, tag the published ones <dir>/<version>, push;
+     in waves, a module after the modules it requires
   4. go install the CLI at that version and print its version
 
 Without --yes it prints the plan and changes nothing.`,
@@ -65,6 +72,7 @@ Without --yes it prints the plan and changes nothing.`,
 	cmd.Flags().BoolVar(&opts.yes, "yes", false, "run the release (tags, commits, pushes); without it, print the plan")
 	cmd.Flags().StringVar(&opts.dir, "dir", ".", "repository root")
 	cmd.Flags().StringVar(&opts.remote, "remote", "origin", "git remote to push to")
+	cmd.Flags().StringToStringVar(&opts.modules, "module", nil, "dir=vX.Y.Z: tag a module versioned on its own (a v0 module beside a v2 root) at that version; repeatable")
 	cmd.Flags().StringVar(&opts.cliPath, "install", "", "module path of a command to go install and run after the release (default: this repo's cmd/nexus, if any)")
 	return cmd
 }
@@ -109,33 +117,38 @@ func runRelease(stdout, stderr io.Writer, version string, opts releaseOptions, r
 	if err := releaseChecks(root, version, r); err != nil {
 		return err
 	}
+	waves, versions, err := releasePlan(mods, version, opts.modules)
+	if err != nil {
+		return err
+	}
 	cli := opts.cliPath
 	for _, m := range mods {
 		if cli == "" && m.Dir == "cmd/nexus" {
 			cli = m.Path
 		}
 	}
+	cliVersion := versions[cli]
 
 	// The plan.
 	fmt.Fprintf(stdout, "release %s of %s\n\n", version, rootMod.Path)
 	fmt.Fprintf(stdout, "  1. tag %s and push it to %s\n", version, opts.remote)
-	var bump []releaseModule
-	for _, m := range mods[1:] {
-		if m.Requires {
-			bump = append(bump, m)
+	n := 2
+	for _, wave := range waves {
+		fmt.Fprintf(stdout, "  %d. move %d module(s) onto the new versions, commit, tag, push:\n", n, len(wave))
+		n++
+		for _, m := range wave {
+			tag := "not tagged (example)"
+			switch {
+			case versions[m.Path] != "":
+				tag = "tag " + m.Dir + "/" + versions[m.Path]
+			case m.Publish:
+				tag = "not tagged (versioned on its own: --module " + m.Dir + "=vX.Y.Z tags it)"
+			}
+			fmt.Fprintf(stdout, "       %-32s %s\n", m.Dir, tag)
 		}
 	}
-	fmt.Fprintf(stdout, "  2. move %d module(s) onto %s %s:\n", len(bump), rootMod.Path, version)
-	for _, m := range bump {
-		tag := "not tagged (example)"
-		if m.Publish {
-			tag = "tag " + m.Dir + "/" + version
-		}
-		fmt.Fprintf(stdout, "       %-32s %s\n", m.Dir, tag)
-	}
-	fmt.Fprintf(stdout, "  3. commit \"chore(release): submodules require parent %s\", push\n", version)
-	if cli != "" {
-		fmt.Fprintf(stdout, "  4. go install %s@%s and run its version\n", cli, version)
+	if cli != "" && cliVersion != "" {
+		fmt.Fprintf(stdout, "  %d. go install %s@%s and run its version\n", n, cli, cliVersion)
 	}
 	if !opts.yes {
 		fmt.Fprintln(stdout, "\nnothing done — run again with --yes to release")
@@ -155,28 +168,41 @@ func runRelease(stdout, stderr io.Writer, version string, opts releaseOptions, r
 	if err := step("git", "push", opts.remote, version); err != nil {
 		return err
 	}
-	var tags []string
-	for _, m := range bump {
-		dir := filepath.Join(root, m.Dir)
-		fmt.Fprintf(stdout, "  %s\n", m.Dir)
-		for _, args := range [][]string{{"get", rootMod.Path + "@" + version}, {"mod", "tidy"}, {"build", "./..."}} {
-			if _, err := r.run(dir, env, "go", args...); err != nil {
-				return fmt.Errorf("nexus release: %s: %w", m.Dir, err)
-			}
-		}
-		if m.Publish {
-			tags = append(tags, m.Dir+"/"+version)
-		}
+	branch, err := r.run(root, nil, "git", "rev-parse", "--abbrev-ref", "HEAD")
+	if err != nil {
+		return err
 	}
-	if len(bump) > 0 {
-		args := []string{"add"}
-		for _, m := range bump {
-			args = append(args, filepath.Join(m.Dir, "go.mod"), filepath.Join(m.Dir, "go.sum"))
+	for _, wave := range waves {
+		var tags, dirs []string
+		add := []string{"add"}
+		for _, m := range wave {
+			dir := filepath.Join(root, m.Dir)
+			fmt.Fprintf(stdout, "  %s\n", m.Dir)
+			get := []string{"get"}
+			for _, d := range m.Deps {
+				if versions[d] != "" {
+					get = append(get, d+"@"+versions[d])
+				}
+			}
+			for _, args := range [][]string{get, {"mod", "tidy"}, {"build", "./..."}} {
+				if _, err := r.run(dir, env, "go", args...); err != nil {
+					return fmt.Errorf("nexus release: %s: %w", m.Dir, err)
+				}
+			}
+			if v := versions[m.Path]; v != "" {
+				tags = append(tags, m.Dir+"/"+v)
+			}
+			dirs = append(dirs, m.Dir)
+			add = append(add, filepath.Join(m.Dir, "go.mod"), filepath.Join(m.Dir, "go.sum"))
 		}
-		if err := step("git", args...); err != nil {
+		msg := "chore(release): submodules require parent " + version
+		if len(waves) > 1 {
+			msg = "chore(release): " + strings.Join(dirs, ", ") + " require parent " + version
+		}
+		if err := step("git", add...); err != nil {
 			return err
 		}
-		if err := step("git", "commit", "-m", "chore(release): submodules require parent "+version); err != nil {
+		if err := step("git", "commit", "-m", msg); err != nil {
 			return err
 		}
 		for _, t := range tags {
@@ -184,23 +210,123 @@ func runRelease(stdout, stderr io.Writer, version string, opts releaseOptions, r
 				return err
 			}
 		}
-		branch, err := r.run(root, nil, "git", "rev-parse", "--abbrev-ref", "HEAD")
-		if err != nil {
-			return err
-		}
 		if err := step("git", append([]string{"push", opts.remote, strings.TrimSpace(branch)}, tags...)...); err != nil {
 			return err
 		}
 	}
-	if cli != "" {
-		if _, err := r.run(root, env, "go", "install", cli+"@"+version); err != nil {
+	if cli != "" && cliVersion != "" {
+		if _, err := r.run(root, env, "go", "install", cli+"@"+cliVersion); err != nil {
 			return fmt.Errorf("nexus release: the release is tagged and pushed, but installing the CLI failed: %w", err)
 		}
-		out, _ := r.run(root, nil, filepath.Base(strings.TrimSuffix(cli, "/"+semver.Major(version))), "version")
+		out, _ := r.run(root, nil, filepath.Base(strings.TrimSuffix(cli, "/"+semver.Major(cliVersion))), "version")
 		fmt.Fprintf(stdout, "  installed: %s", out)
 	}
 	fmt.Fprintf(stdout, "\nreleased %s\n", version)
 	return nil
+}
+
+// releasePlan is the modules a release moves, in waves — a module comes
+// after every module it requires that the release tags, whose tag must be
+// pushed before go get can resolve it — and the version each is tagged
+// at: the root's, or for a module whose path names another major (a v0
+// module beside a v2 root) the one --module gives, else none.
+func releasePlan(mods []releaseModule, version string, given map[string]string) ([][]releaseModule, map[string]string, error) {
+	versions := map[string]string{mods[0].Path: version}
+	byDir := map[string]bool{}
+	for _, m := range mods[1:] {
+		byDir[m.Dir] = true
+	}
+	for dir, v := range given {
+		if !byDir[dir] {
+			return nil, nil, fmt.Errorf("nexus release: --module %s: no module in %s", dir, dir)
+		}
+		if !semver.IsValid(v) || semver.Canonical(v) != v && semver.Prerelease(v) == "" {
+			return nil, nil, fmt.Errorf("nexus release: --module %s=%s: not a version like v0.2.0", dir, v)
+		}
+	}
+	for _, m := range mods[1:] {
+		if !m.Publish {
+			continue
+		}
+		_, major, _ := module.SplitPathVersion(m.Path)
+		own := major == "" && (semver.Major(version) == "v0" || semver.Major(version) == "v1") || major == "/"+semver.Major(version)
+		switch v, ok := given[m.Dir]; {
+		case ok:
+			if _, major, _ := module.SplitPathVersion(m.Path); major != "" && major != "/"+semver.Major(v) ||
+				major == "" && semver.Major(v) != "v0" && semver.Major(v) != "v1" {
+				return nil, nil, fmt.Errorf("nexus release: --module %s=%s: %s takes %s versions", m.Dir, v, m.Path, strings.TrimPrefix(orDefault(major, "/v0 or v1"), "/"))
+			}
+			versions[m.Path] = v
+		case own:
+			versions[m.Path] = version
+		}
+	}
+	// Waves: a module moves when it requires a module the release tags.
+	wave := map[string]int{mods[0].Path: 0}
+	var waves [][]releaseModule
+	for changed := true; changed; {
+		changed = false
+		for _, m := range mods[1:] {
+			if _, done := wave[m.Path]; done {
+				continue
+			}
+			w, moves, ready := 0, false, true
+			for _, d := range m.Deps {
+				if versions[d] == "" {
+					continue
+				}
+				dw, ok := wave[d]
+				if !ok {
+					if movesAtAll(mods, d, versions) {
+						ready = false
+					}
+					continue
+				}
+				moves = true
+				w = max(w, dw+1)
+			}
+			if !ready || !moves {
+				continue
+			}
+			wave[m.Path] = w
+			for len(waves) < w {
+				waves = append(waves, nil)
+			}
+			waves[w-1] = append(waves[w-1], m)
+			changed = true
+		}
+	}
+	for path := range versions {
+		if _, ok := wave[path]; !ok {
+			delete(versions, path) // nothing it requires is released
+		}
+	}
+	return waves, versions, nil
+}
+
+// movesAtAll is whether the module at path requires, directly or not, a
+// module the release tags: a module that does takes its own wave first.
+func movesAtAll(mods []releaseModule, path string, versions map[string]string) bool {
+	seen := map[string]bool{}
+	var visit func(string) bool
+	visit = func(p string) bool {
+		if seen[p] {
+			return false
+		}
+		seen[p] = true
+		for _, m := range mods {
+			if m.Path != p {
+				continue
+			}
+			for _, d := range m.Deps {
+				if d == mods[0].Path || versions[d] != "" && visit(d) {
+					return true
+				}
+			}
+		}
+		return false
+	}
+	return visit(path)
 }
 
 // releaseChecks refuses a release that would publish something broken or
@@ -284,10 +410,24 @@ func releaseModules(root string) ([]releaseModule, error) {
 			if req.Mod.Path == rootPath {
 				m.Requires = true
 			}
+			m.Deps = append(m.Deps, req.Mod.Path)
 		}
 		mods = append(mods, m)
 		return nil
 	})
+	inRepo := map[string]bool{}
+	for _, m := range mods {
+		inRepo[m.Path] = true
+	}
+	for i := range mods {
+		deps := mods[i].Deps[:0]
+		for _, d := range mods[i].Deps {
+			if inRepo[d] {
+				deps = append(deps, d)
+			}
+		}
+		mods[i].Deps = deps
+	}
 	sort.Slice(mods[1:], func(i, j int) bool { return mods[1+i].Dir < mods[1+j].Dir })
 	return mods, err
 }

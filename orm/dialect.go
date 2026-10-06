@@ -53,13 +53,18 @@ func (postgres) ILike(col, pattern string) string { return col + " ILIKE " + pat
 func (postgres) Returning() bool                  { return true }
 func (postgres) NoLimit() string                  { return "" }
 
-var pgDetail = regexp.MustCompile(`Key \(([^)]+)\)`)
+var (
+	pgDetail     = regexp.MustCompile(`Key \(([^)]+)\)`)
+	pgConstraint = regexp.MustCompile(`constraint "([^"]+)"`)
+)
 
 func (postgres) Violation(err error) (violation, string) {
 	msg := err.Error()
 	col := ""
 	if m := pgDetail.FindStringSubmatch(msg); m != nil {
 		col = m[1]
+	} else if m := pgConstraint.FindStringSubmatch(msg); m != nil {
+		col = m[1] // a constraint name, users_email_key: mapErr finds the column in it
 	}
 	switch {
 	case strings.Contains(msg, "23505"), strings.Contains(msg, "duplicate key"):

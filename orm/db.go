@@ -36,6 +36,12 @@ func WithDB(ctx context.Context, db *DB) context.Context {
 	return context.WithValue(ctx, dbKey{}, db)
 }
 
+// DBFrom is the database WithDB put in ctx.
+func DBFrom(ctx context.Context) (*DB, bool) {
+	d, ok := ctx.Value(dbKey{}).(*DB)
+	return d, ok
+}
+
 type usingKey struct{}
 
 // Using sends ctx's queries to the database db.Bind registered as name,
@@ -96,13 +102,18 @@ func AtomicOn(ctx context.Context, db *DB, fn func(ctx context.Context) error) (
 		if _, err := t.tx.ExecContext(ctx, "SAVEPOINT "+name); err != nil {
 			return err
 		}
+		// What the savepoint's writes asked to run after commit goes with
+		// them when it rolls back: no signal for a row that never was.
+		mark := len(*t.after)
 		defer func() {
 			if p := recover(); p != nil {
 				_, _ = t.tx.ExecContext(ctx, "ROLLBACK TO SAVEPOINT "+name)
+				*t.after = (*t.after)[:mark]
 				panic(p)
 			}
 			if err != nil {
 				_, _ = t.tx.ExecContext(ctx, "ROLLBACK TO SAVEPOINT "+name)
+				*t.after = (*t.after)[:mark]
 				return
 			}
 			_, err = t.tx.ExecContext(ctx, "RELEASE SAVEPOINT "+name)
@@ -153,26 +164,65 @@ func defaultDB(ctx context.Context) (*DB, error) {
 		return db, nil
 	}
 	name, _ := ctx.Value(usingKey{}).(string)
+	if b := ctxBinding(ctx); b != nil {
+		return b.lookup(name)
+	}
 	if b := lastBinding.Load(); b != nil {
 		return b.lookup(name)
 	}
 	return nil, errNoDB
 }
 
+// QueryInfo is a statement the ORM ran, as an Observer sees it.
+type QueryInfo struct {
+	SQL      string
+	Args     int
+	Duration time.Duration
+	Err      error
+}
+
+// Observer sees each statement a context's queries run.
+type Observer func(ctx context.Context, q QueryInfo)
+
+type observerKey struct{}
+
+// WithObserver has fn see every statement queries with ctx run: for
+// logging, counting in tests, or catching repeated queries.
+func WithObserver(ctx context.Context, fn Observer) context.Context {
+	if prev, ok := ctx.Value(observerKey{}).(Observer); ok {
+		next := fn
+		fn = func(ctx context.Context, q QueryInfo) { prev(ctx, q); next(ctx, q) }
+	}
+	return context.WithValue(ctx, observerKey{}, fn)
+}
+
 // exec and query run a statement, as a span of ctx's trace when there is
-// one.
+// one, seen by ctx's observers and the dev-time repeat watch.
 func (c conn) exec(ctx context.Context, q string, args []any) (sql.Result, error) {
-	done := span(ctx, q, len(args))
+	done := watch(ctx, q, len(args))
 	res, err := c.run.ExecContext(ctx, q, args...)
 	done(err)
 	return res, err
 }
 
 func (c conn) query(ctx context.Context, q string, args []any) (*sql.Rows, error) {
-	done := span(ctx, q, len(args))
+	done := watch(ctx, q, len(args))
 	rows, err := c.run.QueryContext(ctx, q, args...)
 	done(err)
 	return rows, err
+}
+
+func watch(ctx context.Context, q string, args int) func(error) {
+	noteRepeat(ctx, q)
+	traced := span(ctx, q, args)
+	obs, _ := ctx.Value(observerKey{}).(Observer)
+	start := time.Now()
+	return func(err error) {
+		traced(err)
+		if obs != nil {
+			obs(ctx, QueryInfo{SQL: q, Args: args, Duration: time.Since(start), Err: err})
+		}
+	}
 }
 
 func span(ctx context.Context, q string, args int) func(error) {

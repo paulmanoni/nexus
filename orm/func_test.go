@@ -15,7 +15,7 @@ var (
 	// Initial is one used as a Q key step: Q{"name__initial": "A"}.
 	Initial = orm.Function("initial", orm.Template("", "substr({0}, 1, 1)")).Transform()
 	// GroupConcat is an aggregate SQLite and MySQL have.
-	GroupConcat = orm.Function("group_concat")
+	GroupConcat = orm.Function("group_concat", orm.Template("postgres", "string_agg({0}, {1})"), orm.Template("mysql", "GROUP_CONCAT({0} SEPARATOR ', ')"))
 )
 
 type UserStats struct {
@@ -88,7 +88,7 @@ func TestFunctions(t *testing.T) {
 	}
 
 	r, err := Users.Filter(orm.Q{"active": true}).Aggregate(ctx, orm.AggOf("names", GroupConcat.Of(orm.F("name"), ", ")), orm.Count("id"))
-	if err != nil || r["names"] != "Ali, Juma" || r.Int("id__count") != 2 {
+	if names, _ := r["names"].(string); err != nil || (names != "Ali, Juma" && names != "Juma, Ali") || r.Int("id__count") != 2 {
 		t.Fatalf("custom aggregate = %v, %v", r, err)
 	}
 }

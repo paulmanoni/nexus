@@ -8,10 +8,170 @@ import (
 )
 
 func init() {
+	orm.RegisterScanner[Author]([]string{"id", "name", "profile_id"}, func() orm.RowScanner[Author] { return new(ormScanAuthor) })
+	orm.RegisterScanner[AuthorStats]([]string{"id", "name"}, func() orm.RowScanner[AuthorStats] { return new(ormScanAuthorStats) })
+	orm.RegisterScanner[Book]([]string{"id", "title", "author_id", "published"}, func() orm.RowScanner[Book] { return new(ormScanBook) })
 	orm.RegisterScanner[Post]([]string{"id", "headline", "author_id"}, func() orm.RowScanner[Post] { return new(ormScanPost) })
+	orm.RegisterScanner[Profile]([]string{"id", "bio"}, func() orm.RowScanner[Profile] { return new(ormScanProfile) })
+	orm.RegisterScanner[Tag]([]string{"id", "name"}, func() orm.RowScanner[Tag] { return new(ormScanTag) })
 	orm.RegisterScanner[User]([]string{"id", "created_at", "updated_at", "name", "email", "age", "bio", "active"}, func() orm.RowScanner[User] { return new(ormScanUser) })
 	orm.RegisterScanner[UserStats]([]string{"id", "name"}, func() orm.RowScanner[UserStats] { return new(ormScanUserStats) })
 	orm.RegisterScanner[benchUser]([]string{"id", "created_at", "name", "email", "age", "active"}, func() orm.RowScanner[benchUser] { return new(ormScanbenchUser) })
+}
+
+type ormScanAuthor struct {
+	c0   orm.Cell[int64]
+	c1   orm.Cell[string]
+	c2   orm.PtrCell[int64]
+	dest []any
+}
+
+func (s *ormScanAuthor) Dest() []any {
+	if s.dest == nil {
+		s.dest = []any{&s.c0, &s.c1, &s.c2}
+	}
+	return s.dest
+}
+
+func (s *ormScanAuthor) Bind(r *Author) {
+	s.c0.P = &r.ID
+	s.c1.P = &r.Name
+	s.c2.P = &r.ProfileID
+}
+
+func (s *ormScanAuthor) Values(r *Author, dst []any) []any {
+	return append(dst[:0], r.ID, r.Name, orm.PtrValue(r.ProfileID))
+}
+
+// AuthorFields is Author's fields as typed lookups.
+var AuthorFields = AuthorFieldSet{}.Under("")
+
+// AuthorFieldSet is Author's fields as typed lookups: AuthorFields from the model itself, Under from a model related to it.
+type AuthorFieldSet struct {
+	p         string
+	ID        orm.Field[int64]
+	Name      orm.TextField[string]
+	ProfileID orm.Field[int64]
+}
+
+// Under is the set through a relation path, such as "author__".
+func (s AuthorFieldSet) Under(prefix string) AuthorFieldSet {
+	return AuthorFieldSet{
+		p:         prefix,
+		ID:        orm.FieldAt[int64](prefix + "id"),
+		Name:      orm.TextFieldAt[string](prefix + "name"),
+		ProfileID: orm.FieldAt[int64](prefix + "profile_id"),
+	}
+}
+
+// Profile is the fields of Author's Profile, for lookups across the relation.
+func (s AuthorFieldSet) Profile() ProfileFieldSet {
+	return ProfileFieldSet{}.Under(s.p + "profile__")
+}
+
+// Books is the fields of Author's Books, for lookups across the relation.
+func (s AuthorFieldSet) Books() BookFieldSet {
+	return BookFieldSet{}.Under(s.p + "books__")
+}
+
+type ormScanAuthorStats struct {
+	c0   orm.Cell[int64]
+	c1   orm.Cell[string]
+	dest []any
+}
+
+func (s *ormScanAuthorStats) Dest() []any {
+	if s.dest == nil {
+		s.dest = []any{&s.c0, &s.c1}
+	}
+	return s.dest
+}
+
+func (s *ormScanAuthorStats) Bind(r *AuthorStats) {
+	s.c0.P = &r.ID
+	s.c1.P = &r.Name
+}
+
+func (s *ormScanAuthorStats) Values(r *AuthorStats, dst []any) []any {
+	return append(dst[:0], r.ID, r.Name)
+}
+
+// AuthorStatsFields is AuthorStats's fields as typed lookups.
+var AuthorStatsFields = AuthorStatsFieldSet{}.Under("")
+
+// AuthorStatsFieldSet is AuthorStats's fields as typed lookups: AuthorStatsFields from the model itself, Under from a model related to it.
+type AuthorStatsFieldSet struct {
+	p    string
+	ID   orm.Field[int64]
+	Name orm.TextField[string]
+}
+
+// Under is the set through a relation path, such as "author__".
+func (s AuthorStatsFieldSet) Under(prefix string) AuthorStatsFieldSet {
+	return AuthorStatsFieldSet{
+		p:    prefix,
+		ID:   orm.FieldAt[int64](prefix + "id"),
+		Name: orm.TextFieldAt[string](prefix + "name"),
+	}
+}
+
+type ormScanBook struct {
+	c0   orm.Cell[int64]
+	c1   orm.Cell[string]
+	c2   orm.Cell[int64]
+	c3   orm.Cell[bool]
+	dest []any
+}
+
+func (s *ormScanBook) Dest() []any {
+	if s.dest == nil {
+		s.dest = []any{&s.c0, &s.c1, &s.c2, &s.c3}
+	}
+	return s.dest
+}
+
+func (s *ormScanBook) Bind(r *Book) {
+	s.c0.P = &r.ID
+	s.c1.P = &r.Title
+	s.c2.P = &r.AuthorID
+	s.c3.P = &r.Published
+}
+
+func (s *ormScanBook) Values(r *Book, dst []any) []any {
+	return append(dst[:0], r.ID, r.Title, r.AuthorID, r.Published)
+}
+
+// BookFields is Book's fields as typed lookups.
+var BookFields = BookFieldSet{}.Under("")
+
+// BookFieldSet is Book's fields as typed lookups: BookFields from the model itself, Under from a model related to it.
+type BookFieldSet struct {
+	p         string
+	ID        orm.Field[int64]
+	Title     orm.TextField[string]
+	AuthorID  orm.Field[int64]
+	Published orm.Field[bool]
+}
+
+// Under is the set through a relation path, such as "author__".
+func (s BookFieldSet) Under(prefix string) BookFieldSet {
+	return BookFieldSet{
+		p:         prefix,
+		ID:        orm.FieldAt[int64](prefix + "id"),
+		Title:     orm.TextFieldAt[string](prefix + "title"),
+		AuthorID:  orm.FieldAt[int64](prefix + "author_id"),
+		Published: orm.FieldAt[bool](prefix + "published"),
+	}
+}
+
+// Author is the fields of Book's Author, for lookups across the relation.
+func (s BookFieldSet) Author() AuthorFieldSet {
+	return AuthorFieldSet{}.Under(s.p + "author__")
+}
+
+// Tags is the fields of Book's Tags, for lookups across the relation.
+func (s BookFieldSet) Tags() TagFieldSet {
+	return TagFieldSet{}.Under(s.p + "tags__")
 }
 
 type ormScanPost struct {
@@ -32,6 +192,118 @@ func (s *ormScanPost) Bind(r *Post) {
 	s.c0.P = &r.ID
 	s.c1.P = &r.Title
 	s.c2.P = &r.AuthorID
+}
+
+func (s *ormScanPost) Values(r *Post, dst []any) []any {
+	return append(dst[:0], r.ID, r.Title, r.AuthorID)
+}
+
+// PostFields is Post's fields as typed lookups.
+var PostFields = PostFieldSet{}.Under("")
+
+// PostFieldSet is Post's fields as typed lookups: PostFields from the model itself, Under from a model related to it.
+type PostFieldSet struct {
+	p        string
+	ID       orm.Field[int64]
+	Title    orm.TextField[string]
+	AuthorID orm.Field[int64]
+}
+
+// Under is the set through a relation path, such as "author__".
+func (s PostFieldSet) Under(prefix string) PostFieldSet {
+	return PostFieldSet{
+		p:        prefix,
+		ID:       orm.FieldAt[int64](prefix + "id"),
+		Title:    orm.TextFieldAt[string](prefix + "headline"),
+		AuthorID: orm.FieldAt[int64](prefix + "author_id"),
+	}
+}
+
+type ormScanProfile struct {
+	c0   orm.Cell[int64]
+	c1   orm.Cell[string]
+	dest []any
+}
+
+func (s *ormScanProfile) Dest() []any {
+	if s.dest == nil {
+		s.dest = []any{&s.c0, &s.c1}
+	}
+	return s.dest
+}
+
+func (s *ormScanProfile) Bind(r *Profile) {
+	s.c0.P = &r.ID
+	s.c1.P = &r.Bio
+}
+
+func (s *ormScanProfile) Values(r *Profile, dst []any) []any {
+	return append(dst[:0], r.ID, r.Bio)
+}
+
+// ProfileFields is Profile's fields as typed lookups.
+var ProfileFields = ProfileFieldSet{}.Under("")
+
+// ProfileFieldSet is Profile's fields as typed lookups: ProfileFields from the model itself, Under from a model related to it.
+type ProfileFieldSet struct {
+	p   string
+	ID  orm.Field[int64]
+	Bio orm.TextField[string]
+}
+
+// Under is the set through a relation path, such as "author__".
+func (s ProfileFieldSet) Under(prefix string) ProfileFieldSet {
+	return ProfileFieldSet{
+		p:   prefix,
+		ID:  orm.FieldAt[int64](prefix + "id"),
+		Bio: orm.TextFieldAt[string](prefix + "bio"),
+	}
+}
+
+type ormScanTag struct {
+	c0   orm.Cell[int64]
+	c1   orm.Cell[string]
+	dest []any
+}
+
+func (s *ormScanTag) Dest() []any {
+	if s.dest == nil {
+		s.dest = []any{&s.c0, &s.c1}
+	}
+	return s.dest
+}
+
+func (s *ormScanTag) Bind(r *Tag) {
+	s.c0.P = &r.ID
+	s.c1.P = &r.Name
+}
+
+func (s *ormScanTag) Values(r *Tag, dst []any) []any {
+	return append(dst[:0], r.ID, r.Name)
+}
+
+// TagFields is Tag's fields as typed lookups.
+var TagFields = TagFieldSet{}.Under("")
+
+// TagFieldSet is Tag's fields as typed lookups: TagFields from the model itself, Under from a model related to it.
+type TagFieldSet struct {
+	p    string
+	ID   orm.Field[int64]
+	Name orm.TextField[string]
+}
+
+// Under is the set through a relation path, such as "author__".
+func (s TagFieldSet) Under(prefix string) TagFieldSet {
+	return TagFieldSet{
+		p:    prefix,
+		ID:   orm.FieldAt[int64](prefix + "id"),
+		Name: orm.TextFieldAt[string](prefix + "name"),
+	}
+}
+
+// Books is the fields of Tag's Books, for lookups across the relation.
+func (s TagFieldSet) Books() BookFieldSet {
+	return BookFieldSet{}.Under(s.p + "books__")
 }
 
 type ormScanUser struct {
@@ -64,6 +336,46 @@ func (s *ormScanUser) Bind(r *User) {
 	s.c7.P = &r.Active
 }
 
+func (s *ormScanUser) Values(r *User, dst []any) []any {
+	return append(dst[:0], r.Base.ID, r.Base.CreatedAt, r.Base.UpdatedAt, r.Name, r.Email, r.Age, orm.PtrValue(r.Bio), r.Active)
+}
+
+// UserFields is User's fields as typed lookups.
+var UserFields = UserFieldSet{}.Under("")
+
+// UserFieldSet is User's fields as typed lookups: UserFields from the model itself, Under from a model related to it.
+type UserFieldSet struct {
+	p         string
+	ID        orm.Field[int64]
+	CreatedAt orm.Field[time.Time]
+	UpdatedAt orm.Field[time.Time]
+	Name      orm.TextField[string]
+	Email     orm.TextField[string]
+	Age       orm.Field[int]
+	Bio       orm.TextField[string]
+	Active    orm.Field[bool]
+}
+
+// Under is the set through a relation path, such as "author__".
+func (s UserFieldSet) Under(prefix string) UserFieldSet {
+	return UserFieldSet{
+		p:         prefix,
+		ID:        orm.FieldAt[int64](prefix + "id"),
+		CreatedAt: orm.FieldAt[time.Time](prefix + "created_at"),
+		UpdatedAt: orm.FieldAt[time.Time](prefix + "updated_at"),
+		Name:      orm.TextFieldAt[string](prefix + "name"),
+		Email:     orm.TextFieldAt[string](prefix + "email"),
+		Age:       orm.FieldAt[int](prefix + "age"),
+		Bio:       orm.TextFieldAt[string](prefix + "bio"),
+		Active:    orm.FieldAt[bool](prefix + "active"),
+	}
+}
+
+// Posts is the fields of User's Posts, for lookups across the relation.
+func (s UserFieldSet) Posts() PostFieldSet {
+	return PostFieldSet{}.Under(s.p + "posts__")
+}
+
 type ormScanUserStats struct {
 	c0   orm.Cell[int64]
 	c1   orm.Cell[string]
@@ -80,6 +392,29 @@ func (s *ormScanUserStats) Dest() []any {
 func (s *ormScanUserStats) Bind(r *UserStats) {
 	s.c0.P = &r.ID
 	s.c1.P = &r.Name
+}
+
+func (s *ormScanUserStats) Values(r *UserStats, dst []any) []any {
+	return append(dst[:0], r.ID, r.Name)
+}
+
+// UserStatsFields is UserStats's fields as typed lookups.
+var UserStatsFields = UserStatsFieldSet{}.Under("")
+
+// UserStatsFieldSet is UserStats's fields as typed lookups: UserStatsFields from the model itself, Under from a model related to it.
+type UserStatsFieldSet struct {
+	p    string
+	ID   orm.Field[int64]
+	Name orm.TextField[string]
+}
+
+// Under is the set through a relation path, such as "author__".
+func (s UserStatsFieldSet) Under(prefix string) UserStatsFieldSet {
+	return UserStatsFieldSet{
+		p:    prefix,
+		ID:   orm.FieldAt[int64](prefix + "id"),
+		Name: orm.TextFieldAt[string](prefix + "name"),
+	}
 }
 
 type ormScanbenchUser struct {
@@ -106,4 +441,35 @@ func (s *ormScanbenchUser) Bind(r *benchUser) {
 	s.c3.P = &r.Email
 	s.c4.P = &r.Age
 	s.c5.P = &r.Active
+}
+
+func (s *ormScanbenchUser) Values(r *benchUser, dst []any) []any {
+	return append(dst[:0], r.ID, r.CreatedAt, r.Name, r.Email, r.Age, r.Active)
+}
+
+// benchUserFields is benchUser's fields as typed lookups.
+var benchUserFields = benchUserFieldSet{}.Under("")
+
+// benchUserFieldSet is benchUser's fields as typed lookups: benchUserFields from the model itself, Under from a model related to it.
+type benchUserFieldSet struct {
+	p         string
+	ID        orm.Field[int64]
+	CreatedAt orm.Field[time.Time]
+	Name      orm.TextField[string]
+	Email     orm.TextField[string]
+	Age       orm.Field[int]
+	Active    orm.Field[bool]
+}
+
+// Under is the set through a relation path, such as "author__".
+func (s benchUserFieldSet) Under(prefix string) benchUserFieldSet {
+	return benchUserFieldSet{
+		p:         prefix,
+		ID:        orm.FieldAt[int64](prefix + "id"),
+		CreatedAt: orm.FieldAt[time.Time](prefix + "created_at"),
+		Name:      orm.TextFieldAt[string](prefix + "name"),
+		Email:     orm.TextFieldAt[string](prefix + "email"),
+		Age:       orm.FieldAt[int](prefix + "age"),
+		Active:    orm.FieldAt[bool](prefix + "active"),
+	}
 }

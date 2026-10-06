@@ -4,6 +4,8 @@ import (
 	"context"
 	"fmt"
 	"reflect"
+	"slices"
+	"strings"
 	"sync"
 	"sync/atomic"
 
@@ -28,6 +30,7 @@ type Manager[T any] struct {
 	dbName    string
 	unmanaged bool
 	bound     atomic.Pointer[binding]
+	ls        listeners[T]
 }
 
 // ForOption tunes a model.
@@ -60,14 +63,16 @@ func For[T any](opts ...ForOption) *Manager[T] {
 	}
 	m := &Manager[T]{dbName: c.db, unmanaged: c.unmanaged}
 	m.meta, m.err = modelOf(reflect.TypeFor[T](), c.table)
-	m.QuerySet = QuerySet[T]{m: m}
-	m.Option = nexus.Invoke(func(app *nexus.App) error {
+	m.QuerySet = QuerySet[T]{m: m, q: query{m: m.meta}}
+	declare(declaredModel{db: c.db, unmanaged: c.unmanaged, tables: m.tables})
+	m.Option = nexus.Invoke(func(app *nexus.App, lc nexus.Lifecycle) error {
 		if m.err != nil {
 			return m.err
 		}
-		b := &binding{app: app}
+		b := bindApp(app, lc)
 		m.bound.Store(b)
 		lastBinding.Store(b)
+		describe(app, m.dbName, m.meta, func() bool { _, ok := rowScanner[T](m.meta); return ok })
 		return nil
 	})
 	return m
@@ -101,7 +106,10 @@ func (m *Manager[T]) conn(ctx context.Context) (conn, error) {
 	if n, ok := ctx.Value(usingKey{}).(string); ok {
 		name = n
 	}
-	b := m.bound.Load()
+	b := ctxBinding(ctx)
+	if b == nil {
+		b = m.bound.Load()
+	}
 	if b == nil {
 		b = lastBinding.Load()
 	}
@@ -119,6 +127,33 @@ func (m *Manager[T]) conn(ctx context.Context) (conn, error) {
 type binding struct {
 	app *nexus.App
 	dbs sync.Map // *sql.DB → *DB
+}
+
+// appBindings is the binding of each app, made once: SetRequestValue
+// puts it on the app's request contexts, so a manager passed to two apps
+// in one process (tests, a gateway) queries the database of the app
+// serving the request.
+var appBindings sync.Map // *nexus.App → *binding
+
+type bindingKey struct{}
+
+// bindApp is app's binding.
+func bindApp(app *nexus.App, lc nexus.Lifecycle) *binding {
+	v, loaded := appBindings.LoadOrStore(app, &binding{app: app})
+	if !loaded {
+		app.SetRequestValue(bindingKey{}, v)
+		lc.Append(nexus.Hook{OnStop: func(context.Context) error {
+			appBindings.Delete(app)
+			return nil
+		}})
+	}
+	return v.(*binding)
+}
+
+// ctxBinding is the binding of the app serving ctx's request, or nil.
+func ctxBinding(ctx context.Context) *binding {
+	b, _ := ctx.Value(bindingKey{}).(*binding)
+	return b
 }
 
 // lastBinding is the app a manager was last bound to: the database of
@@ -146,4 +181,47 @@ func (b *binding) lookup(name string) (*DB, error) {
 	}
 	d, _ := b.dbs.LoadOrStore(s, Open(s, string(mgr.Driver())))
 	return d.(*DB), nil
+}
+
+// appModels is the models bound to an app, by database name ("" the
+// default), for the dashboard.
+type appModels struct {
+	mu   sync.Mutex
+	byDB map[string][]modelEntry
+}
+
+type modelEntry struct {
+	m         *model
+	generated func() bool
+}
+
+type appModelsKey struct{}
+
+// describe lists m on its database's dashboard entry: its name, table,
+// and whether a generated scanner reads it.
+func describe(app *nexus.App, dbName string, m *model, generated func() bool) {
+	v, _ := app.Value(appModelsKey{})
+	am, ok := v.(*appModels)
+	if !ok {
+		am = &appModels{byDB: map[string][]modelEntry{}}
+		app.SetValue(appModelsKey{}, am)
+	}
+	am.mu.Lock()
+	if !slices.ContainsFunc(am.byDB[dbName], func(e modelEntry) bool { return e.m == m }) {
+		am.byDB[dbName] = append(am.byDB[dbName], modelEntry{m, generated})
+	}
+	am.mu.Unlock()
+	db.Describe(app, dbName, "models", func() any {
+		am.mu.Lock()
+		defer am.mu.Unlock()
+		var parts []string
+		for _, e := range am.byDB[dbName] {
+			s := e.m.Name + " (" + e.m.Table
+			if e.generated() {
+				s += ", generated scanner"
+			}
+			parts = append(parts, s+")")
+		}
+		return strings.Join(parts, ", ")
+	})
 }

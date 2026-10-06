@@ -26,6 +26,7 @@ import (
 	"fmt"
 	"log/slog"
 	"net"
+	"net/url"
 	"strings"
 	"sync"
 	"time"
@@ -81,15 +82,28 @@ func (c Config) DSN() string {
 		if tz == "" {
 			tz = "UTC"
 		}
+		q := pgDSNValue
 		return fmt.Sprintf("host=%s user=%s password=%s dbname=%s port=%s sslmode=%s TimeZone=%s",
-			c.Host, c.User, c.Password, c.Database, c.Port, ssl, tz)
+			q(c.Host), q(c.User), q(c.Password), q(c.Database), q(c.Port), q(ssl), q(tz))
 	case MySQL:
+		// The driver unescapes the name, so a '?' in it can't add
+		// parameters (allowAllFiles=true and the like).
 		return fmt.Sprintf("%s:%s@tcp(%s:%s)/%s?charset=utf8mb4&parseTime=True&loc=Local",
-			c.User, c.Password, c.Host, c.Port, c.Database)
+			c.User, c.Password, c.Host, c.Port, url.PathEscape(c.Database))
 	case SQLite:
 		return c.Database
 	}
 	return ""
+}
+
+// pgDSNValue is a keyword/value connection string value: quoted when it
+// is empty or holds a space, a quote or a backslash, so an empty password
+// can't swallow the next keyword and a password can't add keywords.
+func pgDSNValue(v string) string {
+	if v != "" && !strings.ContainsAny(v, " \t\n'\\") {
+		return v
+	}
+	return "'" + strings.NewReplacer(`\`, `\\`, `'`, `\'`).Replace(v) + "'"
 }
 
 // Driver registry — the database/sql pattern. Importing nexus/db links
@@ -250,6 +264,10 @@ func WithEnvNames(names EnvNames) Option { return func(m *Manager) { m.envNames 
 // "main"; multi-DB apps override per Manager so each shows up as
 // a distinct slot in the orchestration canvas.
 func WithBindName(name string) Option { return func(m *Manager) { m.bindName = name } }
+
+// Name is the name the Manager was bound under (db.Bind's), empty when
+// it was opened directly.
+func (m *Manager) Name() string { return m.bindName }
 
 // NewManager builds a Manager without connecting. Call Open or Start next.
 func NewManager(cfg Config, opts ...Option) *Manager {

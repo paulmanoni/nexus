@@ -6,6 +6,72 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [2.21.0] - 2026-10-06
+
+### Added
+
+- ORM relations: foreign keys (`Author *User` + `AuthorID`, or tagged),
+  reverse foreign keys and many-to-many (`orm:"m2m:book_tags"`), followed by
+  lookups (`author__name`, `books__title__icontains`, `tags__name`), orders and
+  `Values`. Foreign keys join, many-row relations are `EXISTS`, so rows never
+  repeat. `SelectRelated` loads foreign keys in one query; `PrefetchRelated`
+  (and `orm.Prefetch` with a custom QuerySet) loads any relation with one query
+  per level.
+- ORM subqueries: `Q{"id__in": qs}`, `orm.Exists`, `orm.Subquery` as an
+  annotation, and `orm.OuterRef` to the enclosing row.
+- Typed lookups, generated beside the row scanners: `UserFields.Age.Gte(18)`,
+  `BookFields.Author().Name.IContains("a")`, checked by the compiler. `nexus
+  lsp` serves the generated ORM files to the editor.
+- `Manager.GraphRelation[C](name)`: a batched GraphQL field for a relation, one
+  query per level.
+- Migrations: `nexus makemigrations` writes `migrations/NNNN_name.sql` from the
+  difference between the app's models and the last snapshot (`--check` for CI,
+  `--db`, `--dialect`, `--empty`); `orm.Migrate(fsys)` applies them at boot,
+  recorded in `nexus_migrations`, under a lock. `orm.CreateTables` for tests and
+  tools. New model tags: `unique`, `index`, `size`, `type`, `ondelete`.
+- `orm.Paginate` with `PageFrom`, an allowlist of `Sortable` columns,
+  `Searchable` fields and size limits.
+- `Manager.OnChange`: hear a model's writes once their transaction commits.
+- `orm/ormtest`: `Open` a test database with the models' tables (SQLite, or
+  Postgres/MySQL through `ORMTEST_DRIVER`/`ORMTEST_DSN`), `Seed`, `Exec`,
+  `CountQueries`; `orm.WithObserver` sees each statement.
+- Under `nexus dev`, a query repeated in one request logs an N+1 warning naming
+  the `SelectRelated`/`PrefetchRelated` that fixes it.
+- The dashboard lists each database's ORM models (`db.Describe` adds details to
+  a database's resource).
+- Generated insert writers: `Create` and `BulkCreate` read field values without
+  reflection.
+- `App.SetRequestValue(key, val)`: a value on every request context the app
+  serves. The ORM uses it so a manager passed to two apps in one process queries
+  the database of the app serving the request.
+- `nexus docs orm`; `nexus doctor` checks the ORM (Go 1.27, the generated code,
+  models read by reflection) and counts migrations.
+- `nexus release --module dir=vX.Y.Z` tags a module versioned on its own (the
+  v0 orm beside the v2 root); modules move in waves, each after the modules it
+  requires are tagged and pushed.
+
+- `orm.Cast(v, t)`: convert a field, expression or value to `orm.AsInt`,
+  `AsFloat`, `AsText`, `AsDate`, `AsDateTime`, `AsDecimal(p, s)` or
+  `AsType("…")`, spelled for each database.
+- ORM: an `Update` or `Delete` with no condition (no `Filter`, or an empty
+  `Q`) fails with `orm.ErrUnfiltered` instead of changing every row;
+  `qs.Unfiltered()` asks for every row on purpose.
+
+### Fixed
+
+- Postgres connection strings quote their values: an empty password no longer
+  swallows the next keyword (`password= dbname=app` connected to the wrong
+  database), and a password can't add keywords. A MySQL database name is
+  escaped, so it can't add driver parameters.
+- ORM: an `OnChange` signal from a nested `Atomic` that rolled back no longer
+  fires when the outer transaction commits.
+- ORM: `Paginate` answers a page past the end without querying and caps the
+  search length; `BulkCreate` batches stay under the databases' argument
+  limits; migrations split Postgres strings ending in a backslash correctly.
+- ORM: `Exclude` (and `Not`) keep rows whose compared column is NULL, as
+  Django's `exclude` does.
+- ormgen finds `orm.For` under any import name of the orm package.
+
 ## [2.20.0] - 2026-10-06
 
 ### Added

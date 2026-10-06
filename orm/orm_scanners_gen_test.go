@@ -28,3 +28,24 @@ func (s *ormScansqlUser) Bind(r *sqlUser) {
 	s.c1.P = &r.Name
 	s.c2.P = &r.Age
 }
+
+// sqlUserFields is sqlUser's fields as typed lookups.
+var sqlUserFields = sqlUserFieldSet{}.Under("")
+
+// sqlUserFieldSet is sqlUser's fields as typed lookups: sqlUserFields from the model itself, Under from a model related to it.
+type sqlUserFieldSet struct {
+	p    string
+	ID   Field[int64]
+	Name TextField[string]
+	Age  Field[int]
+}
+
+// Under is the set through a relation path, such as "author__".
+func (s sqlUserFieldSet) Under(prefix string) sqlUserFieldSet {
+	return sqlUserFieldSet{
+		p:    prefix,
+		ID:   FieldAt[int64](prefix + "id"),
+		Name: TextFieldAt[string](prefix + "name"),
+		Age:  FieldAt[int](prefix + "age"),
+	}
+}

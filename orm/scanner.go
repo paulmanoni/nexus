@@ -1,6 +1,7 @@
 package orm
 
 import (
+	"database/sql/driver"
 	"reflect"
 	"slices"
 	"sync"
@@ -16,6 +17,27 @@ type RowScanner[T any] interface {
 	Dest() []any
 	// Bind points the destinations at row's fields.
 	Bind(row *T)
+}
+
+// RowWriter is a generated scanner's other half: a row's column values
+// for an INSERT, in the scanner's column order, without reflection.
+// ormgen writes it beside the scanner of a model with no pointer embeds.
+type RowWriter[T any] interface {
+	// Values appends row's column values to dst[:0].
+	Values(row *T, dst []any) []any
+}
+
+// PtrValue is a pointer field's value for the driver, for generated
+// writers: nil for nil, the pointer for a driver.Valuer, else what it
+// points to.
+func PtrValue[V any](p *V) any {
+	if p == nil {
+		return nil
+	}
+	if v, ok := any(p).(driver.Valuer); ok {
+		return v
+	}
+	return *p
 }
 
 type scannerEntry struct {

@@ -4,6 +4,7 @@ import (
 	"context"
 	"log/slog"
 	"reflect"
+	"sync"
 
 	"github.com/paulmanoni/nexus/v2/di"
 
@@ -87,7 +88,21 @@ func bindOption[T any](name string, build func() Config, optsFn func() []BindOpt
 		if details == nil {
 			details = map[string]any{"engine": driver}
 		}
-		var ropts []resource.Option
+		ropts := []resource.Option{resource.WithDetails(func() map[string]any {
+			out := make(map[string]any, len(details)+1)
+			for k, v := range details {
+				out[k] = v
+			}
+			for _, d := range described(app, name) {
+				out[d.key] = d.value()
+			}
+			if bc.AsDefault {
+				for _, d := range described(app, "") {
+					out[d.key] = d.value()
+				}
+			}
+			return out
+		})}
 		if bc.AsDefault {
 			ropts = append(ropts, resource.AsDefault())
 		}
@@ -132,6 +147,55 @@ func Lookup(app *nexus.App, name string) (*Manager, bool) {
 		}
 	}
 	return only, only != nil
+}
+
+// describeKey is where Describe keeps a database's added details.
+type describeKey struct{ name string }
+
+type detail struct {
+	key   string
+	value func() any
+}
+
+type details struct {
+	mu   sync.Mutex
+	list []detail
+}
+
+// Describe adds a detail to the dashboard entry of the database db.Bind
+// registered as name in app (the default one for an empty name), computed each time the dashboard reads it:
+// how packages built on a database (the ORM's models) show what they keep
+// there. A key described again replaces the earlier value.
+func Describe(app *nexus.App, name, key string, value func() any) {
+	if app == nil || key == "" || value == nil {
+		return
+	}
+	v, _ := app.Value(describeKey{name})
+	d, ok := v.(*details)
+	if !ok {
+		d = &details{}
+		app.SetValue(describeKey{name}, d)
+	}
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	for i, x := range d.list {
+		if x.key == key {
+			d.list[i].value = value
+			return
+		}
+	}
+	d.list = append(d.list, detail{key, value})
+}
+
+func described(app *nexus.App, name string) []detail {
+	v, _ := app.Value(describeKey{name})
+	d, ok := v.(*details)
+	if !ok {
+		return nil
+	}
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	return append([]detail(nil), d.list...)
 }
 
 // BindOption tunes how Bind registers the dashboard resource. Alias of

@@ -95,3 +95,50 @@ func TestReleaseRefusesWhatWouldBreak(t *testing.T) {
 		t.Fatalf("major mismatch: %v", err)
 	}
 }
+
+// TestReleaseOwnVersions releases a v0 module beside a v2 root: tagged at
+// its own version, and the CLI requiring it moves in the wave after it.
+func TestReleaseOwnVersions(t *testing.T) {
+	root := releaseRepo(t)
+	write := func(p, s string) {
+		if err := os.MkdirAll(filepath.Dir(filepath.Join(root, p)), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(filepath.Join(root, p), []byte(s), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	write("orm/go.mod", "module example.com/kit/orm\n\ngo 1.26\n\nrequire example.com/kit/v2 v2.0.0\n")
+	write("cmd/kit/go.mod", "module example.com/kit/cmd/kit/v2\n\ngo 1.26\n\nrequire (\n\texample.com/kit/v2 v2.0.0\n\texample.com/kit/orm v0.1.0\n)\n")
+
+	var out bytes.Buffer
+	if err := runRelease(&out, &out, "v2.1.0", releaseOptions{dir: root, remote: "origin"}, &fakeRunner{}); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(out.String(), "--module orm=vX.Y.Z") {
+		t.Fatalf("an untagged own-version module isn't flagged:\n%s", out.String())
+	}
+	if err := runRelease(&out, &out, "v2.1.0", releaseOptions{dir: root, remote: "origin", modules: map[string]string{"orm": "v2.1.0"}}, &fakeRunner{}); err == nil {
+		t.Fatal("tagged a v0 module path v2")
+	}
+
+	r := &fakeRunner{}
+	out.Reset()
+	if err := runRelease(&out, &out, "v2.1.0", releaseOptions{dir: root, yes: true, remote: "origin", cliPath: "example.com/kit/cmd/kit/v2", modules: map[string]string{"orm": "v0.2.0"}}, r); err != nil {
+		t.Fatal(err)
+	}
+	got := strings.Join(r.calls, "\n")
+	for _, want := range []string{
+		"git tag orm/v0.2.0", "git push origin main orm/v0.2.0",
+		"go get example.com/kit/v2@v2.1.0 example.com/kit/orm@v0.2.0",
+		"git tag cmd/kit/v2.1.0",
+		"go install example.com/kit/cmd/kit/v2@v2.1.0",
+	} {
+		if !strings.Contains(got, want) {
+			t.Errorf("missing %q in:\n%s", want, got)
+		}
+	}
+	if strings.Index(got, "git push origin main orm/v0.2.0") > strings.Index(got, "example.com/kit/orm@v0.2.0") {
+		t.Errorf("the CLI moved before the orm's tag was pushed:\n%s", got)
+	}
+}

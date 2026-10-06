@@ -5,6 +5,7 @@ import (
 	"errors"
 	"slices"
 	"strings"
+
 	"testing"
 	"time"
 
@@ -14,6 +15,7 @@ import (
 	_ "github.com/paulmanoni/nexus/v2/db/sqlite"
 
 	"github.com/paulmanoni/nexus/orm"
+	"github.com/paulmanoni/nexus/orm/ormtest"
 )
 
 type Base struct {
@@ -32,7 +34,7 @@ var creates int
 type User struct {
 	Base
 	Name   string
-	Email  string `db:"email"`
+	Email  string `db:"email" orm:"unique"`
 	Age    int
 	Bio    *string
 	Active bool
@@ -53,27 +55,11 @@ var (
 	Posts = orm.For[Post]()
 )
 
-const schema = `
-CREATE TABLE users (id INTEGER PRIMARY KEY AUTOINCREMENT, created_at DATETIME, updated_at DATETIME,
-	name TEXT NOT NULL, email TEXT UNIQUE, age INTEGER, bio TEXT, active BOOLEAN);
-CREATE TABLE articles (id INTEGER PRIMARY KEY AUTOINCREMENT, headline TEXT, author_id INTEGER REFERENCES users(id));
-`
-
+// open is a database with the test models' tables: SQLite, or the server
+// ORMTEST_DRIVER and ORMTEST_DSN name.
 func open(t *testing.T) context.Context {
 	t.Helper()
-	m, err := db.Open(db.Config{Driver: db.SQLite, Database: ":memory:", LogLevel: "silent"})
-	if err != nil {
-		t.Fatal(err)
-	}
-	t.Cleanup(m.Stop)
-	s, err := m.GetDB().DB()
-	if err != nil {
-		t.Fatal(err)
-	}
-	if _, err := s.Exec(schema); err != nil {
-		t.Fatal(err)
-	}
-	return orm.WithDB(context.Background(), orm.Open(s, "sqlite"))
+	return ormtest.Open(t, Users, Posts, Profiles, Authors, Books, Tags)
 }
 
 func seed(t *testing.T, ctx context.Context) {
@@ -377,4 +363,17 @@ func TestGeneratedScanners(t *testing.T) {
 	if orm.Generated[stale]() {
 		t.Fatal("a model with no generated scanner reports one")
 	}
+}
+
+// TestDriver checks the suite runs on the database it says: SQLite, or
+// ORMTEST_DRIVER's server.
+func TestDriver(t *testing.T) {
+	ctx := open(t)
+	d, ok := orm.DBFrom(ctx)
+	if !ok || d.Dialect().Name() != ormtest.Driver() {
+		t.Fatalf("running on %v, want %s", d.Dialect().Name(), ormtest.Driver())
+	}
+	var v string
+	_ = d.SQL().QueryRowContext(ctx, map[string]string{"sqlite": "SELECT sqlite_version()", "postgres": "SELECT version()", "mysql": "SELECT version()"}[ormtest.Driver()]).Scan(&v)
+	t.Logf("%s %s", ormtest.Driver(), v)
 }

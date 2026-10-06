@@ -103,7 +103,7 @@ func (m *Manager[T]) Create(ctx context.Context, row *T) error {
 }
 
 // BulkCreate inserts rows in as few statements as it can, setting their
-// primary keys, in batches of 500.
+// primary keys, in batches of up to 500 (fewer for a wide model).
 func (m *Manager[T]) BulkCreate(ctx context.Context, rows []*T) error {
 	if len(rows) == 0 {
 		return nil
@@ -127,8 +127,11 @@ func (m *Manager[T]) BulkCreate(ctx context.Context, rows []*T) error {
 			keyed = append(keyed, row)
 		}
 	}
+	// A batch stays under every database's limit on a statement's
+	// arguments (SQLite's 32766 the lowest).
+	per := max(1, min(500, 30000/max(1, len(m.meta.Fields))))
 	for _, set := range [][]*T{keyed, unkeyed} {
-		for batch := range slices.Chunk(set, 500) {
+		for batch := range slices.Chunk(set, per) {
 			if err := m.insert(ctx, c, batch); err != nil {
 				return err
 			}
@@ -138,23 +141,39 @@ func (m *Manager[T]) BulkCreate(ctx context.Context, rows []*T) error {
 		if err := m.afterCreate(ctx, row); err != nil {
 			return err
 		}
+		m.changed(ctx, c, Change[T]{Kind: Created, Row: row})
 	}
 	return nil
 }
 
 func (m *Manager[T]) insert(ctx context.Context, c conn, rows []*T) error {
 	fields := m.insertable(reflect.ValueOf(rows[0]).Elem())
-	b := &builder{d: c.d, m: m.meta}
+	b := newBuilder(c.d, m.meta)
 	cols := make([]string, len(fields))
 	for i, f := range fields {
-		cols[i] = b.col(f)
+		cols[i] = b.bare(f)
 	}
+	var w RowWriter[T]
+	if mk, ok := rowScanner[T](m.meta); ok {
+		w, _ = mk().(RowWriter[T])
+	}
+	skipPK := len(fields) < len(m.meta.Fields)
+	var vals []any
 	tuples := make([]string, len(rows))
 	for r, row := range rows {
-		v := reflect.ValueOf(row).Elem()
-		marks := make([]string, len(fields))
-		for i, f := range fields {
-			marks[i] = b.arg(value(peek(v, f.Index, f.Type)))
+		marks := make([]string, 0, len(fields))
+		if w != nil {
+			vals = w.Values(row, vals)
+			for i, f := range m.meta.Fields {
+				if !(skipPK && f.PK) {
+					marks = append(marks, b.arg(vals[i]))
+				}
+			}
+		} else {
+			v := reflect.ValueOf(row).Elem()
+			for _, f := range fields {
+				marks = append(marks, b.arg(value(peek(v, f.Index, f.Type))))
+			}
 		}
 		tuples[r] = "(" + strings.Join(marks, ", ") + ")"
 	}
@@ -162,7 +181,7 @@ func (m *Manager[T]) insert(ctx context.Context, c conn, rows []*T) error {
 	pk := m.meta.PK
 	needKey := pk != nil && !slices.Contains(fields, pk)
 	if needKey && c.d.Returning() {
-		rs, err := c.query(ctx, s+" RETURNING "+b.col(pk), b.args)
+		rs, err := c.query(ctx, s+" RETURNING "+b.bare(pk), b.args())
 		if err != nil {
 			return m.mapErr(c, err)
 		}
@@ -177,7 +196,7 @@ func (m *Manager[T]) insert(ctx context.Context, c conn, rows []*T) error {
 		}
 		return nil
 	}
-	res, err := c.exec(ctx, s, b.args)
+	res, err := c.exec(ctx, s, b.args())
 	if err != nil {
 		return m.mapErr(c, err)
 	}
@@ -226,7 +245,7 @@ func (m *Manager[T]) Save(ctx context.Context, row *T) error {
 		values[f.Name] = value(dst)
 	}
 	key := value(peek(v, pk.Index, pk.Type))
-	n, err := m.Filter(Q{pk.Name: key}).Update(ctx, values)
+	n, err := m.Filter(Q{pk.Name: key}).Update(hush(ctx), values)
 	if err != nil {
 		return err
 	}
@@ -234,7 +253,12 @@ func (m *Manager[T]) Save(ctx context.Context, row *T) error {
 		return m.notFound()
 	}
 	if h, ok := any(row).(AfterSaver); ok {
-		return h.AfterSave(ctx)
+		if err := h.AfterSave(ctx); err != nil {
+			return err
+		}
+	}
+	if c, err := m.conn(ctx); err == nil {
+		m.changed(ctx, c, Change[T]{Kind: Updated, Row: row})
 	}
 	return nil
 }
@@ -254,7 +278,7 @@ func (m *Manager[T]) Remove(ctx context.Context, row *T) error {
 		}
 	}
 	key := value(peek(reflect.ValueOf(row).Elem(), pk.Index, pk.Type))
-	n, err := m.Filter(Q{pk.Name: key}).Delete(ctx)
+	n, err := m.Filter(Q{pk.Name: key}).Delete(hush(ctx))
 	if err != nil {
 		return err
 	}
@@ -262,7 +286,12 @@ func (m *Manager[T]) Remove(ctx context.Context, row *T) error {
 		return m.notFound()
 	}
 	if h, ok := any(row).(AfterDeleter); ok {
-		return h.AfterDelete(ctx)
+		if err := h.AfterDelete(ctx); err != nil {
+			return err
+		}
+	}
+	if c, err := m.conn(ctx); err == nil {
+		m.changed(ctx, c, Change[T]{Kind: Deleted, Row: row})
 	}
 	return nil
 }
@@ -316,6 +345,15 @@ func (m *Manager[T]) mapErr(c conn, err error) error {
 	name := col
 	if f, ok := m.meta.field(col); ok {
 		name = f.Column
+	} else if col != "" {
+		// A constraint's name (users_email_key, idx_users_email): the
+		// longest column of the model it names.
+		name = ""
+		for _, f := range m.meta.Fields {
+			if (strings.Contains(col, "_"+f.Column+"_") || strings.HasSuffix(col, "_"+f.Column)) && len(f.Column) > len(name) {
+				name = f.Column
+			}
+		}
 	}
 	switch kind {
 	case uniqueViolation:

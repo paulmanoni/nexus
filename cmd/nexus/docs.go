@@ -218,6 +218,7 @@ var topicSummaries = map[string]string{
 	"mail":        "extension/mail — outbound email: SMTP + log (dev), MIME, attachments",
 	"session":     "extension/session — Django-style server-side sessions (cookie + store)",
 	"maskid":      "extension/maskid — opaque IDs on the wire, no handler changes",
+	"orm":         "nexus/orm — Django-style models, querysets, relations, migrations",
 	"cli":         "Subcommand cheatsheet (new / init / dev / build / client / generate)",
 	"devstate":    "dev.Preserve — carry in-memory state across a nexus dev rebuild",
 	"dashboard":   "/__nexus tabs, gating, HTTP surface",
@@ -2691,6 +2692,53 @@ events are no-ops via version-equality short-circuit.
   accepts — the offline signing key is the integrity floor.
 
 Run 'nexus docs pki' for the cert-generation toolchain.
+`,
+
+	"orm": `
+ORM — Django-style models over the app's databases (module nexus/orm, Go 1.27)
+
+  var Users = orm.For[User]()            // a manager: pass it to nexus.Boot
+  nexus.Boot(db.BindFromConfig[DB]("main"), Users)
+
+Querysets (lazy, immutable; string lookups as in Django):
+  Users.Filter(orm.Q{"age__gte": 18, "name__icontains": "al"}).
+      Exclude(orm.Q{"email__endswith": "@test"}).OrderBy("-created_at").Limit(20).All(ctx)
+  Get / First / Count / Exists / Iter / Values[R]("name") / Aggregate / Update(Set) / Delete
+  orm.Or, orm.And, orm.Not; F("x"), annotations, custom functions (orm.Function),
+  orm.Cast(orm.F("age"), orm.AsText) (AsInt AsFloat AsDate AsDateTime AsDecimal AsType)
+
+Typed lookups (generated beside the row scanners, no setup):
+  Users.Filter(UserFields.Age.Gte(18), PostFields.User().Email.IEndsWith("@x"))
+
+Relations (convention: Author *User + AuthorID; []Post = reverse; tags):
+  Author  *User  ` + "`" + `gorm:"foreignKey:AuthorID"` + "`" + `     Tags []Tag ` + "`" + `orm:"m2m:book_tags"` + "`" + `
+  Books.Filter(orm.Q{"author__name": "Ali", "tags__name": "go"})
+  SelectRelated("author__profile")       one JOIN, attached
+  PrefetchRelated("tags", orm.Prefetch("books", Books.Filter(…)))   one query a level
+  Books.GraphRelation[*Author]("author")  a batched GraphQL field (no N+1)
+
+Subqueries: orm.Subquery(qs), orm.Exists(qs), orm.OuterRef("id"), Q{"id__in": qs}
+
+Writes: Create / BulkCreate / Save / Remove (hooks: BeforeCreate, AfterSave, …),
+  orm.Atomic(ctx, fn) (nested = savepoint), Manager.OnChange(fn) after commit.
+  Update/Delete with no condition fail (orm.ErrUnfiltered): Users.Unfiltered().Delete(ctx)
+  is how to mean every row.
+
+Pages: orm.Paginate(ctx, qs, orm.PageFrom(r.URL.Query()), orm.Sortable("name"),
+  orm.Searchable("name", "email"), orm.MaxSize(100))
+
+Migrations:
+  nexus makemigrations [name]     diff the models with migrations/schema.json,
+                                  write migrations/NNNN_name.sql (--check in CI)
+  //go:embed migrations
+  var migrations embed.FS
+  nexus.Boot(…, orm.Migrate(migrations, orm.MigrateDir("migrations")))
+  Applied at boot, before serving, recorded in nexus_migrations, under a lock.
+  orm.Unmanaged() keeps a legacy table out; orm.On("name") picks a database.
+
+Tests: ctx := ormtest.Open(t, Users, Posts)   sqlite, or ORMTEST_DRIVER/DSN
+Dev: a query repeated in one request logs an N+1 warning with a hint.
+Guide: docs/guide/orm.md · nexus doctor checks the generated code.
 `,
 
 	"storage": `

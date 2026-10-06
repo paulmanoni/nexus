@@ -33,6 +33,10 @@ type field struct {
 	PK         bool
 	AutoNowAdd bool
 	AutoNow    bool
+	Unique     bool
+	Indexed    bool
+	Size       int
+	SQLType    string
 }
 
 // model is what a Go struct means to the database, computed once per
@@ -47,6 +51,9 @@ type model struct {
 	// computed is the fields tagged orm:"computed", by Go name lowercased
 	// and snake_case: no column, filled from the annotation of that name.
 	computed map[string]*field
+	// rels is the relation fields, by Go name lowercased and snake_case.
+	rels    map[string]*relation
+	relList []*relation
 }
 
 // field is the column a lookup names: by Go field name (any case) or by
@@ -103,7 +110,7 @@ func buildModel(t reflect.Type, table string) (*model, error) {
 	if t.Kind() != reflect.Struct {
 		return nil, fmt.Errorf("orm: %v is not a struct", t)
 	}
-	m := &model{Type: t, Name: t.Name(), byName: map[string]*field{}, computed: map[string]*field{}}
+	m := &model{Type: t, Name: t.Name(), byName: map[string]*field{}, computed: map[string]*field{}, rels: map[string]*relation{}}
 	switch {
 	case table != "":
 		m.Table = table
@@ -131,6 +138,11 @@ func buildModel(t reflect.Type, table string) (*model, error) {
 	}
 	if len(m.Fields) == 0 {
 		return nil, fmt.Errorf("orm: %s has no columns", m.Name)
+	}
+	for _, r := range m.relList {
+		if err := r.settle(m); err != nil {
+			return nil, err
+		}
 	}
 	return m, nil
 }
@@ -170,7 +182,10 @@ func collect(m *model, t reflect.Type, index []int, prefix string) error {
 			continue
 		}
 		if !isValue(ft) {
-			continue // a relation, or a type the database can't hold
+			if r := relationOf(sf, path, tag); r != nil {
+				m.addRelation(r)
+			}
+			continue // a type the database can't hold
 		}
 		if tag.Computed {
 			f := &field{Name: sf.Name, Column: tags.Snake(sf.Name), Index: path, Type: ft}
@@ -184,7 +199,7 @@ func collect(m *model, t reflect.Type, index []int, prefix string) error {
 		}
 		col = prefix + col
 		f := &field{Name: sf.Name, Column: col, Index: path, Type: ft, PK: tag.PK,
-			AutoNowAdd: tag.AutoNowAdd, AutoNow: tag.AutoNow}
+			AutoNowAdd: tag.AutoNowAdd, AutoNow: tag.AutoNow, Unique: tag.Unique, Indexed: tag.Index, Size: tag.Size, SQLType: tag.Type}
 		key := strings.ToLower(sf.Name)
 		if old, ok := m.byName[key]; ok {
 			if len(old.Index) <= len(path) {

@@ -118,6 +118,18 @@ Both forms build the same internal condition tree; apps can mix them. `nexus lsp
 already serves overlay code to the editor, so completion works with nothing
 committed.
 
+**Done.** ormgen writes `<Model>FieldSet` and the `<Model>Fields` variable beside
+each scanner:
+
+- **Fields:** one per column, a `Field[V]` (a `TextField[V]` for strings).
+  `V` is the column's Go type, with pointers removed.
+- **Relations:** a method per relation, returning the related model's set
+  re-rooted at the relation's path (`Under("author__")`), across packages too.
+- **Names you own win:** a package that declares the name itself keeps it, and
+  that set isn't generated.
+- **Type errors:** they don't stop generation, because code naming a set doesn't
+  type-check until the set exists.
+
 ## Expressions and custom functions
 
 An `orm.Expr` is SQL the query computes: `orm.F("age")` (a field or an
@@ -168,9 +180,8 @@ Hooks are interfaces on the model, promoted from embedded structs like any metho
 `BeforeCreate(ctx) error`, `AfterCreate`, `BeforeSave`, `AfterSave`, `BeforeDelete`.
 
 **Change signals** run after the transaction commits, never inside it:
-`orm.OnChange[User](func(ctx, orm.Change[User]))`. This is the natural place to call
-`view.Broadcast` so live pages refresh when data changes, which oats does by hand
-today with `applicant.Changed()`.
+`Users.OnChange(func(ctx, orm.Change[User]))`. This is the natural place to call
+`view.Broadcast` so live pages refresh when data changes.
 
 ## Relations
 
@@ -182,6 +193,69 @@ today with `applicant.Changed()`.
   prefetches with a custom QuerySet, as Django's `Prefetch` does.
 - **No lazy loading.** Go can't intercept field access, so an unloaded relation stays
   nil or empty. The dev-time N+1 detector below covers the mistake this invites.
+
+**How lookups cross relations.** The builder walks a key one step at a time:
+
+- **A foreign key** joins the related table as a LEFT JOIN aliased by its path
+  (`"author__profile"`), added once per path however often it's named.
+- **A relation holding many rows** (reverse FK, many-to-many) becomes `EXISTS
+  (SELECT 1 FROM … WHERE link AND rest)`, so the outer rows never repeat. A
+  many-to-many's through table is joined inside the subquery.
+- **Under `Not`/`Exclude`,** a comparison on a column that can be NULL (a pointer
+  field, or any column behind a LEFT JOIN) is written `(cond AND col IS NOT NULL)`.
+  That keeps NULL rows in the result, as Django's `exclude` does.
+- **Bulk writes:** an UPDATE or DELETE whose conditions join selects its keys
+  through a derived table (`pk IN (SELECT pk FROM (…) AS t)`), which MySQL
+  requires.
+
+## Subqueries
+
+A subquery is a query placed inside another: as a condition, as a value, or as a
+computed column.
+
+```go
+// IN: a QuerySet stands for its primary keys; a Values for its one column.
+Authors.Filter(orm.Q{"id__in": Books.Filter(orm.Q{"published": true}).Values[int64]("author_id")})
+
+// EXISTS, correlated to the outer row by OuterRef.
+Authors.Filter(orm.Exists(Books.Filter(orm.Q{"author_id": orm.OuterRef("id")})))
+
+// A scalar, as an annotation.
+latest := Books.Filter(orm.Q{"author_id": orm.OuterRef("id")}).OrderBy("-id").Limit(1).Values[string]("title")
+Authors.Annotate("latest", orm.Subquery(latest)).OrderBy("latest")
+```
+
+**The pieces.**
+
+- **`subquerier`:** an unexported interface `QuerySet[T]` and `Values[R]` implement,
+  `subquerySQL(b *builder) (string, error)`. A QuerySet selects its key; a Values
+  selects its single column (two columns is an error, raised when the SQL is built).
+- **Uses:** `Q{"x__in": sub}` accepts one in `compare`. `orm.Subquery(sub)` is an
+  `Expr` (annotations, `Where`, function arguments). `orm.Exists(sub)` is both a
+  `Cond` and an `Expr`, and `orm.Not(orm.Exists(…))` negates it.
+- **`orm.OuterRef(name)`** is an `Expr` that renders through the builder's `outer`
+  link. It resolves `name`, relation paths included, against the enclosing query's
+  model and alias. Used where there is no enclosing query, it fails instead of
+  silently comparing a column to itself.
+
+**Rendering.**
+
+- **Shared statement:** the inner query is built by `query.sub(b)`, a child builder
+  sharing the outer statement's argument list (`stmt`). Placeholders therefore
+  number on in one sequence (`$1…$n` on Postgres) however deep the nesting.
+- **Aliases:** each subquery takes the next `nexus_N`, so a table may query itself
+  (`Authors.Filter(orm.Exists(Authors.Filter(orm.Q{"id__lt": orm.OuterRef("id")})))`).
+  Its own FK joins hang off that alias.
+- **Correlation crosses joins:** `outer` is carried through `follow` and `exists`,
+  so an `OuterRef` inside a relation path or an EXISTS within the subquery still
+  reaches the outermost query's row.
+- **Clauses:** the inner query keeps its `ORDER BY`, `LIMIT` and `OFFSET` (needed
+  for "latest" scalars). Prefetches and select-related plans are dropped: a
+  subquery returns values, not rows.
+
+**Not done:** `OuterRef` to a query two levels out (`OuterRef(OuterRef("id"))`), and
+subqueries in `Update`'s SET (`Set{"x": orm.Subquery(…)}`). Both fit the same
+design: an `outer` chain, and SET values that render expressions.
 
 ## nexus integration
 
@@ -195,10 +269,10 @@ the error as is.
 schema. Each FK or reverse FK becomes a batched field through `dataloader`, which is
 `LoadField` with the fetch written for you, so nested queries are N+1-free by default.
 
-**Lists for REST and views.** `orm.Page(ctx, qs, q, orm.Sortable("name", "age"),
-orm.Searchable("name", "email"))` turns a `ui.Query` (or REST query params) into
-`ORDER BY` / `LIMIT` / search with a whitelist. This replaces the hand-rolled paging
-in every list page, and `view/ui.DataTable` can consume it directly.
+**Lists for REST and views.** `orm.Paginate(ctx, qs, orm.PageFrom(query),
+orm.Sortable("name", "age"), orm.Searchable("name", "email"))` turns query parameters
+into `ORDER BY` / `LIMIT` / search, with an allowlist of sortable columns. It replaces
+the hand-rolled paging in every list page.
 
 **Tracing and the dashboard.**
 - **Spans:** each query is a span on the request's trace in `/__nexus` (SQL, args
@@ -215,9 +289,14 @@ in every list page, and `view/ui.DataTable` can consume it directly.
 The connection, pool and reconnects are still `db.Manager`'s. The ORM takes the
 Manager's `*sql.DB` and `Driver()` and never opens connections itself.
 
-**Testing.** `ormtest.DB(t, models...)` opens in-memory SQLite and creates managed
-tables, with fixtures as `[]T`. It works with `nexustest` / `InProcess` as `db.Bind`
-does today.
+**Testing.** `ormtest.Open(t, models...)` opens in-memory SQLite and creates the
+tables. `ORMTEST_DRIVER`/`ORMTEST_DSN` run the same tests on Postgres (a schema per
+test) or MySQL (a database per test). `Seed`, `Exec` and `CountQueries` help.
+
+**Several apps in one process.** A manager may be passed to two apps (tests, a
+gateway). Each app puts its binding on its request contexts
+(`App.SetRequestValue`), so a query made in a request uses that app's databases.
+Code outside a request uses the app the manager was last bound to.
 
 **Dev state.** Nothing to preserve: the data lives in the database.
 
@@ -248,42 +327,54 @@ does today.
     misread data. `orm.Generated[T]()` reports which path a model uses.
 - **Statements:** prepared statements are cached per SQL shape per connection.
 
-## Migrations (later)
+## Migrations
 
 - **Managed models only.** Models marked `orm.Unmanaged()` (every legacy table) are
   never touched.
-- **Generating:** `nexus makemigrations` diffs model metadata against the last
-  migration state and writes plain SQL files in `migrations/`.
-- **Applying:** `nexus migrate`, or `orm.Migrate()` as a `nexus.Setup` step, applies
-  them in a transaction with a lock table.
+- **One schema description.** `orm/internal/schema` describes tables, columns,
+  indexes and foreign keys. It renders `CREATE`/`ALTER` per dialect and diffs two
+  table lists (`Diff`), with a note on each step that needs a person (a drop, a
+  NOT NULL column added to rows that exist, a change SQLite can't make).
+  `CreateTables` and the migrations both use it.
+- **Generating.** `nexus makemigrations` asks the app itself:
+  - **The planner:** it overlays `0_nexus_orm_plan.go` into the main package, an
+    `init` calling `orm.ServePlan()`, and builds the app with the usual overlay.
+  - **The run:** with `NEXUS_ORM_PLAN` set, the binary writes the plan and exits
+    before `main`. Every package-level `orm.For` has run by then (package
+    initialisation), so the schema is the one the app links, read through the same
+    reflection the runtime uses. No second, static reading of the models can
+    drift from it.
+  - **The output:** the diff from `migrations/schema.json` goes into
+    `NNNN_name.sql`, and the snapshot is updated. `--check` is the CI gate.
+- **Applying.** `orm.Migrate(fsys)` is a `nexus.Setup` step:
+  - **Order:** it waits for the database to connect, then applies the pending files
+    in name order.
+  - **Locking:** on one connection, under a Postgres advisory lock or MySQL
+    `GET_LOCK`.
+  - **Transactions:** each migration runs in one where the database supports DDL
+    in transactions.
+  - **Recording:** each is recorded with its checksum in `nexus_migrations`.
+  - **Splitting:** statements split on semicolons outside quotes, comments and
+    dollar quotes.
 - **Why plain SQL:** reviewable in a PR, runnable without nexus.
 
 ## Phases
 
-1. **Core.**
-   - Model metadata: tag compatibility, embedded flattening, boot validation.
-   - Dialects and the QuerySet, with `Q`/`Or`/`Not`, lookups, CRUD, `Iter`,
-     `Values[R]` and aggregates.
-   - Plumbing: `Atomic`, hooks, error mapping, trace spans.
-   - Tests on all three drivers.
-2. **Relations.**
-   - FK, reverse FK and many-to-many.
-   - Nested `SelectRelated`, and `Prefetch` with custom QuerySets.
-   - GraphQL batched relation fields and the N+1 detector.
-3. **Surfaces.** `orm.Page` with the DataTable binding, `OnChange` signals, the
-   dashboard models panel, `ormtest`.
-4. **Codegen.** Generated scanners through the overlay (done); typed field sets
-   and `nexus lsp` support next.
-5. **Migrations** for managed models.
+All done:
+
+1. **Core:** metadata, dialects, QuerySet, CRUD, `Atomic`, hooks, errors, spans.
+2. **Relations:** FK, reverse FK and many-to-many lookups; nested `SelectRelated`;
+   `Prefetch` with custom QuerySets; GraphQL relation fields; the N+1 warning.
+3. **Surfaces:** `Paginate`, `OnChange`, the dashboard's models, `ormtest`,
+   subqueries.
+4. **Codegen:** generated scanners and insert writers, typed field sets, and
+   `nexus lsp` serving them.
+5. **Migrations:** `nexus makemigrations` and `orm.Migrate`.
 
 ## Open questions
 
-1. **Lookup style.** Should `orm.Q{"age__gte": 18}` stay the primary form, with
-   typed fields as an add-on, or the other way round? The proposal keeps strings
-   first for Django familiarity.
-2. **Name.** `orm`, or a name of its own (the package is a public API)?
-3. **Long term:** should `db.Manager` drop GORM once the ORM covers what apps use it
-   for, or keep it permanently for apps that want GORM?
+- **GORM, long term:** should `db.Manager` drop GORM once the ORM covers what apps use
+  it for, or keep it for apps that want GORM?
 
 ## Decisions
 

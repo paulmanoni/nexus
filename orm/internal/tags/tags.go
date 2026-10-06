@@ -2,6 +2,7 @@ package tags
 
 import (
 	"reflect"
+	"strconv"
 	"strings"
 	"unicode"
 )
@@ -13,6 +14,24 @@ type Tags struct {
 	AutoNowAdd, AutoNow bool
 	Embedded, Computed  bool
 	Prefix              string
+
+	// A relation: FK names the column holding the related row's key
+	// (orm:"fk:author_id", GORM's foreignKey on a belongs-to), Rel the
+	// related rows' column holding this row's key (orm:"rel:author_id",
+	// GORM's foreignKey on a has-many), M2M the table between
+	// (orm:"m2m:post_tags[,post_id,tag_id]", GORM's many2many).
+	FK, Rel, M2M string
+
+	// Schema: a UNIQUE column, a VARCHAR size, a database type of your
+	// own, an index, and what deleting the related row does to this one
+	// (on a foreign key: cascade, set_null, restrict).
+	Unique, Index bool
+	Size          int
+	Type          string
+	OnDelete      string
+	// GormForeignKey is GORM's foreignKey, a Go field name, read as FK or
+	// Rel by the field's shape.
+	GormForeignKey string
 }
 
 // Parse reads a field's column settings from its name, tag and whether
@@ -41,6 +60,22 @@ func Parse(name string, tag reflect.StructTag, isTime bool) Tags {
 				t.Embedded = true
 			case "computed":
 				t.Computed = true
+			case "unique":
+				t.Unique = true
+			case "index":
+				t.Index = true
+			case "size":
+				t.Size, _ = strconv.Atoi(val)
+			case "type":
+				t.Type = val
+			case "on_delete":
+				t.OnDelete = strings.ToLower(val)
+			case "fk":
+				t.FK = val
+			case "rel":
+				t.Rel = val
+			case "m2m":
+				t.M2M = val
 			case "prefix":
 				t.Prefix = val
 			}
@@ -71,6 +106,28 @@ func Parse(name string, tag reflect.StructTag, isTime bool) Tags {
 				t.AutoNow = true
 			case "embedded":
 				t.Embedded = true
+			case "foreignkey":
+				t.GormForeignKey = val
+			case "unique", "uniqueindex":
+				t.Unique = true
+			case "index":
+				t.Index = true
+			case "size":
+				if t.Size == 0 {
+					t.Size, _ = strconv.Atoi(val)
+				}
+			case "type":
+				if t.Type == "" {
+					t.Type = val
+				}
+			case "constraint":
+				if v := strings.ToLower(val); strings.Contains(v, "ondelete:") {
+					t.OnDelete = strings.ReplaceAll(strings.TrimSpace(strings.SplitN(strings.SplitN(v, "ondelete:", 2)[1], ",", 2)[0]), " ", "_")
+				}
+			case "many2many":
+				if t.M2M == "" {
+					t.M2M = val
+				}
 			case "embeddedprefix":
 				t.Prefix = val
 			}

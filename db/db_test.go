@@ -56,9 +56,20 @@ func TestDSN_AllDrivers(t *testing.T) {
 			Database: "d", Port: "5432",
 		}, "host=h user=u password=p dbname=d port=5432 sslmode=disable TimeZone=UTC"},
 
+		{"postgres quoting", db.Config{
+			Driver: db.Postgres, Host: "h", User: "u", Password: "", Database: "d", Port: "5432",
+		}, "host=h user=u password='' dbname=d port=5432 sslmode=disable TimeZone=UTC"},
+		{"postgres injection", db.Config{
+			Driver: db.Postgres, Host: "h", User: "u", Password: `a' sslmode=disable \`, Database: "d", Port: "5432", SSLMode: "require",
+		}, `host=h user=u password='a\' sslmode=disable \\' dbname=d port=5432 sslmode=require TimeZone=UTC`},
+
 		{"mysql", db.Config{
 			Driver: db.MySQL, User: "u", Password: "p", Host: "h", Port: "3306", Database: "d",
 		}, "u:p@tcp(h:3306)/d?charset=utf8mb4&parseTime=True&loc=Local"},
+
+		{"mysql name can't add parameters", db.Config{
+			Driver: db.MySQL, User: "u", Password: "p", Host: "h", Port: "3306", Database: "d?allowAllFiles=true",
+		}, "u:p@tcp(h:3306)/d%3FallowAllFiles=true?charset=utf8mb4&parseTime=True&loc=Local"},
 
 		{"sqlite path", db.Config{Driver: db.SQLite, Database: "/tmp/app.db"}, "/tmp/app.db"},
 		{"sqlite memory", db.Config{Driver: db.SQLite, Database: ":memory:"}, ":memory:"},

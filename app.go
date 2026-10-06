@@ -93,12 +93,17 @@ type App struct {
 	// gin-middleware install ordering (which fx.Module route registration
 	// can run ahead of). The Inertia engine lives here; the page renderer
 	// pulls it via the appctx request key → App.Value(...). See SetValue/Value.
-	extValues    sync.Map
-	registry     *registry.Registry
-	bus          *trace.Bus
-	cronSched    *cron.Scheduler
-	rlStore      ratelimit.Store
-	metricsStore metrics.Store
+	extValues sync.Map
+	registry  *registry.Registry
+	bus       *trace.Bus
+
+	// requestValues is what SetRequestValue puts on every request's
+	// context; nil (one atomic load per request) when nothing does.
+	requestValues   atomic.Pointer[[][2]any]
+	requestValuesMu sync.Mutex
+	cronSched       *cron.Scheduler
+	rlStore         ratelimit.Store
+	metricsStore    metrics.Store
 	// liveNotifier signals "registry state changed" to the dashboard's
 	// live snapshot stream. Wired in New so registry mutations push
 	// snapshots instead of poll.
@@ -911,11 +916,37 @@ func (a *App) OnResourceUse(target UseReporter) {
 		}
 	})
 }
+
+// SetRequestValue has every request the app serves carry val under key
+// in its context (context.Value), on every transport: how a package used
+// by several apps in one process tells, from a request's context, which
+// app is serving it. A second call with the same key replaces the value.
+func (a *App) SetRequestValue(key, val any) {
+	a.requestValuesMu.Lock()
+	defer a.requestValuesMu.Unlock()
+	var next [][2]any
+	if cur := a.requestValues.Load(); cur != nil {
+		for _, kv := range *cur {
+			if kv[0] != key {
+				next = append(next, kv)
+			}
+		}
+	}
+	next = append(next, [2]any{key, val})
+	a.requestValues.Store(&next)
+}
+
 func (a *App) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	// Every transport reads the caller's address from the context
 	// (nexus.ClientIP), so it is resolved once here — honouring
 	// trusted_proxies — rather than by each carrier.
-	r = r.WithContext(middleware.WithClientIP(r.Context(), httpx.ClientIP(r)))
+	ctx := middleware.WithClientIP(r.Context(), httpx.ClientIP(r))
+	if vals := a.requestValues.Load(); vals != nil {
+		for _, kv := range *vals {
+			ctx = context.WithValue(ctx, kv[0], kv[1])
+		}
+	}
+	r = r.WithContext(ctx)
 	// Trailing-slash normalization (opt-in): "/users/" is served as
 	// "/users" — an internal rewrite, not a redirect, so POST bodies
 	// survive and clients never see a 3xx. Done here, at the single
