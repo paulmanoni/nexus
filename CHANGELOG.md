@@ -6,6 +6,37 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [2.20.0] - 2026-10-06
+
+### Added
+
+- `github.com/paulmanoni/nexus/orm` (new module, v0.1.0, Go 1.27): a Django-style
+  ORM. `var Users = orm.For[User]()` passed to `nexus.Boot` binds a model to the
+  database `db.Bind` registered; QuerySets are lazy and immutable
+  (`Filter`/`Exclude` with Django lookups, `OrderBy`, `Limit`/`Offset`, `All`,
+  `Get`, `Count`, `Iter`, `Values[R]`, `Aggregate`, `Update`, `Delete`), writes
+  (`Create`, `BulkCreate`, `Save`, `Remove`, `GetOrCreate`) with hooks and
+  auto timestamps, `orm.Atomic` with savepoints, errors as `nexus.Error`s, and
+  custom database functions (`orm.Function`, transforms in `Q` keys, `Annotate`,
+  `orm.SQL`). Existing GORM models need no new tags. See the ORM guide.
+- Generated row scanners for the ORM: `nexus dev`, `build`, `test` and `vet`
+  overlay one per `orm.For[T]()` model when the project requires the ORM, so
+  reading rows costs what hand-written `database/sql` does; `orm/cmd/ormgen`
+  writes them for builds without the CLI.
+- `db.Lookup(app, name)`: the Manager `db.Bind` registered under a name (the
+  default one for an empty name).
+- `App.ExemptCSRF("/api/devices/*")`: a path ending in `/*` exempts every
+  path under it, so a token or device API with path parameters can opt out
+  of the CSRF check without listing each route.
+- GraphQL input objects: `graphql:"name,items=required"` makes a list's
+  elements non-null (`[T!]`).
+
+### Fixed
+
+- GraphQL input objects (`RegisterGqlType`, structs in args) honour
+  `graphql:"name,required"`: the field is non-null in the schema, as it
+  already was for top-level arguments. It was parsed and ignored.
+
 ## [2.19.1] - 2026-10-06
 
 ### Fixed
