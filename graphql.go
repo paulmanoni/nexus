@@ -921,6 +921,37 @@ func buildInputObjectForType(t reflect.Type) graphql.Input {
 	return buildInputObject(t, name, func(stub *graphql.InputObject) { inputObjectRegistry.Store(t, stub) })
 }
 
+// inputFieldType is an input object field's type: `,required` makes it
+// non-null, `,items=required` the elements of a list.
+func inputFieldType(f reflect.StructField, required bool) graphql.Input {
+	sub := goTypeToGraphQL(f.Type)
+	if sub == nil {
+		return nil
+	}
+	if itemsRequired(f) {
+		if l, ok := sub.(*graphql.List); ok {
+			if _, nn := l.OfType.(*graphql.NonNull); !nn {
+				sub = graphql.NewList(graphql.NewNonNull(l.OfType))
+			}
+		}
+	}
+	if _, nn := sub.(*graphql.NonNull); required && !nn {
+		sub = graphql.NewNonNull(sub)
+	}
+	return sub
+}
+
+// itemsRequired reads a `items=required` segment of the graphql tag: the
+// list's elements are non-null.
+func itemsRequired(f reflect.StructField) bool {
+	for _, p := range strings.Split(f.Tag.Get("graphql"), ",")[1:] {
+		if strings.TrimSpace(p) == "items=required" {
+			return true
+		}
+	}
+	return false
+}
+
 // buildInputObject builds struct type t as an input object named name.
 // register receives the empty object before its fields are built, so a
 // field referring back to t resolves to it.
@@ -951,11 +982,11 @@ func buildInputObject(t reflect.Type, name string, register func(*graphql.InputO
 					if ef.PkgPath != "" {
 						continue
 					}
-					name, _ := parseGraphQLTag(ef)
+					name, required := parseGraphQLTag(ef)
 					if name == "" {
 						continue
 					}
-					sub := goTypeToGraphQL(ef.Type)
+					sub := inputFieldType(ef, required)
 					if sub == nil {
 						continue
 					}
@@ -966,11 +997,11 @@ func buildInputObject(t reflect.Type, name string, register func(*graphql.InputO
 			}
 			continue
 		}
-		name, _ := parseGraphQLTag(f)
+		name, required := parseGraphQLTag(f)
 		if name == "" {
 			continue
 		}
-		sub := goTypeToGraphQL(f.Type)
+		sub := inputFieldType(f, required)
 		if sub == nil {
 			continue
 		}

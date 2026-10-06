@@ -7,6 +7,8 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/graphql-go/graphql"
+
 	"github.com/paulmanoni/nexus/v2/config"
 )
 
@@ -88,5 +90,43 @@ func TestDashboard_GraphQLCacheEndpoint(t *testing.T) {
 	}
 	if m.Capacity != 1024 {
 		t.Errorf("capacity = %d, want 1024 (default)", m.Capacity)
+	}
+}
+
+// An input object's `,required` fields are non-null, and `,items=required`
+// makes a list's elements non-null.
+func TestInputObjectRequired(t *testing.T) {
+	type pair struct {
+		A string `graphql:"a,required"`
+		B string `json:"b"`
+	}
+	type wrap struct {
+		Items []pair `graphql:"items,items=required"`
+		Loose []pair `graphql:"loose"`
+		Flag  bool   `graphql:"flag,required"`
+	}
+	RegisterGqlType[pair]("RequiredTestPairInput")
+	RegisterGqlType[wrap]("RequiredTestWrapInput")
+	types := map[string]map[string]string{}
+	for _, name := range []string{"RequiredTestPairInput", "RequiredTestWrapInput"} {
+		v, ok := namedTypeRegistry.Load(name)
+		if !ok {
+			t.Fatalf("%s not registered", name)
+		}
+		types[name] = map[string]string{}
+		for fname, f := range v.(*graphql.InputObject).Fields() {
+			types[name][fname] = f.Type.String()
+		}
+	}
+	want := map[string]map[string]string{
+		"RequiredTestPairInput": {"a": "String!", "b": "String"},
+		"RequiredTestWrapInput": {"items": "[RequiredTestPairInput!]", "loose": "[RequiredTestPairInput]", "flag": "Boolean!"},
+	}
+	for name, fields := range want {
+		for f, typ := range fields {
+			if got := types[name][f]; got != typ {
+				t.Errorf("%s.%s = %s, want %s", name, f, got, typ)
+			}
+		}
 	}
 }

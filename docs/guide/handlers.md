@@ -107,7 +107,8 @@ type UpdateOrderArgs struct {
 | `header:"X"` | Request header |
 | `form:"x"` | Form field |
 | `json:"x"` | JSON body |
-| `graphql:"name,required"` | GraphQL argument name and nullability |
+| `graphql:"name,required"` | GraphQL argument name and nullability; also for fields of input objects |
+| `graphql:"name,items=required"` | A list whose elements are non-null (`[T!]`) |
 | `validate:"..."` | Validation rules: `required`, `len=min\|max`, `int=min\|max`, `oneof=a\|b\|c`, comma-separated |
 
 A binding or validation failure is rejected before your handler runs, on every
