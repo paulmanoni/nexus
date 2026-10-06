@@ -80,6 +80,7 @@ export default defineConfig({
           text: 'Features',
           items: [
             { text: 'Databases & caches', link: '/guide/resources' },
+            { text: 'ORM', link: '/guide/orm' },
             { text: 'Auth', link: '/guide/auth' },
             { text: 'Web security', link: '/guide/security' },
             { text: 'File storage', link: '/guide/storage' },

@@ -92,9 +92,46 @@ func bindOption[T any](name string, build func() Config, optsFn func() []BindOpt
 			ropts = append(ropts, resource.AsDefault())
 		}
 		app.Register(resource.NewDatabase(name, desc, details, m.IsConnected, ropts...))
+		app.SetValue(boundKey{name}, m)
+		if bc.AsDefault {
+			app.SetValue(boundKey{}, m)
+		}
 	}
 
 	return nexus.Options(nexus.Provide(ctor), nexus.Invoke(register))
+}
+
+// boundKey is where Bind records a Manager in its app: by name, and with
+// no name for the default.
+type boundKey struct{ name string }
+
+// Lookup is the Manager db.Bind registered in app under name; with an
+// empty name, the one bound WithDefault, else the only one bound. It lets
+// packages that reach databases by name (the ORM) find them without a Go
+// type to inject.
+func Lookup(app *nexus.App, name string) (*Manager, bool) {
+	if app == nil {
+		return nil, false
+	}
+	if v, ok := app.Value(boundKey{name}); ok {
+		return v.(*Manager), true
+	}
+	if name != "" {
+		return nil, false
+	}
+	var only *Manager
+	for _, r := range app.Registry().Resources() {
+		if r.Kind != resource.KindDatabase {
+			continue
+		}
+		if v, ok := app.Value(boundKey{r.Name}); ok {
+			if only != nil {
+				return nil, false
+			}
+			only = v.(*Manager)
+		}
+	}
+	return only, only != nil
 }
 
 // BindOption tunes how Bind registers the dashboard resource. Alias of

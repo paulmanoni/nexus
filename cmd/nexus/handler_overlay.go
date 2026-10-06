@@ -19,6 +19,7 @@ import (
 
 	"github.com/paulmanoni/deco/transpiler"
 	"github.com/paulmanoni/nexus/cmd/nexus/v2/internal/handlergen"
+	"github.com/paulmanoni/nexus/orm/ormgen"
 	"github.com/paulmanoni/nexus/v2/view/viewgen"
 )
 
@@ -726,7 +727,7 @@ func importsOfFile(file string) (map[string]string, error) {
 // temp dir; callers must invoke it once the build that consumes the overlay has
 // finished.
 func buildHandlerOverlay(root string) (overlayPath string, cleanup func(), err error) {
-	return buildOverlay(root, "", true)
+	return buildOverlay(root, "", true, true)
 }
 
 // buildDevOverlay is buildHandlerOverlay plus, when distStubRoot is non-empty,
@@ -739,18 +740,24 @@ func buildHandlerOverlay(root string) (overlayPath string, cleanup func(), err e
 // views adds the compiled .templ views; nexus dev, by default,
 // writes them to disk instead, and leaves them out.
 func buildDevOverlay(root, distStubRoot string, views bool) (overlayPath string, cleanup func(), err error) {
-	return buildOverlay(root, distStubRoot, views)
+	return buildOverlay(root, distStubRoot, views, false)
 }
 
-// buildOverlay assembles the overlay: handler registrations, the dist stubs
+// buildOverlay assembles the overlay: handler registrations, the ORM's
+// row scanners (those of test files too with tests), the dist stubs
 // (dev), and, with views, the compiled .templ views (nexus build) — so a
 // fresh clone builds without generated files in the tree.
-func buildOverlay(root, distStubRoot string, views bool) (overlayPath string, cleanup func(), err error) {
+func buildOverlay(root, distStubRoot string, views, tests bool) (overlayPath string, cleanup func(), err error) {
 	noop := func() {}
 	results, err := allHandlerArtifacts(root, handlerGenFileName)
 	if err != nil {
 		return "", noop, err
 	}
+	scanners, err := ormArtifacts(root, tests)
+	if err != nil {
+		return "", noop, fmt.Errorf("orm scanners: %w", err)
+	}
+	results = append(results, scanners...)
 	var plan *viewgen.Plan
 	if views && viewgen.HasTemplates(root) {
 		if plan, err = viewgen.Generate(root); err != nil {
@@ -825,4 +832,24 @@ func buildOverlay(root, distStubRoot string, views bool) (overlayPath string, cl
 		return "", noop, err
 	}
 	return overlayPath, cleanup, nil
+}
+
+// ormArtifacts is the ORM's generated row scanners, when the project uses
+// the ORM (its go.mod requires it): nil otherwise, at the cost of reading
+// go.mod.
+func ormArtifacts(root string, tests bool) ([]handlergen.Result, error) {
+	mod, err := os.ReadFile(filepath.Join(root, "go.mod"))
+	if err != nil || !bytes.Contains(mod, []byte("github.com/paulmanoni/nexus/orm ")) {
+		return nil, nil
+	}
+	files, err := ormgen.Generate(root, ormgen.Config{Tests: tests})
+	if err != nil {
+		return nil, err
+	}
+	out := make([]handlergen.Result, 0, len(files))
+	for path, content := range files {
+		out = append(out, handlergen.Result{Path: path, Content: content})
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i].Path < out[j].Path })
+	return out, nil
 }

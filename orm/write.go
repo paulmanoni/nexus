@@ -1,0 +1,344 @@
+package orm
+
+import (
+	"context"
+	"errors"
+	"fmt"
+	"reflect"
+	"slices"
+	"strings"
+	"time"
+
+	"github.com/paulmanoni/nexus/v2"
+)
+
+// Clock is the time auto_now and auto_now_add fields take.
+var Clock = time.Now
+
+// The hooks a model may have, promoted from embedded structs like any
+// method. A Before hook's error stops the write.
+type (
+	BeforeCreater interface {
+		BeforeCreate(ctx context.Context) error
+	}
+	AfterCreater interface {
+		AfterCreate(ctx context.Context) error
+	}
+	BeforeSaver interface {
+		BeforeSave(ctx context.Context) error
+	}
+	AfterSaver interface {
+		AfterSave(ctx context.Context) error
+	}
+	BeforeDeleter interface {
+		BeforeDelete(ctx context.Context) error
+	}
+	AfterDeleter interface {
+		AfterDelete(ctx context.Context) error
+	}
+)
+
+func stamp(f *field) any {
+	now := Clock()
+	switch {
+	case f.Type == timeType:
+		return now
+	case f.Type.Kind() == reflect.Pointer && f.Type.Elem() == timeType:
+		return &now
+	}
+	return now
+}
+
+// insertable is the fields an INSERT writes: all but a zero
+// auto-increment key.
+func (m *Manager[T]) insertable(v reflect.Value) []*field {
+	var out []*field
+	for _, f := range m.meta.Fields {
+		if f.PK && peek(v, f.Index, f.Type).IsZero() {
+			continue
+		}
+		out = append(out, f)
+	}
+	return out
+}
+
+func (m *Manager[T]) prepareCreate(ctx context.Context, row *T) error {
+	if h, ok := any(row).(BeforeCreater); ok {
+		if err := h.BeforeCreate(ctx); err != nil {
+			return err
+		}
+	}
+	if h, ok := any(row).(BeforeSaver); ok {
+		if err := h.BeforeSave(ctx); err != nil {
+			return err
+		}
+	}
+	v := reflect.ValueOf(row).Elem()
+	for _, f := range m.meta.Fields {
+		dst := fieldOf(v, f.Index)
+		if f.AutoNow || (f.AutoNowAdd && dst.IsZero()) {
+			if err := setField(dst, stamp(f)); err != nil {
+				return err
+			}
+		}
+	}
+	return nil
+}
+
+func (m *Manager[T]) afterCreate(ctx context.Context, row *T) error {
+	if h, ok := any(row).(AfterCreater); ok {
+		if err := h.AfterCreate(ctx); err != nil {
+			return err
+		}
+	}
+	if h, ok := any(row).(AfterSaver); ok {
+		return h.AfterSave(ctx)
+	}
+	return nil
+}
+
+// Create inserts row and sets its new primary key.
+func (m *Manager[T]) Create(ctx context.Context, row *T) error {
+	return m.BulkCreate(ctx, []*T{row})
+}
+
+// BulkCreate inserts rows in as few statements as it can, setting their
+// primary keys, in batches of 500.
+func (m *Manager[T]) BulkCreate(ctx context.Context, rows []*T) error {
+	if len(rows) == 0 {
+		return nil
+	}
+	c, err := m.conn(ctx)
+	if err != nil {
+		return err
+	}
+	for _, row := range rows {
+		if err := m.prepareCreate(ctx, row); err != nil {
+			return err
+		}
+	}
+	// Rows with and without a key of their own insert apart, so each
+	// statement's columns agree.
+	var keyed, unkeyed []*T
+	for _, row := range rows {
+		if m.meta.PK != nil && peek(reflect.ValueOf(row).Elem(), m.meta.PK.Index, m.meta.PK.Type).IsZero() {
+			unkeyed = append(unkeyed, row)
+		} else {
+			keyed = append(keyed, row)
+		}
+	}
+	for _, set := range [][]*T{keyed, unkeyed} {
+		for batch := range slices.Chunk(set, 500) {
+			if err := m.insert(ctx, c, batch); err != nil {
+				return err
+			}
+		}
+	}
+	for _, row := range rows {
+		if err := m.afterCreate(ctx, row); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func (m *Manager[T]) insert(ctx context.Context, c conn, rows []*T) error {
+	fields := m.insertable(reflect.ValueOf(rows[0]).Elem())
+	b := &builder{d: c.d, m: m.meta}
+	cols := make([]string, len(fields))
+	for i, f := range fields {
+		cols[i] = b.col(f)
+	}
+	tuples := make([]string, len(rows))
+	for r, row := range rows {
+		v := reflect.ValueOf(row).Elem()
+		marks := make([]string, len(fields))
+		for i, f := range fields {
+			marks[i] = b.arg(value(peek(v, f.Index, f.Type)))
+		}
+		tuples[r] = "(" + strings.Join(marks, ", ") + ")"
+	}
+	s := "INSERT INTO " + b.d.Quote(m.meta.Table) + " (" + strings.Join(cols, ", ") + ") VALUES " + strings.Join(tuples, ", ")
+	pk := m.meta.PK
+	needKey := pk != nil && !slices.Contains(fields, pk)
+	if needKey && c.d.Returning() {
+		rs, err := c.query(ctx, s+" RETURNING "+b.col(pk), b.args)
+		if err != nil {
+			return m.mapErr(c, err)
+		}
+		defer rs.Close()
+		for i := 0; rs.Next() && i < len(rows); i++ {
+			if err := rs.Scan(&cell{fieldOf(reflect.ValueOf(rows[i]).Elem(), pk.Index)}); err != nil {
+				return m.mapErr(c, err)
+			}
+		}
+		if err := rs.Err(); err != nil {
+			return m.mapErr(c, err)
+		}
+		return nil
+	}
+	res, err := c.exec(ctx, s, b.args)
+	if err != nil {
+		return m.mapErr(c, err)
+	}
+	if needKey {
+		first, err := res.LastInsertId()
+		if err != nil {
+			return err
+		}
+		// MySQL gives the first row's id; the batch's ids follow it.
+		for i, row := range rows {
+			if err := assign(fieldOf(reflect.ValueOf(row).Elem(), pk.Index), first+int64(i)); err != nil {
+				return err
+			}
+		}
+	}
+	return nil
+}
+
+// Save writes every field of row to its row, found by primary key; auto_now
+// fields are set to now.
+func (m *Manager[T]) Save(ctx context.Context, row *T) error {
+	if m.err != nil {
+		return m.err
+	}
+	pk := m.meta.PK
+	if pk == nil {
+		return fmt.Errorf("orm: %s has no primary key to save by", m.meta.Name)
+	}
+	if h, ok := any(row).(BeforeSaver); ok {
+		if err := h.BeforeSave(ctx); err != nil {
+			return err
+		}
+	}
+	v := reflect.ValueOf(row).Elem()
+	values := Set{}
+	for _, f := range m.meta.Fields {
+		if f.PK {
+			continue
+		}
+		dst := fieldOf(v, f.Index)
+		if f.AutoNow {
+			if err := setField(dst, stamp(f)); err != nil {
+				return err
+			}
+		}
+		values[f.Name] = value(dst)
+	}
+	key := value(peek(v, pk.Index, pk.Type))
+	n, err := m.Filter(Q{pk.Name: key}).Update(ctx, values)
+	if err != nil {
+		return err
+	}
+	if n == 0 {
+		return m.notFound()
+	}
+	if h, ok := any(row).(AfterSaver); ok {
+		return h.AfterSave(ctx)
+	}
+	return nil
+}
+
+// Remove deletes row's row, found by primary key.
+func (m *Manager[T]) Remove(ctx context.Context, row *T) error {
+	if m.err != nil {
+		return m.err
+	}
+	pk := m.meta.PK
+	if pk == nil {
+		return fmt.Errorf("orm: %s has no primary key to delete by", m.meta.Name)
+	}
+	if h, ok := any(row).(BeforeDeleter); ok {
+		if err := h.BeforeDelete(ctx); err != nil {
+			return err
+		}
+	}
+	key := value(peek(reflect.ValueOf(row).Elem(), pk.Index, pk.Type))
+	n, err := m.Filter(Q{pk.Name: key}).Delete(ctx)
+	if err != nil {
+		return err
+	}
+	if n == 0 {
+		return m.notFound()
+	}
+	if h, ok := any(row).(AfterDeleter); ok {
+		return h.AfterDelete(ctx)
+	}
+	return nil
+}
+
+// Defaults is the fields GetOrCreate sets on a row it creates, beyond those
+// of its lookup.
+type Defaults map[string]any
+
+// GetOrCreate is the row matching lookup, or a new one made from lookup's
+// exact fields and defaults; created says which. A row another request
+// inserted first is read rather than duplicated.
+func (m *Manager[T]) GetOrCreate(ctx context.Context, lookup Q, defaults Defaults) (row T, created bool, err error) {
+	row, err = m.Get(ctx, lookup)
+	if err == nil || !errors.Is(err, nexus.NotFound) {
+		return row, false, err
+	}
+	v := reflect.ValueOf(&row).Elem()
+	for k, val := range lookup {
+		if strings.Contains(k, "__") && !strings.HasSuffix(k, "__exact") {
+			continue
+		}
+		f, ok := m.meta.field(strings.TrimSuffix(k, "__exact"))
+		if !ok {
+			return row, false, fmt.Errorf("orm: %s has no field %q", m.meta.Name, k)
+		}
+		if err := setField(fieldOf(v, f.Index), val); err != nil {
+			return row, false, err
+		}
+	}
+	for k, val := range defaults {
+		f, ok := m.meta.field(k)
+		if !ok {
+			return row, false, fmt.Errorf("orm: %s has no field %q", m.meta.Name, k)
+		}
+		if err := setField(fieldOf(v, f.Index), val); err != nil {
+			return row, false, err
+		}
+	}
+	err = m.Create(ctx, &row)
+	if errors.Is(err, nexus.Conflict) {
+		got, gerr := m.Get(ctx, lookup)
+		return got, false, gerr
+	}
+	return row, err == nil, err
+}
+
+// mapErr is a database error as nexus sees it: a unique violation a
+// Conflict on its column, a foreign key one InvalidInput.
+func (m *Manager[T]) mapErr(c conn, err error) error {
+	kind, col := c.d.Violation(err)
+	name := col
+	if f, ok := m.meta.field(col); ok {
+		name = f.Column
+	}
+	switch kind {
+	case uniqueViolation:
+		e := nexus.Errf(nexus.Conflict, "%s with this %s already exists", m.meta.Name, orWord(name, "value"))
+		e.Cause = err
+		if name != "" {
+			e.Field(name, "already exists")
+		}
+		return e
+	case foreignKeyViolation:
+		e := nexus.Errf(nexus.InvalidInput, "%s refers to a row that does not exist", m.meta.Name)
+		e.Cause = err
+		if name != "" {
+			e.Field(name, "does not exist")
+		}
+		return e
+	}
+	return err
+}
+
+func orWord(s, alt string) string {
+	if s == "" {
+		return alt
+	}
+	return s
+}
