@@ -385,12 +385,17 @@ func (a *App) installAutoCSRF() {
 }
 
 // ExemptCSRF exempts one path (as registered; the route prefix is added)
-// from the CSRF check. Only for an endpoint a cross-site post can't abuse:
-// one that sets no cookie and answers only to the caller, such as an
-// OAuth2 token endpoint.
+// from the CSRF check — or, ending in "/*", every path under it. Only for
+// endpoints a cross-site post can't abuse: ones that set no cookie and
+// answer only to the caller, such as an OAuth2 token endpoint or an API for
+// devices that sign in with tokens.
 func (a *App) ExemptCSRF(path string) {
 	a.csrfExemptMu.Lock()
 	defer a.csrfExemptMu.Unlock()
+	if prefix, ok := strings.CutSuffix(path, "/*"); ok {
+		a.csrfExemptPrefixes = append(a.csrfExemptPrefixes, a.PrefixPath(prefix)+"/")
+		return
+	}
 	if a.csrfExempt == nil {
 		a.csrfExempt = map[string]bool{}
 	}
@@ -400,7 +405,15 @@ func (a *App) ExemptCSRF(path string) {
 func (a *App) csrfExempted(path string) bool {
 	a.csrfExemptMu.RLock()
 	defer a.csrfExemptMu.RUnlock()
-	return a.csrfExempt[path]
+	if a.csrfExempt[path] {
+		return true
+	}
+	for _, p := range a.csrfExemptPrefixes {
+		if strings.HasPrefix(path, p) {
+			return true
+		}
+	}
+	return false
 }
 
 func (a *App) installCSRF(reason string) {

@@ -244,7 +244,8 @@ revoke = "/oauth/revoke"    # RFC 7009
 The token endpoint takes form-encoded or JSON bodies, answers errors as
 `{"error": "invalid_grant", …}`, and skips CSRF even in an app with sessions — it
 sets no cookie and answers only the caller, which is also what
-`app.ExemptCSRF(path)` is for.
+`app.ExemptCSRF(path)` is for. A path ending in `/*` exempts everything under it:
+`app.ExemptCSRF("/api/devices/*")`.
 
 **OAuth2 clients.** The token endpoint also knows clients — services and apps that call
 it — from nexus.toml, or from your database through `Config.Clients` (an

@@ -181,6 +181,7 @@ type App struct {
 	csrfReasons                       []string
 	csrfExemptMu                      sync.RWMutex
 	csrfExempt                        map[string]bool // ExemptCSRF paths
+	csrfExemptPrefixes                []string        // ExemptCSRF "/*" prefixes, each ending in "/"
 
 	// introspect + introspectionNets are the parsed Config knobs used
 	// to gate GraphQL __schema queries (in addition to the dashboard).

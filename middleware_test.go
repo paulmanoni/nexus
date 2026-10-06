@@ -276,6 +276,33 @@ func TestCSRFFollowsTheApp(t *testing.T) {
 	}
 }
 
+// ExemptCSRF takes one path, or every path under a prefix ending in "/*".
+func TestExemptCSRF(t *testing.T) {
+	ok := func(ctx context.Context) (string, error) { return "ok", nil }
+	app, stop, err := InProcess(config.Runtime{},
+		Invoke(func(a *App) {
+			a.RequireCSRF("cookie sessions")
+			a.ExemptCSRF("/token")
+			a.ExemptCSRF("/devices/*")
+		}),
+		AsRest("POST", "/token", ok),
+		AsRest("POST", "/devices/:mac/activate", ok),
+		AsRest("POST", "/devicesx", ok),
+		AsRest("POST", "/things", ok),
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer stop(context.Background())
+	for path, want := range map[string]int{"/token": 201, "/devices/aa:bb/activate": 201, "/devicesx": 403, "/things": 403} {
+		rec := httptest.NewRecorder()
+		app.ServeHTTP(rec, httptest.NewRequest("POST", path, nil))
+		if rec.Code != want {
+			t.Errorf("POST %s = %d, want %d", path, rec.Code, want)
+		}
+	}
+}
+
 // A factory — DI deps in, httpx.HandlerFunc out — is built once at boot
 // and its handler serves every request.
 func TestAsRestFactory(t *testing.T) {
