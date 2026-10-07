@@ -385,6 +385,43 @@ nexus.Boot(db.BindFromConfig[DB]("main"), Users, Posts,
 For tests and tools, `orm.CreateTables(ctx, Users, Posts)` creates the tables
 directly.
 
+## Moving a table to another database
+
+`orm.Mirror` keeps a table current on two databases while it moves, say from a
+legacy MySQL to Postgres: reads and the first write go to the model's database, and
+every write is repeated on the mirror.
+
+```go
+var Categories = orm.For[Category](orm.On("legacy"), orm.Mirror("main"))
+```
+
+nexus.toml routes a table without a code change, over the options:
+
+```toml
+[orm.models.categories]
+db = "legacy"    # read, and written first: the source of truth
+mirror = "main"  # every write repeated here
+```
+
+- **What's mirrored:** `Create`, `BulkCreate`, `Save`, `Remove`, and a QuerySet's
+  `Update` and `Delete`.
+  - **New rows:** the mirror gets them with the keys the primary gave.
+  - **Updates:** an `Update` runs on the mirror as written, with `auto_now` times
+    stamped once so both sides hold the same value.
+- **When:** after the write's transaction commits; a rolled-back write never
+  reaches the mirror.
+- **When the mirror fails:** the write still succeeds, because the primary is the
+  truth. The failure is logged and passed to `orm.OnMirrorError`, the place to queue
+  the table for a re-sync.
+- **Cutting over:** swap `db` and `mirror`. The old database then follows as the
+  mirror (your way back), and you drop `mirror` when you're done.
+  - **Keys:** the first insert that takes a key from Postgres moves the key sequence
+    past the rows the mirror (or a bulk copy) wrote with their own keys.
+- **Times** go to every database as UTC, so a row reads back the same instant from
+  MySQL and Postgres.
+- **Tests:** `ormtest.Mirror(t, ctx, models...)` mirrors a test's writes to a second
+  database, MySQL to Postgres with `ORMTEST_MIRROR_DRIVER` / `ORMTEST_MIRROR_DSN`.
+
 ## Tests
 
 ```go

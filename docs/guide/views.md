@@ -567,6 +567,8 @@ func (r *Room) Info(ctx context.Context, msg view.Message) error {
 | `push_patch` / `push_navigate` / `<.link patch navigate>` | `v.PushPatch` / `v.PushNavigate` / `@view.Link(href)` |
 | `put_flash` / `@flash` | `v.PutFlash(kind, msg)` / `v.Flash(kind)` |
 | `phx-update="ignore"` | `data-nx-ignore` on an element with an `id` |
+| `JS.show/hide/toggle/add_class/set_attr/focus/push` | `view.JS(view.Show(…), view.AddClass(…), view.Push(p.Save))` — see [JS commands](#js-commands) |
+| `push_event(socket, "saved", payload)` / `JS.exec` from the server | `p.PushEvent("saved", payload)` / `p.PushJS(ops…)` |
 | JS hooks | islands (Vue/React/TS components), `view.State` signals for browser-only state |
 | form recovery on reconnect | the same (`view.Change` forms are re-sent) |
 | — | **resume**: a reconnect within `view.ResumeGrace` keeps the page's state |
@@ -574,6 +576,224 @@ func (r *Room) Info(ctx context.Context, msg view.Message) error {
 | `allow_upload` / `live_file_input` / `consume_uploaded_entries` | a `view.Upload` field / `{ p.Avatar.Input()... }` / `p.Avatar.Consume(fn)` |
 | `stream(socket, :messages, items)` / `phx-update="stream"` | a `view.Stream[T]` field: `Insert`/`Prepend`/`Delete`/`Reset`, `{ c.Messages.Attrs()... }` |
 | `Phoenix.Presence.track` / `list` / `presence_diff` | `v.Track(topic, key, meta)` / `view.Presences(topic)` / `view.PresenceDiff` in `Info` |
+
+### JS commands
+
+Some of what a click does needs no server: opening a menu, showing a step,
+marking a row. `view.JS` runs a list of commands in the browser, in order —
+Phoenix LiveView's `JS` — and is a script like `view.Send`, so it goes in any
+`on*` attribute (and in a component library's `templ.Attributes`):
+
+```templ
+<button onclick={ view.JS(view.Show("#confirm"), view.FocusFirst("#confirm")) }>Delete</button>
+<div id="confirm" hidden>
+	Delete { p.Name }?
+	<button onclick={ view.JS(view.Hide("#confirm"), view.Push(p.Delete, p.ID)) }>Yes</button>
+</div>
+```
+
+| Command | |
+|---|---|
+| `Show(sel, opts…)` / `Hide(sel, …)` / `Toggle(sel, …)` | drops `hidden` and `display: none` / sets `display: none`; `view.Display("flex")` for the display Show gives |
+| `AddClass(classes, sel, …)` / `RemoveClass` / `ToggleClass` | space-separated classes |
+| `SetAttr(name, value, sel, …)` / `RemoveAttr(name, sel, …)` / `ToggleAttr(name, value, sel, …)` | attributes — `aria-expanded`, `open`, `disabled` |
+| `Focus(sel, …)` / `FocusFirst(sel, …)` | the element / its first focusable descendant |
+| `Push(p.Method, args…)` / `PushTo(p, "Method", args…)` | `view.Send` / `view.SendTo` as a step |
+| `Transition(classes, sel, …)` | adds classes for a while (`view.Time`, 200ms by default) — a shake, a flash |
+| `PushFocus(sel, …)` / `PopFocus()` | remembers an element (`""`: the one the event is on) / focuses the last remembered |
+| `Exec(attr, sel, …)` | runs the commands held in an attribute — `view.Commands(…)`, or any live script such as `view.Send` |
+| `Dispatch(event, sel, …)` | fires a `CustomEvent` (`view.Detail(v)`, `view.NoBubble()`) — for islands and scripts |
+
+`view.Animate(during, from, to)` makes `Show`, `Hide` and `Toggle` a
+transition: the element carries `during` throughout, starts at `from` and ends
+at `to`, for `view.Time(d)` (200ms) — Tailwind classes work as they are:
+
+```go
+fade := view.Animate("transition-opacity duration-200", "opacity-0", "opacity-100")
+view.JS(view.Show("#toast", fade))
+```
+
+A transition's classes are the browser's own — they leave with it and are not
+kept across re-renders — and a new one on an element ends the one running.
+
+A dialog keeps its closing steps once, so its close button, a Cancel and
+anything else that closes it share them:
+
+```templ
+<button onclick={ view.JS(view.PushFocus(""), view.Show("#confirm"), view.FocusFirst("#confirm")) }>Delete</button>
+<div id="confirm" hidden data-cancel={ view.Commands(view.Hide("#confirm"), view.PopFocus()) }>
+	<button onclick={ view.JS(view.Exec("data-cancel", "#confirm")) }>Cancel</button>
+</div>
+```
+
+From the server, an event (or `Info`, or `Mount` once connected) pushes
+commands and events that run once its reply is applied:
+
+```go
+func (p *Orders) Save(ctx context.Context, f OrderForm) error {
+	// … save …
+	p.PushJS(view.Hide("#order-dialog"), view.Transition("flash", "#row-"+f.ID))
+	p.PushEvent("orders:saved", map[string]any{"id": f.ID}) // window.addEventListener("orders:saved", …)
+	return nil
+}
+```
+
+A pushed command's `""` selector is the page's live root. An event that fails
+sends none of what it pushed, and the first, server-rendered load drops them —
+there is no browser to run them in yet. `viewtest`'s `p.Eval(js)` listens for a
+pushed event.
+
+A selector matches anywhere on the page; `""` is the element the event is on;
+`view.Closest()` makes it the nearest matching ancestor (a row's own row:
+`view.ToggleClass("picked", "tr", view.Closest())`), `view.Inner()` matches
+inside the element only, and `view.Within(container)` matches inside the
+element's nearest `container` — an accordion section's own panel:
+`view.ToggleClass("show", ".panel", view.Within(".section"))`. `FocusFirst`
+prefers an `[autofocus]` field and skips anything marked `data-nx-nofocus`
+(the kit marks dialogs' close buttons).
+
+**What a command changes survives re-renders.** The page remembers, per
+element, each attribute a command changed and what the server had rendered
+there. A re-render that renders that attribute as before gets the command's
+value back, so an event that updates a list doesn't close the menu above it;
+one that renders it differently wins, and the attribute is the server's again
+(as a form field takes the server's value when it changes). Show and Hide write
+the `style` attribute's `display`, and Show removes `hidden`; both are kept the
+same way. In tests, `viewtest` runs the commands: `Expect(loc).Visible()`,
+`Hidden()`, `HasClass(c)`, `NoClass(c)`, `Attr`, `Focused()`.
+
+### Forms: `view.Form`
+
+A form is one declaration — a struct embedding `view.Form`, as a Django form
+class is the whole form. Tags say what the fields are and how they show;
+methods on the struct complete it:
+
+```go
+type UserForm struct {
+	view.Form
+	Name   string `form:"name" label:"Full name" validate:"required" span:"6"`
+	Email  string `form:"email" validate:"required,email" span:"6"`
+	Bio    string `form:"bio" input:"textarea" help:"Shown on the profile."`
+	RoleID uint   `form:"roleId" label:"Role"`
+	Active bool   `form:"active" input:"switch"`
+}
+
+// Choices — Django's ModelChoiceField: the field renders as a select. The
+// receiver is the form's current values, so choices may depend on other
+// fields; services come via view.Use.
+func (f UserForm) RoleIDChoices(ctx context.Context) []view.Choice {
+	return view.Use[*RoleService](ctx).Choices(ctx)
+}
+
+// Validate — Django's clean(): runs after the tag rules, as the user types
+// on a live form, and always before the submit.
+func (f UserForm) Validate(ctx context.Context) error {
+	if f.Name == f.Email {
+		return nexus.Invalid().Field("email", "an e-mail is not a name")
+	}
+	return nil
+}
+```
+
+| Tag | |
+|---|---|
+| `form:"name"` | the field's name; fields without one are skipped |
+| `validate:"…"` | the rules; `required` also marks the label |
+| `label:` / `help:` / `placeholder:` | how it shows; the label defaults to the Go name, spaced (`FirstName` → First Name) |
+| `span:"6"` | width in a 12-column row (`AllFields`) |
+| `input:"password"` | the control, where the Go type isn't enough: `password`, `textarea`, `switch`, `hidden`, any input type |
+
+Without an `input:` tag the Go type decides: `bool` a checkbox, `time.Time` a
+date, numbers a number input, `validate:"email"` an email one, a slice a
+multi-select, and a field with choices a select.
+
+The page holds the form — a field, or embedded when it has one — and the
+struct's fields are the values, read and written directly. The submit method
+**only runs when every rule passes**, the form's `Validate` included:
+
+```go
+type Users struct {
+	view.LiveView
+	Edit UserForm // or embedded: UserForm
+}
+
+func (p *Users) Open(ctx context.Context, id uint) error {
+	p.Edit.Load(userRecord(id)) // copies the matching fields; or assign them: p.Edit.Name = …
+	return nil
+}
+func (p *Users) Save(ctx context.Context, f UserForm) error { … } // f passed every rule
+```
+
+```templ
+@ui.Form(p.Edit, p.Save)
+```
+
+Two more optional methods move the page's work onto the form itself:
+`Init` — Django's `initial` — runs once, before the page's `Mount`, and
+`Save` takes the submit when `ui.Form` is given no method:
+
+```go
+func (f *UserForm) Init(ctx context.Context) { f.Active = true }
+func (f *UserForm) Save(ctx context.Context) error {
+	return view.Use[*UserService](ctx).Save(ctx, f)
+}
+```
+```templ
+@ui.Form(p.Edit)
+```
+
+A childless `ui.Form` renders every field from the struct — spans honored —
+and a Save button, like `{{ form }}`. Children take over the layout, and
+`ui.Field` renders one field by name, with overrides where the struct's
+defaults aren't enough:
+
+```templ
+@ui.Form(p.Edit, p.Save, ui.Live) {
+	@ui.Field("name")
+	@ui.Field("email", ui.Label("Work e-mail"))
+	@ui.Field("roleId", ui.Options(extraRoles))   // instead of the form's choices
+	@ui.Submit("Create user")
+}
+```
+
+A misspelled `p.Edit.F("emial")` fails `nexus generate views` with a
+did-you-mean when the form's struct is in the page's package; `ui.Field` and
+`F` name an unknown field in their error either way.
+
+**Liveness is graded.** With nothing, the form posts on submit and errors
+show then — no traffic while typing. `ui.Live` checks the values as the user
+types: each change is laid over the form's values and re-checked, and a
+field's error appears once the user leaves it (every field's after a
+submit). A change **method** does the same and then runs — dependent fields
+in plain code:
+
+```templ
+@ui.Form(p.Edit, p.Save, p.Recalc)
+```
+```go
+func (p *Users) Recalc(ctx context.Context, f UserForm) error {
+	if p.Edit.Changed("employerId") {
+		p.Edit.Update(func() { p.Edit.DesignationID = 0 })
+	}
+	return nil
+}
+```
+
+The form's fields hold the loaded values under what the user typed, so a
+field the page doesn't render is never zeroed, an unticked checkbox arrives
+as false, and choices methods see the current values (a `BreedChoices`
+reading `f.Species` is a dependent select with no code).
+
+The rest of the behaviour: a successful submit resets the form to the values
+it was loaded with; `Load(v)` and `Reset()` replace what every field shows,
+even what the user typed; `Update(func() { … })` is a change of the page's
+own (validated, shown to the user); a busy form drops a second submit and
+`ui.Submit`'s button spins; `Dirty()` reports unsaved changes (the element
+carries `data-nx-dirty`) and `view.ConfirmLeave(msg)` asks before leaving
+with them; `Valid()`, `Submitted()`, `Error()` (the form-wide message) and
+`F(name)` read the rest. Forms share field blocks by embedding structs, and
+`view.RenderForm(f, extras…)` is the kit-free form element for markup of
+your own. A plain-HTTP form renders its CSRF token with `@view.CSRF()`.
 
 ### Form fields
 
@@ -620,7 +840,8 @@ state is newer than the server's copy.
 Forms that post over plain HTTP need nothing for CSRF: when the app's CSRF
 middleware is on, the runtime adds the token as a `csrf_token` field to a
 same-origin POST form as it submits, and sends it with every shard re-render.
-See [Web security](./security#csrf).
+A form that must work without JavaScript renders the field itself with
+`@view.CSRF()`. See [Web security](./security#csrf).
 
 ## Navigation
 
@@ -919,7 +1140,7 @@ but on its own links, buttons and fields (Ctrl/Cmd-click opens a new tab).
 | --- | --- |
 | `Button(ButtonProps)` | variants (`Primary`, `Secondary`, `Outline`, `Ghost`, `Danger`, `Success`, `Warning`, `Info`, `LinkStyle`), sizes (`Sm`, `Md`, `Lg`), `Icon`, `IconOnly`, `Loading`, `Disabled`, `Href` (+`Nav`), `Hotkey`, `OnClick` |
 | `Field(FieldProps)` + `Input`, `Select`, `Textarea`, `Checkbox` | a label, the control, help text and the error — taken from `view.Errors(ctx)` for the field's `Name`, which also marks the control `aria-invalid` |
-| `Tabs(TabsProps)`, `TabPanel(id, active)` | a tab is a live event (`OnSelect`), a link (`Href`) or a browser-switched panel (`Panel`); the clicked tab shows selected at once |
+| `Tabs(TabsProps)`, `TabPanel(id, active)` | a tab is a live event (`OnSelect`), a link (`Href`) or a browser-switched panel (`Panel`); the clicked tab shows selected at once, and keeps its choice across re-renders (JS commands) |
 | `Dialog(DialogProps)` | server-owned (`OnClose`: render it while open, close it in the event) or browser-side (`ID`, opened with `ui.OpenDialog(id)`); Esc and the backdrop close it unless `Persistent` |
 | `Dropdown(ButtonProps, items…)`, `MenuButton`, `RowActions(items…)` | menus of `MenuItem`s: links, `Copy` entries, `OnClick` events, separators; placed at the trigger, closed by an outside click, Esc or a choice |
 | `DataTable(TableProps)`, `TableRow(RowProps)`, `EmptyState`, `SearchInput` | toolbar, sortable headers, rows, empty state, counts, page size and pager |
@@ -958,7 +1179,7 @@ updates, shards and navigation bring in needs no setup:
 | --- | --- |
 | `data-ui-hotkey="mod+s"` (`ui.Hotkey`, `ButtonProps.Hotkey`) | the combination clicks the element (`mod` is Cmd on a Mac, Ctrl elsewhere); combinations without a modifier don't fire while typing; an open dialog owns the keyboard |
 | `data-ui-copy="/orders/7"` (`ui.CopyLink`, `MenuItem.Copy`) | copies the link (a path becomes an absolute URL) and confirms with a toast |
-| `data-ui-open="id"`, `data-ui-close` | open and close a browser-side dialog |
+| `data-ui-open="id"`, `data-ui-close` | open and close a browser-side dialog — JS commands: it opens on its first field and closes back to its opener; its closing steps are its `data-cancel` |
 | `data-ui-href` on a row | in-app navigation on click |
 | `nxui.toast(text, {variant, title, duration})` | a toast from your own scripts |
 | `nxui.loading(el, ids)`, `nxui.copy(text)`, `nxui.dialog.open(id)` | the same behaviour from code |
@@ -972,13 +1193,16 @@ nexus add ui all --package kit
 ```
 
 `nexus add ui` copies a component's template, the components it renders and
-the kit's shared pieces (`base.go`, `ui.go`, `icon.templ`, `ui.js`, `ui.css`)
+the kit's shared pieces (`base.go`, `commands.go`, `ui.go`, `icon.templ`, `ui.js`, `ui.css`)
 into your project as your own package, rewriting the package clause. The
 copy serves its assets under `/_ui/<package>/`; load them with its
 `Script()` instead of the kit's. Existing files are kept unless `--force`.
 
-Limits: browser-switched tabs (`Panel`) and open menus follow the server
-again when a live page re-renders; a browser-side dialog keeps its content
+Dialogs and tabs run as the view runtime's [JS commands](#js-commands), so
+`ui.js` needs `view.Script()` loaded first (as `@ui.Script()` after
+`@view.Script()` already does), and a browser-switched tab keeps its choice
+when the page re-renders. Limits: open menus follow the server again when a
+live page re-renders; a browser-side dialog keeps its content
 as first rendered (`data-nx-ignore`) — use a server-owned dialog for
 content that changes.
 

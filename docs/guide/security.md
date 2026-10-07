@@ -53,6 +53,12 @@ same-origin POST form a `csrf_token` field as it submits (a form that has one ke
 its own). Live-page events travel over the WebSocket, which is same-origin checked
 instead.
 
+A server-rendered form that must work without JavaScript renders the field itself:
+`@view.CSRF()` writes `<input type="hidden" name="csrf_token" value="…">` with the
+request's token (nothing when CSRF is off); in Go, `secure.CSRFToken(ctx)`
+(`middleware/secure`) returns the field name and token — the token the first
+request seeds, and the new one after `RotateCSRF` (sign-in, sign-out).
+
 The Go equivalent:
 
 ```go
