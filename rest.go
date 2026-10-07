@@ -44,7 +44,7 @@ import (
 //	    nexus.AsRest("POST", "/pets",    NewCreatePet),
 //	    nexus.AsRest("GET", "/pets/:id", NewGetPet),
 //	)
-func AsRest(method, path string, fn any, opts ...RestOption) Option {
+func AsRest(method, path string, fn any, opts ...RestOption) *Route {
 	// Pointer cfg so nexus.Module(...) can stamp cfg.module after this
 	// call returns — the invoke closure below reads it at di.Start.
 	cfg := &restConfig{}
@@ -52,25 +52,25 @@ func AsRest(method, path string, fn any, opts ...RestOption) Option {
 		o.applyToRest(cfg)
 	}
 	if cfg.optErr != nil {
-		return rawOption{o: di.Error(fmt.Errorf("nexus: %s %s: %w", method, path, cfg.optErr))}
+		return FailRoute(fmt.Errorf("nexus: %s %s: %w", method, path, cfg.optErr))
 	}
 	if err := checkBundleTransports(cfg.bundles, middleware.TransportREST, method+" "+path); err != nil {
-		return rawOption{o: di.Error(err)}
+		return FailRoute(err)
 	}
 	if isRestFactory(fn) {
 		return asRestFactory(method, path, cfg, fn)
 	}
 	sh, err := inspectHandlerArgs(fn, cfg.argNames, routePathParams(path)...)
 	if err != nil {
-		return rawOption{o: di.Error(err)}
+		return FailRoute(err)
 	}
 	if cfg.envelope != nil {
 		if err := cfg.envelope.check(sh.returnType); err != nil {
-			return rawOption{o: di.Error(err)}
+			return FailRoute(err)
 		}
 		cfg.setTag(registry.EnvelopeTag, "true")
 	}
-	return asRestInvoke(method, path, cfg, sh)
+	return asRestInvoke(method, path, cfg, sh, fn)
 }
 
 type restConfig struct {
@@ -95,20 +95,16 @@ type restConfig struct {
 	// optErr is an option that could not apply (an ActionOption outside a
 	// controller); AsRest reports it at boot.
 	optErr error
+	// name is nexus.Name's; namespace is the router chain's, stamped as the
+	// router expands (else the module name is the namespace).
+	name      string
+	nameSet   bool
+	fallback  string
+	fbSet     bool
+	noName    bool
+	namespace string
+	nsSet     bool
 }
-
-// restOption is the Option returned by AsRest. Parallels gqlFieldOption —
-// keeps a pointer to the restConfig so Module(...) can stamp the module
-// name on it after construction, and the di.Invoke closure picks it up
-// at Start time.
-type restOption struct {
-	o   di.Option
-	cfg *restConfig
-}
-
-func (r *restOption) nexusOption() di.Option { return r.o }
-func (r *restOption) setModule(name string)  { r.cfg.module = name }
-func (r *restOption) setRestPrefix(p string) { r.cfg.pathPrefix = p + r.cfg.pathPrefix }
 
 // restPrefixAnnotator is implemented by options whose path can be
 // prefixed by an enclosing nexus.Module(..., nexus.RoutePrefix("/api"))
@@ -190,13 +186,14 @@ func restPath(app *App, p string) string {
 // (*App, deps...) and registers the handler on the router + the registry.
 // We build its signature via reflect.FuncOf so any dep type the handler named
 // flows through fx's dependency resolution unchanged.
-func asRestInvoke(method, path string, cfg *restConfig, sh handlerShape) Option {
+func asRestInvoke(method, path string, cfg *restConfig, sh handlerShape, fn any) *Route {
 	appType := reflect.TypeOf((*App)(nil))
 
 	in := make([]reflect.Type, 0, len(sh.depTypes)+1)
 	in = append(in, appType)
 	in = append(in, sh.depTypes...)
-	fnType := reflect.FuncOf(in, nil, false)
+	fnType := reflect.FuncOf(in, []reflect.Type{errorType}, false)
+	route := &Route{cfg: cfg, method: method, path: path, fn: fn}
 
 	invokeFn := reflect.MakeFunc(fnType, func(args []reflect.Value) []reflect.Value {
 		app := args[0].Interface().(*App)
@@ -233,9 +230,17 @@ func asRestInvoke(method, path string, cfg *restConfig, sh handlerShape) Option 
 		})
 		recordEndpointDeps(app, service, opName, deps, sh.depTypes)
 		recordEndpointSchema(app, service, opName, sh)
-		return nil
+		return []reflect.Value{errValue(registerRoute(app, route, method, finalPath, fn))}
 	})
-	return &restOption{o: di.Invoke(invokeFn.Interface()), cfg: cfg}
+	route.o = di.Invoke(invokeFn.Interface())
+	return route
+}
+
+func errValue(err error) reflect.Value {
+	if err == nil {
+		return reflect.Zero(errorType)
+	}
+	return reflect.ValueOf(&err).Elem()
 }
 
 // serviceNameFromDeps returns the Service.Name() of the first dep that
@@ -537,7 +542,7 @@ func isRestFactory(fn any) bool {
 
 // asRestFactory mounts the handler a factory builds once its dependencies
 // resolve.
-func asRestFactory(method, path string, cfg *restConfig, factory any) Option {
+func asRestFactory(method, path string, cfg *restConfig, factory any) *Route {
 	rt := reflect.TypeOf(factory)
 	in := make([]reflect.Type, 0, rt.NumIn()+1)
 	in = append(in, reflect.TypeOf((*App)(nil)))
@@ -546,7 +551,8 @@ func asRestFactory(method, path string, cfg *restConfig, factory any) Option {
 		depTypes[i] = rt.In(i)
 		in = append(in, rt.In(i))
 	}
-	invoke := reflect.MakeFunc(reflect.FuncOf(in, nil, false), func(args []reflect.Value) []reflect.Value {
+	route := &Route{cfg: cfg, method: method, path: path, fn: factory}
+	invoke := reflect.MakeFunc(reflect.FuncOf(in, []reflect.Type{errorType}, false), func(args []reflect.Value) []reflect.Value {
 		app := args[0].Interface().(*App)
 		deps := args[1:]
 		service := resolveEndpointService(cfg.service, cfg.module, deps, depTypes, app)
@@ -566,7 +572,8 @@ func asRestFactory(method, path string, cfg *restConfig, factory any) Option {
 			Middleware: mwNames,
 		})
 		recordEndpointDeps(app, service, opName, deps, depTypes)
-		return nil
+		return []reflect.Value{errValue(registerRoute(app, route, method, finalPath, factory))}
 	})
-	return &restOption{o: di.Invoke(invoke.Interface()), cfg: cfg}
+	route.o = di.Invoke(invoke.Interface())
+	return route
 }

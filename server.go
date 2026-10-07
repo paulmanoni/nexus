@@ -101,6 +101,10 @@ func shutdownTimeout(cfg config.Runtime) time.Duration {
 // no scope filtering — the back-compat path with no behavioral
 // change for callers who haven't declared Listeners.
 func registerLifecycle(lc di.Lifecycle, app *App, cfg config.Runtime) {
+	lc.Append(di.Hook{
+		OnStart: func(context.Context) error { trackRunning(app, true); return nil },
+		OnStop:  func(context.Context) error { trackRunning(app, false); return nil },
+	})
 	// Trace export starts before the listeners and stops after them, so
 	// the last requests' spans are flushed once the servers drained.
 	if cfg.Telemetry.OTLPEndpoint != "" && app.bus != nil {

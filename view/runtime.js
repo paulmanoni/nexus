@@ -340,6 +340,8 @@
   // morph patches el to match next in place: attributes and children are
   // updated, matching elements by id or else by position and tag, so focus,
   // selection and the value being typed survive a live update.
+  var resetting = new Set(); // view.Forms whose fields a morph resets
+
   function morph(el, next) {
     // data-nx-ignore: the element is the browser's while its id holds (a
     // chart a script drew into, say); a new id replaces it.
@@ -360,8 +362,17 @@
       unmountIsland(el);
     }
     if (!isField(el)) {
+      // A view.Form loaded or reset (its generation moved): its fields take
+      // the server's values, typed or not, and nothing is touched any more.
+      var reset = el.tagName === "FORM" && el.hasAttribute("data-nx-form") &&
+        el.getAttribute("data-nx-gen") !== next.getAttribute("data-nx-gen");
       syncAttributes(el, next);
+      if (reset) {
+        resetting.add(el);
+        formTouches.delete(el);
+      }
       morphChildren(el, next);
+      if (reset) resetting.delete(el);
       return;
     }
     // A form field. What the user sees is kept while the field has focus;
@@ -369,6 +380,7 @@
     // since the last render - or on every render, for a field marked
     // data-nx-value (view.Value).
     var focused = typeof document !== "undefined" && el === document.activeElement;
+    var forced = !!(el.form && resetting.has(el.form));
     var seen = fieldState(el);
     var before = serverValue(el);
     syncAttributes(el, next);
@@ -377,7 +389,8 @@
     } else {
       morphChildren(el, next);
     }
-    if (focused) restoreField(el, seen);
+    if (forced) takeServerValue(el);
+    else if (focused) restoreField(el, seen);
     else if (el.hasAttribute("data-nx-value") || serverValue(el) !== before) takeServerValue(el);
   }
 
@@ -516,7 +529,218 @@
     Array.from(next.attributes).forEach(function (a) {
       if (el.getAttribute(a.name) !== a.value) el.setAttribute(a.name, a.value);
     });
+    keepJS(el, next);
   }
+
+  // ---- JS commands (view.JS) ----------------------------------------------
+
+  // jsState holds, per element, each attribute a command changed: the
+  // server's value when it did and the value it left. A re-render that
+  // renders the attribute as before gets the command's value back; one that
+  // renders it differently wins, and the attribute is the server's again.
+  var jsState = new WeakMap();
+
+  function keepJS(el, next) {
+    var touched = jsState.get(el);
+    if (!touched) return;
+    touched.forEach(function (rec, name) {
+      if (next.getAttribute(name) !== rec.server) {
+        touched.delete(name);
+        return;
+      }
+      if (rec.value === null) el.removeAttribute(name);
+      else if (el.getAttribute(name) !== rec.value) el.setAttribute(name, rec.value);
+    });
+    if (!touched.size) jsState.delete(el);
+  }
+
+  // jsTouch runs change on el, remembering what it does to attribute name.
+  function jsTouch(el, name, change) {
+    var touched = jsState.get(el);
+    if (!touched) jsState.set(el, (touched = new Map()));
+    var rec = touched.get(name);
+    if (!rec) touched.set(name, (rec = { server: el.getAttribute(name) }));
+    change();
+    rec.value = el.getAttribute(name);
+  }
+
+  function jsTargets(el, a) {
+    if (a.scope === "within") {
+      var box = el.closest(a.within);
+      if (!box) return [];
+      return a.to ? Array.from(box.querySelectorAll(a.to)) : [box];
+    }
+    if (!a.to) return [el];
+    if (a.scope === "closest") {
+      var c = el.closest(a.to);
+      return c ? [c] : [];
+    }
+    return Array.from((a.scope === "inner" ? el : document).querySelectorAll(a.to));
+  }
+
+  // styleDisplay reads and setDisplay writes the display declaration of the
+  // style attribute: the attribute, not the style object, is what the page
+  // re-renders and what a command must keep.
+  var displayDecl = /(^|;)\s*display\s*:[^;]*;?/i;
+  function styleDisplay(el) {
+    var m = /(?:^|;)\s*display\s*:\s*([^;]*)/i.exec(el.getAttribute("style") || "");
+    return m ? m[1].trim() : "";
+  }
+  function setDisplay(el, value) {
+    jsTouch(el, "style", function () {
+      var rest = (el.getAttribute("style") || "").replace(displayDecl, "$1").replace(/^;|;\s*$/, "").trim();
+      var style = value ? (rest ? rest + "; " : "") + "display: " + value : rest;
+      if (style) el.setAttribute("style", style);
+      else el.removeAttribute("style");
+    });
+  }
+  function shown(el) {
+    if (el.hasAttribute("hidden") || styleDisplay(el) === "none") return false;
+    return typeof getComputedStyle !== "function" || getComputedStyle(el).display !== "none";
+  }
+  function show(el, a) {
+    if (el.hasAttribute("hidden")) jsTouch(el, "hidden", function () { el.removeAttribute("hidden"); });
+    setDisplay(el, a.display || "");
+    if (!a.display && typeof getComputedStyle === "function" && getComputedStyle(el).display === "none") setDisplay(el, "block");
+  }
+  function classes(a) { return words(a.names); }
+  function words(s) { return String(s || "").split(/\s+/).filter(Boolean); }
+
+  // A transition's classes are the browser's alone: they come and go with
+  // it and are not kept across re-renders. A new one on an element cancels
+  // the one running there.
+  var running = new WeakMap();
+  function nextFrame(fn) {
+    if (typeof requestAnimationFrame === "function") requestAnimationFrame(function () { requestAnimationFrame(fn); });
+    else setTimeout(fn, 16);
+  }
+  function animate(el, a, before, after) {
+    var prev = running.get(el);
+    if (prev) prev.finish();
+    var anim = a.anim || ["", "", ""];
+    var during = words(anim[0]), from = words(anim[1]), to = words(anim[2]);
+    var done = false, timer = null;
+    var finish = function () {
+      if (done) return;
+      done = true;
+      clearTimeout(timer);
+      during.concat(from, to).forEach(function (c) { el.classList.remove(c); });
+      running.delete(el);
+      if (after) after();
+    };
+    running.set(el, { finish: finish });
+    during.concat(from).forEach(function (c) { el.classList.add(c); });
+    if (before) before();
+    nextFrame(function () {
+      if (done) return;
+      from.forEach(function (c) { el.classList.remove(c); });
+      to.forEach(function (c) { el.classList.add(c); });
+      timer = setTimeout(finish, a.time == null ? 200 : a.time);
+    });
+  }
+  function showAnimated(el, a) {
+    if (a.anim) animate(el, a, function () { show(el, a); });
+    else show(el, a);
+  }
+  function hideAnimated(el, a) {
+    if (a.anim) animate(el, a, null, function () { setDisplay(el, "none"); });
+    else setDisplay(el, "none");
+  }
+
+  var focusStack = [];
+  var focusable = "a[href], button:not([disabled]), input:not([disabled]):not([type=hidden]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex='-1'])";
+  function firstFocusable(scope) {
+    var auto = scope.querySelector("[autofocus]");
+    if (auto) return auto;
+    return Array.from(scope.querySelectorAll(focusable)).find(function (f) { return !f.closest("[data-nx-nofocus]"); });
+  }
+
+  var jsOps = {
+    show: function (el, a) { jsTargets(el, a).forEach(function (t) { showAnimated(t, a); }); },
+    hide: function (el, a) { jsTargets(el, a).forEach(function (t) { hideAnimated(t, a); }); },
+    toggle: function (el, a) {
+      jsTargets(el, a).forEach(function (t) { if (shown(t)) hideAnimated(t, a); else showAnimated(t, a); });
+    },
+    transition: function (el, a) {
+      jsTargets(el, a).forEach(function (t) { animate(t, { anim: [a.names, "", ""], time: a.time }); });
+    },
+    push_focus: function (el, a) {
+      var t = jsTargets(el, a)[0];
+      if (t) focusStack.push(t);
+    },
+    pop_focus: function () {
+      var t = focusStack.pop();
+      if (t && t.isConnected) t.focus();
+    },
+    exec: function (el, a, e) {
+      jsTargets(el, a).forEach(function (t) {
+        var code = (t.getAttribute(a.attr) || "").trim();
+        if (!code) return;
+        if (code.charAt(0) === "[") nx.js(t, e, JSON.parse(code));
+        else new Function("event", code).call(t, e);
+      });
+    },
+    dispatch: function (el, a) {
+      jsTargets(el, a).forEach(function (t) {
+        t.dispatchEvent(new CustomEvent(a.event, { bubbles: a.bubbles !== false, detail: a.detail }));
+      });
+    },
+    add_class: function (el, a) {
+      jsTargets(el, a).forEach(function (t) { jsTouch(t, "class", function () { classes(a).forEach(function (c) { t.classList.add(c); }); }); });
+    },
+    remove_class: function (el, a) {
+      jsTargets(el, a).forEach(function (t) { jsTouch(t, "class", function () { classes(a).forEach(function (c) { t.classList.remove(c); }); }); });
+    },
+    toggle_class: function (el, a) {
+      jsTargets(el, a).forEach(function (t) { jsTouch(t, "class", function () { classes(a).forEach(function (c) { t.classList.toggle(c); }); }); });
+    },
+    set_attr: function (el, a) {
+      jsTargets(el, a).forEach(function (t) { jsTouch(t, a.name, function () { t.setAttribute(a.name, a.value); }); });
+    },
+    remove_attr: function (el, a) {
+      jsTargets(el, a).forEach(function (t) { jsTouch(t, a.name, function () { t.removeAttribute(a.name); }); });
+    },
+    toggle_attr: function (el, a) {
+      jsTargets(el, a).forEach(function (t) {
+        jsTouch(t, a.name, function () {
+          if (t.hasAttribute(a.name)) t.removeAttribute(a.name);
+          else t.setAttribute(a.name, a.value);
+        });
+      });
+    },
+    focus: function (el, a) {
+      var t = jsTargets(el, a)[0];
+      if (t) t.focus();
+    },
+    focus_first: function (el, a) {
+      var t = jsTargets(el, a)[0];
+      var f = t && firstFocusable(t);
+      if (f) f.focus();
+    },
+    push: function (el, a) { nx.live.send(el, a.event, a.args, a.ct); },
+  };
+
+  // runPushed runs what the page's views pushed with a reply (PushJS,
+  // PushEvent), once it is applied; a command's own element is the live root.
+  function runPushed(root, pushed) {
+    (pushed || []).forEach(function (p) {
+      try {
+        if (p.js) nx.js(root, null, p.js);
+        else if (p.event) window.dispatchEvent(new CustomEvent(p.event, { detail: p.detail }));
+      } catch (err) {
+        console.error("nexus view: a pushed command failed:", err);
+      }
+    });
+  }
+
+  // js runs what view.JS rendered: [[command, args], ...], in order.
+  nx.js = function (el, e, ops) {
+    ops.forEach(function (op) {
+      var run = jsOps[op[0]];
+      if (run) run(el, op[1] || {}, e);
+      else console.warn("nexus view: unknown JS command " + op[0]);
+    });
+  };
 
   function sameKind(a, b) {
     if (a.nodeType !== b.nodeType) return false;
@@ -773,6 +997,7 @@
       };
       ws.onmessage = function (m) {
         var msg = JSON.parse(m.data);
+        unsentForms.clear(); // what was typed has reached the server: its render says if it's dirty
         if (msg.resume) state.resume = msg.resume;
         if (msg.uploads) startUploads(msg.uploads);
         if (msg.redirect) {
@@ -806,6 +1031,7 @@
           // had nothing to send. Ask for its tree once things are quiet, so
           // the first navigation can travel as a change too.
           if (!state.tree) prime(state, ws);
+          runPushed(root, msg.push);
           return;
         }
         root.removeAttribute("aria-busy");
@@ -829,7 +1055,10 @@
         }
         // While forms are being sent back after a fresh mount, hold the page
         // as it is: the fresh render would close what they reopen.
-        if (state.recovering.size > 0 || !html) return;
+        if (state.recovering.size > 0 || !html) {
+          runPushed(root, msg.push);
+          return;
+        }
         var next;
         if (root.tagName === "BODY") {
           var doc = new DOMParser().parseFromString(html, "text/html");
@@ -855,6 +1084,7 @@
         if (moved && push && moved !== location.pathname + location.search) history.pushState({ nx: true }, "", moved);
         if (msg.nav && push) window.scrollTo(0, 0);
         if (moved) navigated();
+        runPushed(root, msg.push);
       };
       ws.onclose = function () {
         if (state.closed) return; // navigated away: stay closed
@@ -1157,6 +1387,41 @@
     return true;
   }
 
+  // ---- view.ConfirmLeave ---------------------------------------------------
+
+  // unsentForms have changes typed since the server last answered.
+  var unsentForms = new Set();
+  var leaveConfirmed = false;
+
+  // leaveQuestion is what to ask before leaving the page: the question of a
+  // ConfirmLeave form with changes, "" when there is none.
+  function leaveQuestion() {
+    if (typeof document === "undefined") return "";
+    var forms = document.querySelectorAll("form[data-nx-confirm-leave]");
+    for (var i = 0; i < forms.length; i++) {
+      var f = forms[i];
+      if (f.hasAttribute("data-nx-dirty") || unsentForms.has(f)) return f.getAttribute("data-nx-confirm-leave");
+    }
+    return "";
+  }
+
+  // mayLeave asks, when there are changes to lose, whether to leave.
+  function mayLeave() {
+    var q = leaveQuestion();
+    if (!q) return true;
+    var ok = typeof root.confirm === "function" ? root.confirm(q) : true;
+    if (ok) leaveConfirmed = true;
+    return ok;
+  }
+
+  if (typeof window !== "undefined" && window.addEventListener) {
+    window.addEventListener("beforeunload", function (e) {
+      if (leaveConfirmed || !leaveQuestion()) return;
+      e.preventDefault();
+      e.returnValue = "";
+    });
+  }
+
   function onNavClick(e) {
     if (e.defaultPrevented || e.button !== 0 || e.metaKey || e.ctrlKey || e.shiftKey || e.altKey) return;
     var a = e.target.closest && e.target.closest("a[data-nx-nav]");
@@ -1165,6 +1430,7 @@
     if (url.origin !== location.origin) return;
     if (url.pathname === location.pathname && url.search === location.search && url.hash) return; // same page anchor
     e.preventDefault();
+    if (!mayLeave()) return;
     if (!liveNavigate(url.href, true)) navigate(url.href, true);
   }
 
@@ -1199,6 +1465,51 @@
   }
 
   var changeTimers = new WeakMap();
+
+  // A view.Form's fields the user changed, and those of them they left: a
+  // field's error shows once it is touched.
+  var formTouches = new WeakMap();
+  function formTouch(form) {
+    var t = formTouches.get(form);
+    if (!t) formTouches.set(form, (t = { edited: new Set(), touched: new Set() }));
+    return t;
+  }
+  // fieldNames are the form's controls, present or not in its values - an
+  // unticked checkbox sends nothing, but its name says it was shown.
+  function fieldNames(form) {
+    var names = new Set();
+    Array.prototype.forEach.call(form.elements, function (el) {
+      if (el.name) names.add(el.name);
+    });
+    return Array.from(names);
+  }
+  function sendForm(form) {
+    clearTimeout(changeTimers.get(form));
+    var live = liveState(form, "__form");
+    if (!live) return;
+    var msg = {
+      event: "__form",
+      formName: form.getAttribute("data-nx-form"),
+      form: formFields(form),
+      touched: Array.from(formTouch(form).touched),
+      fields: fieldNames(form),
+    };
+    var then = form.getAttribute("data-nx-then");
+    if (then) msg.then = then;
+    liveSend(live, target(msg, form, form.getAttribute("data-nx-form-ct") || undefined));
+  }
+  if (typeof document !== "undefined") {
+    document.addEventListener("focusout", function (e) {
+      var el = e.target, form = el && el.form;
+      if (!form || !el.name || !form.hasAttribute("data-nx-form")) return;
+      var t = formTouch(form);
+      if (!t.edited.has(el.name) || t.touched.has(el.name)) return;
+      t.touched.add(el.name);
+      // Leaving a field the user changed shows its error now, not on the
+      // next keystroke - when the form is live at all.
+      if (form.hasAttribute("data-nx-then") || /__nx\.live\.form/.test(form.getAttribute("oninput") || "")) sendForm(form);
+    }, true);
+  }
 
   // prime asks, after a short pause, for the tree of the page the browser
   // already shows (__resync answered without patching).
@@ -1294,11 +1605,28 @@
     // submit is what view.Submit renders into a form's onsubmit.
     submit: function (e, form, event, comp) {
       if (e) e.preventDefault();
+      if (form.hasAttribute("aria-busy")) return; // sent already: the reply is on its way
       var live = liveState(form, event);
       if (!live) return;
       form.setAttribute("aria-busy", "true");
-      var ref = liveSend(live, target({ event: event, form: formFields(form) }, form, comp));
+      var msg = { event: event, form: formFields(form) };
+      var name = form.getAttribute("data-nx-form");
+      if (name !== null) {
+        msg.formName = name;
+        msg.touched = Array.from(formTouch(form).touched);
+        msg.fields = fieldNames(form);
+      }
+      var ref = liveSend(live, target(msg, form, comp));
       live.state.submits[ref] = form;
+    },
+    // form is what a live view.Form renders into its oninput/onchange: the
+    // fields go to the form, checked as the user types, after typing pauses.
+    form: function (e, form) {
+      if (e && e.target && e.target.name) formTouch(form).edited.add(e.target.name);
+      unsentForms.add(form);
+      leaveConfirmed = false; // new changes: ask again
+      clearTimeout(changeTimers.get(form));
+      changeTimers.set(form, setTimeout(function () { sendForm(form); }, 150));
     },
     // change is what view.Change renders into a form's oninput/onchange:
     // the fields go to the server after typing pauses.

@@ -2,6 +2,7 @@ package nexus
 
 import (
 	"reflect"
+	"strconv"
 	"strings"
 	"sync"
 
@@ -56,6 +57,7 @@ type fieldRules struct {
 	name       string
 	validators []graph.Validator
 	nested     bool // a struct (or *struct) whose own fields carry rules
+	list       bool // a slice of such structs: each element is checked, under name[i].
 }
 
 var validationPlans sync.Map // reflect.Type → []fieldRules
@@ -81,7 +83,15 @@ func validationPlan(t reflect.Type) []fieldRules {
 		if ft.Kind() == reflect.Struct && len(validationPlan(ft)) > 0 {
 			fr.nested = true
 		}
-		if len(fr.validators) > 0 || fr.nested {
+		if et := ft; et.Kind() == reflect.Slice {
+			if et = et.Elem(); et.Kind() == reflect.Pointer {
+				et = et.Elem()
+			}
+			if et.Kind() == reflect.Struct && len(validationPlan(et)) > 0 {
+				fr.list = true
+			}
+		}
+		if len(fr.validators) > 0 || fr.nested || fr.list {
 			plan = append(plan, fr)
 		}
 	}
@@ -135,6 +145,17 @@ func validateStruct(rv reflect.Value, prefix string, errs *Error) {
 			}
 			if fv.Kind() == reflect.Struct {
 				validateStruct(fv, name+".", errs)
+			}
+		}
+		if fr.list && fv.Kind() == reflect.Slice {
+			for i := range fv.Len() {
+				ev := fv.Index(i)
+				for ev.Kind() == reflect.Pointer && !ev.IsNil() {
+					ev = ev.Elem()
+				}
+				if ev.Kind() == reflect.Struct {
+					validateStruct(ev, name+"["+strconv.Itoa(i)+"].", errs)
+				}
 			}
 		}
 	}

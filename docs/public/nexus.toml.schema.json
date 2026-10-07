@@ -966,6 +966,27 @@
       },
       "type": "object"
     },
+    "orm": {
+      "additionalProperties": false,
+      "properties": {
+        "models": {
+          "additionalProperties": {
+            "additionalProperties": false,
+            "properties": {
+              "db": {
+                "type": "string"
+              },
+              "mirror": {
+                "type": "string"
+              }
+            },
+            "type": "object"
+          },
+          "type": "object"
+        }
+      },
+      "type": "object"
+    },
     "peers": {
       "additionalProperties": {},
       "type": "object"

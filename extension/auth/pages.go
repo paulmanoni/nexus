@@ -171,20 +171,20 @@ func (st *moduleState) endpointOptions() nexus.Option {
 	var opts []nexus.Option
 	if ep.Login != "" {
 		opts = append(opts, nexus.AsRest("POST", ep.Login, signInEndpoint,
-			Public(), nexus.AuthRoute("login"), nexus.Describe("Sign in")))
+			Public(), nexus.AuthRoute("login"), nexus.DefaultName("login"), nexus.Describe("Sign in")))
 	}
 	if ep.Logout != "" {
 		opts = append(opts, nexus.AsRest("POST", ep.Logout, signOutEndpoint,
-			Public(), nexus.AuthRoute("logout"), nexus.Describe("Sign out")))
+			Public(), nexus.AuthRoute("logout"), nexus.DefaultName("logout"), nexus.Describe("Sign out")))
 	}
 	if ep.Me != "" {
 		opts = append(opts, nexus.AsRest("GET", ep.Me, st.meEndpoint,
-			Public(), nexus.AuthRoute("me"), nexus.Describe("The signed-in user and what they may do")))
+			Public(), nexus.AuthRoute("me"), nexus.DefaultName("me"), nexus.Describe("The signed-in user and what they may do")))
 	}
 	if imp := st.config.settings.impersonation.Endpoint; imp != "" {
 		opts = append(opts,
-			nexus.AsRest("POST", imp, impersonateEndpoint, nexus.Describe("Start impersonating a user")),
-			nexus.AsRest("DELETE", imp, stopImpersonatingEndpoint, nexus.Describe("Stop impersonating")))
+			nexus.AsRest("POST", imp, impersonateEndpoint, nexus.DefaultName("impersonate"), nexus.Describe("Start impersonating a user")),
+			nexus.AsRest("DELETE", imp, stopImpersonatingEndpoint, nexus.DefaultName("stopImpersonating"), nexus.Describe("Stop impersonating")))
 	}
 	for _, sc := range st.config.settings.schemes {
 		if sc.Type != SchemeOIDC {
@@ -196,17 +196,17 @@ func (st *moduleState) endpointOptions() nexus.Option {
 			callback = u.Path
 		}
 		opts = append(opts,
-			nexus.AsRest("GET", sc.Login, st.oidcStart(p), Public(), nexus.Describe("Sign in with "+sc.name)),
-			nexus.AsRest("GET", callback, st.oidcCallback(p), Public(), nexus.Describe("Sign-in callback from "+sc.name)))
+			nexus.AsRest("GET", sc.Login, st.oidcStart(p), Public(), nexus.DefaultName("oidc:"+sc.name), nexus.Describe("Sign in with "+sc.name)),
+			nexus.AsRest("GET", callback, st.oidcCallback(p), Public(), nexus.DefaultName("oidc:"+sc.name+":callback"), nexus.Describe("Sign-in callback from "+sc.name)))
 	}
 	if ep.Token != "" {
 		opts = append(opts, nexus.AsRest("POST", ep.Token, st.tokenEndpoint,
-			Public(), nexus.Describe("OAuth2 token endpoint: password and refresh_token grants")),
+			Public(), nexus.DefaultName("token"), nexus.Describe("OAuth2 token endpoint: password and refresh_token grants")),
 			nexus.Invoke(func(app *nexus.App) { app.ExemptCSRF(ep.Token) }))
 	}
 	if ep.Revoke != "" {
 		opts = append(opts, nexus.AsRest("POST", ep.Revoke, revokeEndpoint,
-			Public(), nexus.Describe("OAuth2 token revocation")),
+			Public(), nexus.DefaultName("revoke"), nexus.Describe("OAuth2 token revocation")),
 			nexus.Invoke(func(app *nexus.App) { app.ExemptCSRF(ep.Revoke) }))
 	}
 	return nexus.Options(opts...)

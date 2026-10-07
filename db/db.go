@@ -60,7 +60,7 @@ type Config struct {
 	Password string
 	Database string
 	SSLMode  string // "disable" / "require" / ... — postgres only
-	TimeZone string // IANA TZ — postgres only
+	TimeZone string // IANA TZ: Postgres's session zone, MySQL's loc ("" = the machine's)
 
 	// LogLevel controls SQL/GORM logging. Empty is auto — warn-level under
 	// `nexus dev` / a development environment, silent otherwise (a
@@ -88,8 +88,15 @@ func (c Config) DSN() string {
 	case MySQL:
 		// The driver unescapes the name, so a '?' in it can't add
 		// parameters (allowAllFiles=true and the like).
-		return fmt.Sprintf("%s:%s@tcp(%s:%s)/%s?charset=utf8mb4&parseTime=True&loc=Local",
-			c.User, c.Password, c.Host, c.Port, url.PathEscape(c.Database))
+		// loc is the zone the driver reads DATETIMEs in and writes times
+		// as: the machine's unless TimeZone says (Django with USE_TZ
+		// stores UTC).
+		loc := "Local"
+		if c.TimeZone != "" {
+			loc = url.QueryEscape(c.TimeZone)
+		}
+		return fmt.Sprintf("%s:%s@tcp(%s:%s)/%s?charset=utf8mb4&parseTime=True&loc=%s",
+			c.User, c.Password, c.Host, c.Port, url.PathEscape(c.Database), loc)
 	case SQLite:
 		return c.Database
 	}

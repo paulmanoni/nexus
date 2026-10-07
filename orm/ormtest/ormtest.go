@@ -49,9 +49,32 @@ func Driver() string {
 	return "sqlite"
 }
 
+// Mirror opens a second database with the models' tables and has ctx's
+// writes mirrored to it (orm.WithMirror), for testing a model moving
+// between databases. It is in-memory SQLite, or ORMTEST_MIRROR_DRIVER's
+// with ORMTEST_MIRROR_DSN: MySQL as Open's and Postgres as the mirror's
+// is the move the ORM's mirror is for. The returned context reads the
+// mirror, to check what reached it.
+func Mirror(t testing.TB, ctx context.Context, models ...orm.Model) (mirrored, onMirror context.Context) {
+	t.Helper()
+	driver := os.Getenv("ORMTEST_MIRROR_DRIVER")
+	if driver == "" {
+		driver = "sqlite"
+	}
+	d := openDriver(t, driver, os.Getenv("ORMTEST_MIRROR_DSN"))
+	onMirror = orm.WithDB(context.Background(), d)
+	if err := orm.CreateTables(onMirror, models...); err != nil {
+		t.Fatal(err)
+	}
+	return orm.WithMirror(ctx, d), onMirror
+}
+
 func open(t testing.TB) *orm.DB {
-	dsn := os.Getenv("ORMTEST_DSN")
-	switch Driver() {
+	return openDriver(t, Driver(), os.Getenv("ORMTEST_DSN"))
+}
+
+func openDriver(t testing.TB, driver, dsn string) *orm.DB {
+	switch driver {
 	case "postgres":
 		return openPostgres(t, dsn)
 	case "mysql":

@@ -1,8 +1,10 @@
 package secure
 
 import (
+	"context"
 	"net/http"
 	"net/http/httptest"
+	"strconv"
 	"strings"
 	"testing"
 
@@ -311,5 +313,48 @@ func TestCSRFAxiosConvention(t *testing.T) {
 		if w.Code != tc.want {
 			t.Errorf("X-XSRF-TOKEN %q: got %d, want %d", tc.header, w.Code, tc.want)
 		}
+	}
+}
+
+// CSRFToken gives a server-rendered form the request's token: the one the
+// first GET seeds, the cookie's after, and a rotated one at once.
+func TestCSRFTokenInContext(t *testing.T) {
+	t.Parallel()
+	cfg := CSRFConfig{}
+	ApplyCSRFDefaults(&cfg)
+	r := stdrouter.New()
+	r.Use(CSRFHandler(&cfg))
+	var seen []string
+	note := func(c *httpx.Ctx) {
+		field, tok, ok := CSRFToken(c.Request.Context())
+		seen = append(seen, field+"="+tok+"/"+strconv.FormatBool(ok))
+	}
+	r.GET("/form", func(c *httpx.Ctx) { note(c); c.String(200, "") })
+	r.GET("/rotate", func(c *httpx.Ctx) { RotateCSRF(c.Request.Context()); note(c); c.String(200, "") })
+
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, httptest.NewRequest(http.MethodGet, "/form", nil))
+	seeded := csrfCookie(t, w, DefaultCSRFCookie)
+	if seeded == nil || seen[0] != "csrf_token="+seeded.Value+"/true" {
+		t.Fatalf("first GET: %v, cookie %v", seen, seeded)
+	}
+
+	req := httptest.NewRequest(http.MethodGet, "/form", nil)
+	req.AddCookie(&http.Cookie{Name: DefaultCSRFCookie, Value: "kept"})
+	r.ServeHTTP(httptest.NewRecorder(), req)
+	if seen[1] != "csrf_token=kept/true" {
+		t.Fatalf("with a cookie: %v", seen)
+	}
+
+	req = httptest.NewRequest(http.MethodGet, "/rotate", nil)
+	req.AddCookie(&http.Cookie{Name: DefaultCSRFCookie, Value: "old"})
+	w = httptest.NewRecorder()
+	r.ServeHTTP(w, req)
+	if fresh := csrfCookie(t, w, DefaultCSRFCookie); fresh == nil || seen[2] != "csrf_token="+fresh.Value+"/true" || fresh.Value == "old" {
+		t.Fatalf("rotated: %v, cookie %v", seen, fresh)
+	}
+
+	if _, _, ok := CSRFToken(context.Background()); ok {
+		t.Error("a token without the middleware")
 	}
 }

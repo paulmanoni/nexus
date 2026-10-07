@@ -4,7 +4,114 @@ All notable changes to nexus are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and the project
 adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased]
+## [2.22.0] - 2026-10-07
+
+### Added
+
+- Named routes. Every REST route takes a name: its handler's
+  (`(*Users).Show` → `show`) in its module's namespace (`users:show`), or
+  the stacked namespace of the routers that include it
+  (`v1:billing:invoices:show`); `nexus.Name("…")` overrides it, and two
+  routes named alike explicitly fail the boot. `nexus.URL(ctx, "users:show",
+  7)` / `nexus.Reverse` build a route's path in the app serving ctx, with the
+  module `Path`, router prefixes and `route_prefix` applied and id
+  parameters masked when maskid is on. Parameters fill positionally, by name
+  (`nexus.P`), from a struct's `path:` / `query:` fields, and `nexus.Query`
+  adds a query. An unknown name or a missing parameter panics under `nexus
+  dev` and in tests (with a did-you-mean), and logs and returns `"#"` in
+  production.
+- Route handles. `nexus.AsRest` returns a `*nexus.Route` — still an Option
+  — whose `URL(ctx, params…)`, `Reverse` and `Method()` build the route
+  wherever it ended up mounted, so a link is a compile-time reference rather
+  than a string. `inertia.Page` and `view.Page` return one too;
+  `view.Live[T]` and `ControllerRouter` have `URL` (a controller takes the
+  action: `users.URL(ctx, (*UsersController).Show, 7)`), and `Router.URL`
+  resolves names relative to the router.
+- `nexus.DefaultName` (an extension's default name for the routes it
+  registers: `view.Page` names a page after its component, a live page
+  after its type, auth's endpoints `login`, `logout`, `me`, …) and
+  `nexus.NoName` (plumbing nothing links to). `App.Routes()` lists the named
+  routes; the manifest, `GET /__nexus/routes`, the dashboard's endpoint page
+  and `nexus routes` (a NAME column and `--name`) show them.
+- `orm.Mirror(name)` and nexus.toml's `[orm.models.<table>] db / mirror`: dual
+  writes for moving a table between databases. Every write is repeated on the
+  mirror after it commits, with the primary's keys; reads stay on the
+  primary; a failed mirror write goes to `orm.OnMirrorError` and the log.
+  Cutting over is swapping the two. `ormtest.Mirror` for tests.
+- The ORM moves a Postgres table's key sequence past the keys written into
+  it before taking a key from it, so a table cut over doesn't reuse keys.
+- `view.JS`: Phoenix-style JS commands for live pages — `onclick={
+  view.JS(view.Show("#menu"), view.AddClass("is-open", "#menu"),
+  view.Push(p.Load)) }`. Commands: `Show`, `Hide`, `Toggle` (with
+  `view.Display`), `AddClass`, `RemoveClass`, `ToggleClass`, `SetAttr`,
+  `RemoveAttr`, `ToggleAttr`, `Focus`, `FocusFirst`, `Push` / `PushTo`; a
+  selector matches the page, the element itself (`""`), its nearest ancestor
+  (`view.Closest()`) or inside it (`view.Inner()`). What a command changes
+  survives the page's re-renders until the server renders that attribute
+  differently. viewtest runs them and gains `Expect(…).HasClass` / `NoClass`;
+  `Visible` / `Hidden` read `display: none` too.
+- More JS commands: `view.Animate(during, from, to)` and `view.Time` make
+  `Show`, `Hide` and `Toggle` transitions; `Transition` adds classes for a
+  while; `PushFocus` / `PopFocus` keep a focus stack; `Exec` runs the
+  commands (`view.Commands`) or live script an attribute holds, so a dialog
+  keeps its closing steps once; `Dispatch` fires a `CustomEvent` with
+  `view.Detail`.
+- `view.Form`: Django-seamless forms for live pages. A form is a struct
+  embedding `view.Form` — the whole declaration, as a Django form class:
+  `form:`, `validate:`, `label:`, `help:`, `placeholder:`, `span:` and
+  `input:` tags, completed by optional methods on it: `<Field>Choices(ctx)`
+  (the field renders as a select; the receiver is the current values, so
+  choices can depend on other fields), `Validate(ctx)` (Django's clean(),
+  gating the submit, which only ever sees valid values), `Init(ctx)`
+  (defaults, run once before the page's Mount) and `Save(ctx) error` (takes
+  the submit when `ui.Form` is given no method). The page holds it as a
+  field or embeds it, reads and writes the fields directly (`p.Edit.Load(v)`
+  copies a record in), and `@ui.Form(p.Edit, p.Save)` — or `@ui.Form(p.Edit)`
+  for the form's own Save — renders every field and a Save button from the
+  struct; children and `ui.Field("name", opts…)` take over layout, `ui.Live`
+  or a change method make it check as the user types (`Changed(field)`,
+  `Update(func())` for dependent fields). The browser's values merge over
+  the loaded ones — an unrendered field keeps its value, an unticked
+  checkbox arrives false — errors show once a field is left (all after a
+  submit), success resets to the loaded values, `Load`/`Reset` replace even
+  typed values, a busy form drops a second submit, and `Dirty()` with
+  `view.ConfirmLeave` guards leaving. `view.RenderForm` is the kit-free
+  element; `nexus generate views` fails a misspelled `F("name")` with a
+  did-you-mean.
+- `view.CSRF()` renders the request's CSRF token as a `csrf_token` hidden
+  field, for a form posted over plain HTTP without the view runtime;
+  `secure.CSRFToken(ctx)` returns it, including the one the first request
+  seeds and the one `RotateCSRF` makes.
+- `view.Within(container)` scopes a JS command's selector to the element's
+  nearest `container` (an accordion section's panel, a tab strip's tabs).
+  `FocusFirst` prefers an `[autofocus]` field and skips `data-nx-nofocus`.
+- The component kit's dialogs and tabs run as JS commands. A browser-side
+  `ui.Dialog` keeps its closing steps in `data-cancel`, which its close
+  button, `data-ui-close`, Esc and the backdrop run; it opens on its first
+  field (not the close button) and closes back to its opener. A tab's choice
+  — and a `Panel` tab's panel — now survives the page's re-renders.
+  viewtest runs the kit's `ui.js`.
+- `LiveView.PushJS(ops…)` and `PushEvent(name, payload)`: an event, `Info`
+  or connected `Mount` runs JS commands, or dispatches a window
+  `CustomEvent`, once its reply is applied — close a dialog after a save,
+  tell an island. An event that fails sends none of them. viewtest gains
+  `Page.Eval`.
+- viewgen passes `view.JS`, `view.SendTo`, `view.SubmitTo` and
+  `view.ChangeTo` inside `templ.Attributes` as attribute text, as it did
+  `view.Send` — templ dropped them.
+- ORM has-one relations: a pointer field whose foreign key sits on the other
+  table (`Settings *Settings` with `Settings.AccountID`) loads with
+  `PrefetchRelated`.
+- ORM composite primary keys: a model with several `primaryKey` fields is
+  filtered, inserted and deleted through its QuerySet.
+
+### Fixed
+
+- ORM `CreateTables` makes byte-slice columns nullable, and keeps foreign
+  keys only between the tables it creates — one to a table that isn't there
+  failed the create.
+- ORM: times are sent as UTC. Postgres read a `TIMESTAMP` written from a
+  machine not on UTC back shifted by its offset.
 
 ## [2.21.0] - 2026-10-06
 

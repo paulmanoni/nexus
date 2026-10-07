@@ -342,15 +342,15 @@ func TestBoot(t *testing.T) {
 type mainDB struct{ *db.Manager }
 
 func TestBadModelFailsBoot(t *testing.T) {
-	type twoKeys struct {
-		A int64 `orm:"pk"`
-		B int64 `orm:"pk"`
+	type orphan struct {
+		ID    int64
+		Owner *User `orm:"fk:owner_id"`
 	}
-	_, stop, err := nexus.InProcess(config.Runtime{}, orm.For[twoKeys]())
+	_, stop, err := nexus.InProcess(config.Runtime{}, orm.For[orphan]())
 	if stop != nil {
 		t.Cleanup(func() { _ = stop(context.Background()) })
 	}
-	if err == nil || !strings.Contains(err.Error(), "two primary keys") {
+	if err == nil || !strings.Contains(err.Error(), "no column") {
 		t.Fatalf("boot = %v", err)
 	}
 }

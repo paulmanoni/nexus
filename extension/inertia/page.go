@@ -56,9 +56,9 @@ import (
 // decorator) carry it so the dashboard shows them as inertia pages.
 const Icon = "app-window"
 
-func Page(method, path, component string, fn any, opts ...nexus.RestOption) nexus.Option {
+func Page(method, path, component string, fn any, opts ...nexus.RestOption) *nexus.Route {
 	if err := validatePage(method, path, component, fn); err != nil {
-		return nexus.FailBoot(err)
+		return nexus.FailRoute(err)
 	}
 	full := make([]nexus.RestOption, 0, len(opts)+3)
 	full = append(full, nexus.WithRenderer(pageRenderer{component: component}))
@@ -70,11 +70,12 @@ func Page(method, path, component string, fn any, opts ...nexus.RestOption) nexu
 	if len(methods) == 1 {
 		return nexus.AsRest(methods[0], path, fn, full...)
 	}
-	out := make([]nexus.Option, 0, len(methods))
-	for _, m := range methods {
-		out = append(out, nexus.AsRest(m, path, fn, full...))
+	first := nexus.AsRest(methods[0], path, fn, full...)
+	more := make([]*nexus.Route, 0, len(methods)-1)
+	for _, m := range methods[1:] {
+		more = append(more, nexus.AsRest(m, path, fn, full...))
 	}
-	return nexus.Options(out...)
+	return nexus.SameRoute(first, more...)
 }
 
 // Component renders an action as the Inertia page component — what Page does

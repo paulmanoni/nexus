@@ -40,12 +40,15 @@ func CSRFHandler(cfg *CSRFConfig) httpx.HandlerFunc {
 		skip = DefaultSkip
 	}
 	return func(c *httpx.Ctx) {
-		c.SetRequestContext(context.WithValue(c.Request.Context(), rotateKey{}, func() { rotate(c, cfg) }))
+		tok := &csrfToken{field: cfg.FieldName}
+		ctx := context.WithValue(c.Request.Context(), rotateKey{}, func() { tok.value = rotate(c, cfg) })
+		c.SetRequestContext(context.WithValue(ctx, csrfTokenKey{}, tok))
 		if safeMethods[c.Request.Method] {
-			ensureToken(c, cfg)
+			tok.value = ensureToken(c, cfg)
 			c.Next()
 			return
 		}
+		tok.value, _ = c.Cookie(cfg.CookieName)
 		if skip(c) {
 			c.Next()
 			return
@@ -93,19 +96,36 @@ func DefaultSkip(c *httpx.Ctx) bool {
 // It also mirrors the token into an XSRF-TOKEN cookie, which axios reads and
 // echoes as X-XSRF-TOKEN on its own — so an Inertia app's forms carry the
 // token with no client setup.
-func ensureToken(c *httpx.Ctx, cfg *CSRFConfig) {
+func ensureToken(c *httpx.Ctx, cfg *CSRFConfig) string {
 	token, err := c.Cookie(cfg.CookieName)
 	if err != nil || token == "" {
 		token = GenerateToken(cfg.TokenBytes)
 		setTokenCookie(c, cfg, cfg.CookieName, token)
 	}
 	if cfg.CookieName == AxiosCSRFCookie {
-		return
+		return token
 	}
 	if mirror, err := c.Cookie(AxiosCSRFCookie); err != nil || mirror != token {
 		setTokenCookie(c, cfg, AxiosCSRFCookie, token)
 	}
+	return token
 }
+
+// CSRFToken is the request's CSRF token and the name of the form field a
+// classic HTML form sends it in — what a server-rendered form puts in a
+// hidden field. ok is false when CSRF is off. After RotateCSRF it is the new
+// token.
+func CSRFToken(ctx context.Context) (field, token string, ok bool) {
+	t, _ := ctx.Value(csrfTokenKey{}).(*csrfToken)
+	if t == nil || t.value == "" {
+		return "", "", false
+	}
+	return t.field, t.value, true
+}
+
+type csrfTokenKey struct{}
+
+type csrfToken struct{ field, value string }
 
 // RotateCSRF gives the browser a new CSRF token with this request's
 // response — auth.SignIn and SignOut call it, so a token planted before a
@@ -119,12 +139,13 @@ func RotateCSRF(ctx context.Context) {
 
 type rotateKey struct{}
 
-func rotate(c *httpx.Ctx, cfg *CSRFConfig) {
+func rotate(c *httpx.Ctx, cfg *CSRFConfig) string {
 	token := GenerateToken(cfg.TokenBytes)
 	setTokenCookie(c, cfg, cfg.CookieName, token)
 	if cfg.CookieName != AxiosCSRFCookie {
 		setTokenCookie(c, cfg, AxiosCSRFCookie, token)
 	}
+	return token
 }
 
 // AxiosCSRFCookie / AxiosCSRFHeader are the names axios uses for CSRF by

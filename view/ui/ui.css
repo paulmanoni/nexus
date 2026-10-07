@@ -270,3 +270,34 @@ body:has([data-ui-dialog]:not([hidden])) {
     animation-duration: 2s;
   }
 }
+
+/* SubmitButton: busy while its form's submit is on its way. */
+.ui-submit-spin { display: none; }
+form[aria-busy] .ui-submit { pointer-events: none; opacity: 0.7; }
+form[aria-busy] .ui-submit .ui-submit-spin { display: inline-flex; }
+
+/* SwitchField's control. */
+.ui-switch {
+  appearance: none;
+  position: relative;
+  width: 2.25rem;
+  height: 1.25rem;
+  border-radius: 9999px;
+  background: var(--ui-input);
+  cursor: pointer;
+  transition: background-color 0.15s;
+}
+.ui-switch::after {
+  content: "";
+  position: absolute;
+  top: 0.125rem;
+  left: 0.125rem;
+  width: 1rem;
+  height: 1rem;
+  border-radius: 9999px;
+  background: var(--ui-bg);
+  transition: transform 0.15s;
+}
+.ui-switch:checked { background: var(--ui-primary); }
+.ui-switch:checked::after { transform: translateX(1rem); }
+.ui-switch:focus-visible { outline: 2px solid var(--ui-ring); outline-offset: 2px; }

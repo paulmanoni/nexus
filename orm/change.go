@@ -18,11 +18,22 @@ const (
 )
 
 // Change is a write OnChange hears: the row for Created, Updated and
-// Deleted; how many rows for the bulk kinds.
+// Deleted; for the bulk kinds, how many rows, and which: the keys of the
+// rows an Update matched, the rows a Delete removed, as found just before
+// the write.
 type Change[T any] struct {
 	Kind  ChangeKind
 	Row   *T
 	Count int64
+	Keys  []any // BulkUpdated
+	Rows  []T   // BulkDeleted
+}
+
+// listening is whether anything hears the model's changes.
+func (m *Manager[T]) listening() bool {
+	m.ls.mu.Lock()
+	defer m.ls.mu.Unlock()
+	return len(m.ls.fns) > 0
 }
 
 type listeners[T any] struct {
@@ -87,4 +98,10 @@ type quietKey struct{}
 // Remove tell their own, row-level change.
 func hush(ctx context.Context) context.Context { return context.WithValue(ctx, quietKey{}, true) }
 
-func quiet(ctx context.Context) bool { v, _ := ctx.Value(quietKey{}).(bool); return v }
+func quiet(ctx context.Context) bool {
+	if _, mirroring := ctx.Value(inMirrorKey{}).(mirrorTarget); mirroring {
+		return true
+	}
+	v, _ := ctx.Value(quietKey{}).(bool)
+	return v
+}

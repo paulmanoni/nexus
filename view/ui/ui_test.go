@@ -101,13 +101,13 @@ func TestLoading(t *testing.T) {
 }
 
 func TestField(t *testing.T) {
-	got := render(t, withChildren(Field(FieldProps{Name: "email", Label: "Email", Help: "We never share it", Required: true}),
+	got := render(t, withChildren(FieldWrap(FieldProps{Name: "email", Label: "Email", Help: "We never share it", Required: true}),
 		render(t, Input(InputProps{Name: "email", Type: "email", Value: "a@b.c"}))))
 	expect(t, got, `<label for="email"`, `Email`, `*</span>`, `We never share it`,
 		`<input type="email"`, `name="email"`, `id="email"`, `value="a@b.c"`, `id="email-error"`, `hidden`)
 	refuse(t, got, `aria-invalid="`)
 
-	got = render(t, Field(FieldProps{Name: "email", Error: "taken"}))
+	got = render(t, FieldWrap(FieldProps{Name: "email", Error: "taken"}))
 	expect(t, got, `taken</p>`)
 	refuse(t, got, " hidden>")
 
@@ -130,21 +130,25 @@ func TestTabs(t *testing.T) {
 		{Label: "Docs", Href: "/docs", Nav: true},
 	}}))
 	expect(t, got, `role="tablist"`, `data-ui-tabs`,
-		`id="t-all"`, `aria-selected="true"`, `onclick="all()"`, `12</span>`,
+		`id="t-all"`, `aria-selected="true"`, `data-ui-select="all()"`, `12</span>`,
 		`aria-controls="open-panel"`, `aria-selected="false"`,
-		`<a role="tab" href="/docs"`, `data-nx-nav`)
+		`<a role="tab" href="/docs"`, `data-nx-nav`,
+		`&#34;within&#34;:&#34;[data-ui-tabs]&#34;`, `[&#34;exec&#34;,{&#34;attr&#34;:&#34;data-ui-select&#34;}]`,
+		`[&#34;show&#34;,{&#34;to&#34;:&#34;#open-panel&#34;}]`)
 	expect(t, render(t, TabPanel("open-panel", false)), `id="open-panel" role="tabpanel" data-ui-panel hidden`)
 }
 
 func TestDialog(t *testing.T) {
 	got := render(t, withChildren(Dialog(DialogProps{Title: "Delete order?", OnClose: send("close()"), Footer: templ.Raw("<b>f</b>")}), "body"))
 	expect(t, got, `data-ui-dialog`, `role="dialog"`, `aria-modal="true"`, `Delete order?`,
-		`data-ui-dialog-close onclick="close()"`, `body`, `<footer`, `<b>f</b>`)
-	refuse(t, got, " hidden>", " hidden ", "data-nx-ignore")
+		`data-ui-dialog-close data-nx-nofocus onclick="close()"`, `body`, `<footer`, `<b>f</b>`)
+	refuse(t, got, " hidden>", " hidden ", "data-nx-ignore", "data-cancel")
 
 	got = render(t, Dialog(DialogProps{ID: "help", Title: "Help", Persistent: true, Size: Lg}))
 	expect(t, got, `id="help"`, `hidden`, `data-nx-ignore`, `data-persistent`, `aria-labelledby="help-title"`,
-		`data-ui-dialog-close data-ui-close`, `max-w-3xl`)
+		`data-cancel="[[&#34;hide&#34;,{}],[&#34;pop_focus&#34;,{}]]"`,
+		`data-ui-dialog-close data-nx-nofocus onclick="__nx.js(this,event,[[&#34;exec&#34;,{&#34;attr&#34;:&#34;data-cancel&#34;,&#34;scope&#34;:&#34;closest&#34;,&#34;to&#34;:&#34;[data-ui-dialog]&#34;}]])"`,
+		`max-w-3xl`)
 	expect(t, render(t, Dialog(DialogProps{ID: "x", Open: true})), `data-nx-ignore`)
 	refuse(t, render(t, Dialog(DialogProps{ID: "x", Open: true})), " hidden")
 }

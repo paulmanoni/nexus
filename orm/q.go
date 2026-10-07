@@ -6,6 +6,7 @@ import (
 	"slices"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/paulmanoni/nexus/orm/internal/tags"
 )
@@ -133,6 +134,18 @@ func newBuilder(d Dialect, m *model) *builder {
 }
 
 func (b *builder) arg(v any) string {
+	// Times go as UTC: Postgres keeps a TIMESTAMP's wall clock and reads
+	// it back as UTC, so a local time would come back shifted; MySQL's
+	// driver converts to its loc either way.
+	switch t := v.(type) {
+	case time.Time:
+		v = t.UTC()
+	case *time.Time:
+		if t != nil {
+			u := t.UTC()
+			v = &u
+		}
+	}
 	b.st.args = append(b.st.args, v)
 	return b.d.Placeholder(len(b.st.args))
 }

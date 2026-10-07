@@ -25,8 +25,10 @@ import (
 	"fmt"
 	"net/http"
 	"reflect"
+	"runtime"
 	"strings"
 	"sync"
+	"unicode"
 
 	"github.com/a-h/templ"
 
@@ -54,9 +56,30 @@ func options() []nexus.Option {
 // Page serves a component at method + path:
 //
 //	view.Page("GET", "/", Home, auth.Required())
-func Page(method, path string, component func() templ.Component, opts ...nexus.RestOption) nexus.Option {
+//
+// The route is named after the component (Home → "home"), and the returned
+// handle builds its URL: view.Page(…).URL(ctx).
+func Page(method, path string, component func() templ.Component, opts ...nexus.RestOption) *nexus.Route {
 	handler := func(ctx context.Context) (templ.Component, error) { return component(), nil }
-	return nexus.AsRest(method, path, handler, append([]nexus.RestOption{HTML()}, opts...)...)
+	base := []nexus.RestOption{HTML()}
+	if name := pageRouteName(component); name != "" {
+		base = append(base, nexus.DefaultName(name))
+	}
+	return nexus.AsRest(method, path, handler, append(base, opts...)...)
+}
+
+func pageRouteName(fn any) string {
+	f := runtime.FuncForPC(reflect.ValueOf(fn).Pointer())
+	if f == nil {
+		return ""
+	}
+	name := f.Name()
+	name = name[strings.LastIndex(name, ".")+1:]
+	name = strings.TrimSuffix(name, "-fm")
+	if name == "" || strings.HasPrefix(name, "func") || !unicode.IsLetter(rune(name[0])) {
+		return ""
+	}
+	return strings.ToLower(name[:1]) + name[1:]
 }
 
 // HTML renders a handler's templ.Component result as the page — for a

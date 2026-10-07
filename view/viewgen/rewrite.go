@@ -798,6 +798,19 @@ func (c *component) attrLiterals(expr *parser.Expression, stmts bool) {
 	expr.Value = src
 }
 
+// scriptCalls are the view functions whose result is a script for an on*
+// attribute: live events and JS commands.
+var scriptCalls = []string{"Send", "SendTo", "Submit", "SubmitTo", "Change", "ChangeTo", "JS"}
+
+func isScriptCall(e ast.Expr) bool {
+	for _, name := range scriptCalls {
+		if isViewCall(e, name) {
+			return true
+		}
+	}
+	return false
+}
+
 func (c *component) attrLiteral(lit *ast.CompositeLit, full string, at parser.Expression, base int) (string, bool) {
 	var static, parts []string
 	sends := false
@@ -813,7 +826,7 @@ func (c *component) attrLiteral(lit *ast.CompositeLit, full string, at parser.Ex
 		name, _ := strconv.Unquote(key.Value)
 		val := full[kv.Value.Pos()-1 : kv.Value.End()-1]
 		offset := strconv.Itoa(int(kv.Value.Pos()) - 1 - base)
-		if strings.HasPrefix(name, "on") && (isViewCall(kv.Value, "Send") || isViewCall(kv.Value, "Submit") || isViewCall(kv.Value, "Change")) {
+		if strings.HasPrefix(name, "on") && isScriptCall(kv.Value) {
 			// templ drops a script value inside templ.Attributes: pass the
 			// live event as the attribute's text instead.
 			static = append(static, key.Value+": view.ScriptAttr("+val+")")

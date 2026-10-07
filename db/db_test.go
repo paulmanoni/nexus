@@ -71,6 +71,10 @@ func TestDSN_AllDrivers(t *testing.T) {
 			Driver: db.MySQL, User: "u", Password: "p", Host: "h", Port: "3306", Database: "d?allowAllFiles=true",
 		}, "u:p@tcp(h:3306)/d%3FallowAllFiles=true?charset=utf8mb4&parseTime=True&loc=Local"},
 
+		{"mysql time zone", db.Config{
+			Driver: db.MySQL, User: "u", Password: "p", Host: "h", Port: "3306", Database: "d", TimeZone: "UTC",
+		}, "u:p@tcp(h:3306)/d?charset=utf8mb4&parseTime=True&loc=UTC"},
+
 		{"sqlite path", db.Config{Driver: db.SQLite, Database: "/tmp/app.db"}, "/tmp/app.db"},
 		{"sqlite memory", db.Config{Driver: db.SQLite, Database: ":memory:"}, ":memory:"},
 	}

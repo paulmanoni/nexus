@@ -8,12 +8,12 @@
 //   hotkeys      data-ui-hotkey="mod+s" clicks the element
 //   copy-link    data-ui-copy="/orders/7" copies the absolute URL
 //   menus        data-ui-menu-trigger opens the sibling data-ui-menu
-//   dialogs      data-ui-open / data-ui-close / Esc / backdrop
-//   tabs         data-ui-tab marks itself selected and shows its panel
+//   dialogs      data-ui-open / data-ui-close / Esc / backdrop, run as the
+//                view runtime's JS commands (a dialog's data-cancel)
 //   row clicks   data-ui-href on a row navigates as an in-app link
 //
-// It never touches the view runtime: an event's reply is seen as the live
-// root (data-nx-live) dropping its aria-busy.
+// Tabs are JS commands the Tabs component renders. An event's reply is seen
+// as the live root (data-nx-live) dropping its aria-busy.
 (function (root) {
   "use strict";
   if (root.nxui) return; // loaded twice (a vendored copy and the kit): first wins
@@ -319,29 +319,32 @@
   }
 
   // ---- dialogs ------------------------------------------------------------
+  //
+  // A dialog opens and closes by the view runtime's JS commands, so what
+  // they do survives live re-renders; a browser-side dialog keeps its
+  // closing steps in data-cancel (ui.Dialog renders them).
 
-  function openDialogs() {
-    return all("[data-ui-dialog]").filter(function (d) { return !d.hidden; });
+  function js(el, e, ops) {
+    if (root.__nx && root.__nx.js) root.__nx.js(el, e || null, ops);
   }
 
-  function focusFirst(scope) {
-    var f = scope.querySelector("[autofocus], input:not([type=hidden]):not([disabled]), select:not([disabled]), textarea:not([disabled]), button:not([data-ui-dialog-close]):not([disabled]), a[href]");
-    if (f) f.focus();
+  function shown(d) {
+    return !d.hidden && !/(?:^|;)\s*display\s*:\s*none/i.test(d.getAttribute("style") || "");
+  }
+
+  function openDialogs() {
+    return all("[data-ui-dialog]").filter(shown);
   }
 
   ui.dialog = {
-    open: function (id) {
+    open: function (id, opener) {
       var d = typeof id === "string" ? doc.getElementById(id) : id;
       if (!d) return;
-      d.__uiOpener = doc.activeElement;
-      d.hidden = false;
-      focusFirst(d);
+      js(opener || doc.activeElement || doc.body, null, [["push_focus", {}], ["show", { to: "#" + d.id }], ["focus_first", { to: "#" + d.id }]]);
     },
     close: function (el) {
       var d = typeof el === "string" ? doc.getElementById(el) : closest(el, "[data-ui-dialog]");
-      if (!d) return;
-      d.hidden = true;
-      if (d.__uiOpener && d.__uiOpener.isConnected) d.__uiOpener.focus();
+      if (d) js(d, null, [["exec", { attr: "data-cancel" }]]);
     },
   };
 
@@ -361,21 +364,7 @@
     }
     var close = d.querySelector("[data-ui-dialog-close]");
     if (close) close.click();
-    else ui.dialog.close(d.firstElementChild || d);
-  }
-
-  // ---- tabs ---------------------------------------------------------------
-
-  function selectTab(tab) {
-    var list = closest(tab, "[data-ui-tabs]");
-    if (!list) return;
-    all("[data-ui-tab]", list).forEach(function (t) {
-      var on = t === tab;
-      t.setAttribute("aria-selected", on ? "true" : "false");
-      var panel = t.getAttribute("aria-controls");
-      var el = panel && doc.getElementById(panel);
-      if (el) el.hidden = !on;
-    });
+    else ui.dialog.close(d);
   }
 
   // ---- row clicks ---------------------------------------------------------
@@ -478,7 +467,7 @@
     }
     if ((el = closest(t, "[data-ui-open]"))) {
       e.preventDefault();
-      ui.dialog.open(el.getAttribute("data-ui-open"));
+      ui.dialog.open(el.getAttribute("data-ui-open"), el);
       return;
     }
     if ((el = closest(t, "[data-ui-close]"))) {
@@ -489,7 +478,6 @@
       dismissDialog(t); // the backdrop itself
       return;
     }
-    if ((el = closest(t, "[data-ui-tab]")) && !el.disabled) selectTab(el);
     onRowClick(e);
   }
 

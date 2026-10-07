@@ -203,6 +203,7 @@ var topicSummaries = map[string]string{
 	"auth":        "auth.Module: Users, schemes, sign-in, gates, areas, tokens, OAuth2",
 	"security":    "Built-in security headers (on) + CSRF (on with cookie auth/forms)",
 	"rest":        "AsRest — REST endpoints with reflective handlers",
+	"urls":        "Named routes — nexus.URL, route handles, nexus.Name",
 	"graphql":     "AsQuery / AsMutation — auto-mounted GraphQL fields",
 	"ws":          "AsWS — typed WebSocket envelopes, session fan-out",
 	"frontend":    "Vite frontend: nexus.Frontend, the dev handshake, nexus dev/build",
@@ -860,6 +861,38 @@ Embedding: @view.Component[*Cart]("cart", CartProps{…}) places a live view
 registered with view.Live[*Cart]("")). Update(ctx, deps…, props) on new
 props, view.UpdateComponent[*Cart](ctx, "cart", props) from an event or Info;
 view.Send(c.Toggle) in its template reaches its own instance.
+Forms: a struct embedding view.Form — the whole declaration, as a Django
+form class: form:/validate:/label:/help:/placeholder:/span:/input: tags,
+plus optional methods
+    func (f UserForm) RoleIDChoices(ctx) []view.Choice // ModelChoiceField; sees current values
+    func (f UserForm) Validate(ctx) error              // clean(); gates the submit
+    func (f *UserForm) Init(ctx)                       // defaults, once before Mount
+    func (f *UserForm) Save(ctx) error                 // the submit, when ui.Form gets none
+The page holds it (Edit UserForm) or embeds it; fields are the values —
+read/write them directly, Edit.Load(v) copies a record in. A page submit
+func (p *P) Save(ctx, f UserForm) error runs only when every rule passes.
+Template: @ui.Form(p.Edit, p.Save) — or @ui.Form(p.Edit) for the form's own
+Save — renders every field + a Save button ({{ form }}); children +
+ui.Field("name", ui.Label/Options/...) for layout; ui.Live checks as the
+user types; a change method also runs (p.Edit.Changed(field),
+p.Edit.Update(func())). Values merge over the loaded ones (unrendered fields
+keep theirs; unticked checkboxes go false); errors show once a field is
+left, all after a submit; success resets to the loaded values; Load/Reset
+replace even typed values; busy forms drop a second submit; Dirty() +
+view.ConfirmLeave(msg) guard leaving. view.RenderForm for kit-free markup;
+@view.CSRF() for plain-HTTP forms.
+JS commands (Phoenix's JS): onclick={ view.JS(view.Show("#menu"),
+view.AddClass("is-open", "#menu"), view.Push(p.Load)) } — Show/Hide/Toggle
+(view.Display("flex")), AddClass/RemoveClass/ToggleClass, SetAttr/RemoveAttr/
+ToggleAttr, Focus/FocusFirst, Push/PushTo, Transition(classes, sel),
+PushFocus/PopFocus, Exec(attr, sel) (runs view.Commands(…) or a live script
+held in an attribute), Dispatch(event, sel, view.Detail(v)); view.Animate(
+during, from, to) + view.Time(d) make Show/Hide/Toggle transitions; from an
+event, Info or connected Mount: p.PushJS(ops…) / p.PushEvent(name, payload)
+run after the reply (a window CustomEvent; dropped if the event fails);
+selector "" = the element (the live root when pushed),
+view.Closest() / view.Inner() scope it. What they change survives re-renders
+until the server renders that attribute differently.
 Uploads: a view.Upload field — p.Avatar.Allow(view.UploadConfig{Accept:
 []string{"image/*"}, MaxSize: 5 << 20}) in Mount, <input type="file"
 { p.Avatar.Input()... }/>, p.Avatar.Entries() for progress, and
@@ -1412,6 +1445,59 @@ extension/security — the pieces the core path can't offer:
     nexus.Use(security.NewHeadersMiddleware(security.HeadersConfig{}))
 `,
 
+	"urls": `
+NAMED ROUTES & URLS
+
+Every REST route has a name; nexus builds its URL back from it, with the
+module Path, router prefixes and route_prefix applied.
+
+    var ShowUser = nexus.AsRest("GET", "/users/:id", (*Users).Show, nexus.Arg("id"))
+    var Module   = nexus.Module("users", nexus.Path("/admin"), ShowUser)
+
+    ShowUser.URL(ctx, 7)              // "/admin/users/7"   (a *nexus.Route handle)
+    nexus.URL(ctx, "users:show", 7)   // by name
+
+NAMES
+  default      handler name, first letter lowered: (*Users).Show -> show,
+               in the module's namespace: users:show
+  routers      namespace = router names stacked by Include: v1:billing:show
+  controllers  action method name: users.URL(ctx, (*UsersController).Show, 7)
+  nexus.Name("x")        explicit; two explicit alike = boot error
+  nexus.Name("")         the route is named after its namespace
+  nexus.DefaultName("x") an extension's default (view.Page: the component,
+                         view.Live: the page's router, auth: login/me/...)
+  nexus.NoName()         keep plumbing out of the names
+  Default names that clash on different paths are ambiguous (build errors).
+  A trailing-slash twin or another method on the same path shares the name.
+
+HANDLES
+  *nexus.Route         AsRest, inertia.Page, view.Page: URL, Reverse, Method
+  view.Live[*T](...)   page.URL(ctx, params...)
+  *nexus.Router        r.URL(ctx, "name", params...)   (relative name)
+  ControllerRouter     c.URL(ctx, (*C).Action, params...)
+
+PARAMS
+  7, "ada"                 next path parameter, in path order
+  nexus.P{"id": 7}         path parameter by name
+  struct{ID int ` + "`path:\"id\"`" + `; Tab string ` + "`query:\"tab\"`" + `}
+  nexus.Query{"q": "x", "tag": []string{"a","b"}}
+  Ids are masked when extension/maskid is on.
+
+ERRORS
+  nexus.URL / handle.URL: panic under nexus dev and in tests (did-you-mean
+  for a mistyped name); log + "#" in production. Reverse returns the error.
+
+ctx picks the app: a request's context on any transport; else the one
+running app (jobs, startup tasks); nexus.WithApp(ctx, app) picks one.
+
+A page linking to its own route (a form posting back) makes the handle's
+package var an initialization cycle: declare it, assign it in init().
+    var SignIn *nexus.Route
+    func init() { SignIn = nexus.AsRest("POST", "/login", signIn) }
+
+LISTING
+  app.Routes()   nexus routes --name users:   GET /__nexus/routes
+`,
 	"rest": `
 REST
 

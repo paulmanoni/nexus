@@ -34,8 +34,11 @@ type Endpoint struct {
 	// for modules that are always local. Surfaces on the dashboard so
 	// readers can see which endpoints belong to a planned (or current)
 	// deployment unit.
-	Deployment   string `json:",omitempty"`
-	Name         string
+	Deployment string `json:",omitempty"`
+	Name       string
+	// Route is a REST endpoint's route name ("users:show"), what
+	// nexus.URL builds it by; empty when it has none.
+	Route        string `json:",omitempty"`
 	Transport    Transport
 	Method       string // REST verb; GraphQL "query"/"mutation"/"subscription"; unused for WS
 	Path         string // REST/WS path; for GraphQL this is the mount path (e.g. "/graphql")
@@ -415,6 +418,51 @@ func (r *Registry) RegisterEndpoint(e Endpoint) {
 		e.RegisteredAt = time.Now()
 	}
 	r.endpoints = append(r.endpoints, e)
+}
+
+// SetEndpointRoute records the route name of the REST endpoint served at
+// method + path; "" clears it.
+func (r *Registry) SetEndpointRoute(method, path, route string) {
+	r.mu.Lock()
+	for i := range r.endpoints {
+		e := &r.endpoints[i]
+		if e.Transport == REST && e.Method == method && e.Path == path {
+			e.Route = route
+		}
+	}
+	r.mu.Unlock()
+	r.notifyChanged()
+}
+
+// RouteRow is one REST route as GET /__nexus/routes lists it.
+type RouteRow struct {
+	Route      string   `json:"route,omitempty"`
+	Method     string   `json:"method"`
+	Path       string   `json:"path"`
+	Module     string   `json:"module,omitempty"`
+	Middleware []string `json:"middleware,omitempty"`
+	Hidden     bool     `json:"hidden,omitempty"`
+}
+
+// Routes lists every REST endpoint — dashboard-hidden ones too — by path.
+func (r *Registry) Routes() []RouteRow {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+	out := make([]RouteRow, 0, len(r.endpoints))
+	for _, e := range r.endpoints {
+		if e.Transport != REST {
+			continue
+		}
+		out = append(out, RouteRow{Route: e.Route, Method: e.Method, Path: e.Path, Module: e.Module,
+			Middleware: e.Middleware, Hidden: e.Tags[HiddenTag] == "true"})
+	}
+	sort.SliceStable(out, func(i, j int) bool {
+		if out[i].Path != out[j].Path {
+			return out[i].Path < out[j].Path
+		}
+		return out[i].Method < out[j].Method
+	})
+	return out
 }
 
 func (r *Registry) Endpoints() []Endpoint {

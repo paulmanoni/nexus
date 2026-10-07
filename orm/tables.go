@@ -18,7 +18,8 @@ type Model interface {
 
 // CreateTables creates the models' tables, and the tables between their
 // many-to-many relations, where they are not already: for tests and
-// tools. A deployed schema changes through migrations (orm.Migrate).
+// tools. Foreign keys are made between the tables it makes only. A
+// deployed schema changes through migrations (orm.Migrate).
 func CreateTables(ctx context.Context, models ...Model) error {
 	if len(models) == 0 {
 		return nil
@@ -40,6 +41,17 @@ func CreateTables(ctx context.Context, models ...Model) error {
 				all = append(all, t)
 			}
 		}
+	}
+	// A foreign key to a table the call doesn't make is left out: it may
+	// not exist, and these tables are for tests and tools.
+	for i := range all {
+		fks := all[i].FKs[:0]
+		for _, fk := range all[i].FKs {
+			if seen[fk.Table] {
+				fks = append(fks, fk)
+			}
+		}
+		all[i].FKs = fks
 	}
 	d := schema.Dialect{Name: c.d.Name(), Quote: c.d.Quote}
 	for _, t := range schema.Sort(all) {
@@ -64,7 +76,11 @@ func (m *Manager[T]) tables() ([]schema.Table, error) {
 func (m *model) tables() ([]schema.Table, error) {
 	t := schema.Table{Name: m.Table}
 	for _, f := range m.Fields {
-		t.Columns = append(t.Columns, columnOf(f))
+		c := columnOf(f)
+		if f != m.PK {
+			c.Auto = false
+		}
+		t.Columns = append(t.Columns, c)
 	}
 	out := []schema.Table{t}
 	for _, r := range m.relList {
@@ -106,6 +122,10 @@ func columnOf(f *field) schema.Column {
 		c.Nullable, t = true, t.Elem()
 	}
 	c.Kind = kindOf(t)
+	// A nil []byte is NULL, as the driver sends it.
+	if c.Kind == schema.Bytes {
+		c.Nullable = true
+	}
 	if c.PK {
 		c.Nullable = false
 		c.Auto = c.Kind == schema.Int || c.Kind == schema.Int32

@@ -70,7 +70,7 @@ func Shard(component any, opts ...nexus.RestOption) nexus.Option {
 		nexus.Tag(registry.ViewTag, "shard"),
 		nexus.Tag(registry.ViewComponentTag, componentName(component)),
 	}, opts...)
-	return nexus.AsRest("POST", "/_view/shard/"+d.route, d.serve, opts...)
+	return nexus.AsRest("POST", "/_view/shard/"+d.route, d.serve, append(opts, nexus.NoName())...)
 }
 
 // shardRoute names a component's endpoint: its package and name, plus a

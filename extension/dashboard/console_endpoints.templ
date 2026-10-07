@@ -279,6 +279,11 @@ templ endpointPage(st *consoleState, e registry.Endpoint, recent []metrics.Error
 					@kv("Path") {
 						<code class="font-mono text-[12px]">{ e.Path }</code>
 					}
+					if e.Route != "" {
+						@kv("Route name") {
+							<code class="font-mono text-[12px]">{ e.Route }</code>
+						}
+					}
 					if kind := e.Tags[registry.ViewTag]; kind != "" {
 						@kv("View") {
 							{ kind }

@@ -28,8 +28,10 @@ type Manager[T any] struct {
 	meta      *model
 	err       error // what is wrong with the model, reported at boot
 	dbName    string
+	mirror    string
 	unmanaged bool
 	bound     atomic.Pointer[binding]
+	synced    sync.Map // *sql.DB → true: its key sequence is past the table's keys
 	ls        listeners[T]
 }
 
@@ -37,8 +39,8 @@ type Manager[T any] struct {
 type ForOption func(*forConfig)
 
 type forConfig struct {
-	db, table string
-	unmanaged bool
+	db, table, mirror string
+	unmanaged         bool
 }
 
 // On binds the model to the database db.Bind registered as name; the
@@ -61,7 +63,7 @@ func For[T any](opts ...ForOption) *Manager[T] {
 	for _, o := range opts {
 		o(&c)
 	}
-	m := &Manager[T]{dbName: c.db, unmanaged: c.unmanaged}
+	m := &Manager[T]{dbName: c.db, mirror: c.mirror, unmanaged: c.unmanaged}
 	m.meta, m.err = modelOf(reflect.TypeFor[T](), c.table)
 	m.QuerySet = QuerySet[T]{m: m, q: query{m: m.meta}}
 	declare(declaredModel{db: c.db, unmanaged: c.unmanaged, tables: m.tables})
@@ -69,6 +71,7 @@ func For[T any](opts ...ForOption) *Manager[T] {
 		if m.err != nil {
 			return m.err
 		}
+		m.route()
 		b := bindApp(app, lc)
 		m.bound.Store(b)
 		lastBinding.Store(b)
@@ -86,6 +89,29 @@ func (m *Manager[T]) TableName() string {
 	return m.meta.Table
 }
 
+// ColumnValues is row's columns and their values as the database is sent
+// them (a nil pointer as nil): a snapshot of the row for code that speaks
+// columns, such as a change feed to another system.
+func (m *Manager[T]) ColumnValues(row *T) map[string]any {
+	if m.meta == nil || row == nil {
+		return nil
+	}
+	v := reflect.ValueOf(row).Elem()
+	out := make(map[string]any, len(m.meta.Fields))
+	for _, f := range m.meta.Fields {
+		out[f.Column] = value(peek(v, f.Index, f.Type))
+	}
+	return out
+}
+
+// PKColumn is the column of the model's primary key, "" for none.
+func (m *Manager[T]) PKColumn() string {
+	if m.meta == nil || m.meta.PK == nil {
+		return ""
+	}
+	return m.meta.PK.Column
+}
+
 // Columns is the model's columns, in field order.
 func (m *Manager[T]) Columns() []string {
 	if m.meta == nil {
@@ -98,6 +124,9 @@ func (m *Manager[T]) Columns() []string {
 func (m *Manager[T]) conn(ctx context.Context) (conn, error) {
 	if m.err != nil {
 		return conn{}, m.err
+	}
+	if t, ok := ctx.Value(inMirrorKey{}).(mirrorTarget); ok {
+		return m.mirrorConn(ctx, t)
 	}
 	if d, ok := ctx.Value(dbKey{}).(*DB); ok {
 		return on(ctx, d), nil

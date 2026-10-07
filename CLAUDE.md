@@ -355,7 +355,40 @@ live sockets follow, history/back work. From a live page it goes over the socket
 same path → *patch* (props re-bound from the URL → `Update`, else Mount; tree diff);
 another live page → the connection is handed to its `_live` route through the app router (gates/DI/params
 as a page load) and it sends its tree against the connection's statics; else `{"redirect"}` → HTTP load.
-`x.PushPatch(href)` / `x.PushNavigate(href)` from events; `nx:navigate` fires on window. Generator: `view/viewgen` (+ `viewgen/jsgen`, coherence-tested in goja).
+`x.PushPatch(href)` / `x.PushNavigate(href)` from events; `nx:navigate` fires on window.
+**Forms** (a struct embedding `view.Form`; a page holds it as a field or embeds it — `view.Form`'s own
+promoted methods are never events, the form struct's conventions stay shadowable): the struct declares
+everything (`form:`/`validate:`/`label:` (else humanised)/`help:`/`placeholder:`/`span:`/`input:` tags);
+optional methods on it: `<Field>Choices(ctx) []view.Choice` (receiver = current values → dependent selects;
+select rendering), `Validate(ctx) error` (clean(); gates submit — the submit runs only when all rules pass,
+and gets the MERGED value), `Init(ctx)` on pointer (once, before the page's Mount) and `Save(ctx) error` on
+pointer (the `__save` built-in takes the submit when RenderForm/ui.Form get no method). Fields are the values
+(read/write directly; `Load(v)` copies a record's matching fields in). State: loaded data under the browser's
+fields; `change` merges only present fields (`fields` lists every control, so unticked boxes go false,
+unrendered fields keep values); `Load/Reset` → gen++ (`data-nx-gen` change makes fields take server values);
+success → back to loaded. `Changed(field)`, `Update(func())` (mutate inside; validated), `Dirty()`
+(`data-nx-dirty`), `Valid/Submitted/Error/F/FieldNames/ChoicesFor`.
+Wiring: `view.RenderForm(f, extras…)` (first func = submit, second = change → `data-nx-then` + `__form`
+event; `view.LiveValidation`, `view.ConfirmLeave`, `view.FormAttrs`/`templ.Attributes`); `view.ActiveForm(ctx)`
+flows to fields. Kit: `ui.Form(f, extras…)` (childless → `ui.AllFields()` grid + `ui.Submit("Save")`),
+`ui.Field(name, ui.Label/Help/Placeholder/Options/Disabled/Choices{…})`, explicit `TextField/...Field`,
+`ui.Live`, `ui.Submit` (spins while form busy). viewgen fails `F("typo")` in-package (did-you-mean); `ui.Field`
+errors at render. `@view.CSRF()` for plain-HTTP forms.
+**JS commands** (Phoenix's `JS`): `onclick={ view.JS(view.Show("#m"), view.AddClass("on", "#m"),
+view.Push(p.Load, id)) }` — a `templ.ComponentScript` (also in `templ.Attributes`; viewgen wraps it in
+`view.ScriptAttr` like `view.Send`); ops `Show/Hide/Toggle` (`view.Display(v)`), `AddClass/RemoveClass/
+ToggleClass`, `SetAttr/RemoveAttr/ToggleAttr`, `Focus/FocusFirst`, `Push/PushTo`, `Transition(classes, sel)`,
+`PushFocus/PopFocus` (a stack), `Exec(attr, sel)` (runs `view.Commands(…)` JSON — or any script, e.g. view.Send —
+held in an attribute: a dialog's `data-cancel`), `Dispatch(event, sel, view.Detail(v), view.NoBubble())`;
+`view.Animate(during, from, to)` + `view.Time(d)` (200ms) make Show/Hide/Toggle transitions (classes not sticky; a
+new transition on an element finishes the running one). Server side: `x.PushJS(ops…)` / `x.PushEvent(name,
+payload)` (window CustomEvent) from an event, Info or connected Mount ride the next reply (`push` field) and run
+after it is applied (`""` = the live root; an Error reply drops them; the HTTP render has none); viewtest
+`p.Eval(js)`. Selector `""` = the
+element, `view.Closest()`/`view.Inner()` scope it. Runtime `__nx.js` (runtime.js) records per element each
+attribute a command changed with the server's value at the time; `syncAttributes` re-applies it while the
+server renders that attribute unchanged, and drops it when the server changes it (server wins). Show/Hide edit
+the `style` attribute's display (+ remove `hidden`). viewtest: `Visible/Hidden/HasClass/NoClass`. Generator: `view/viewgen` (+ `viewgen/jsgen`, coherence-tested in goja).
 **Islands**: `var Chart = view.NewIsland[ChartProps]("Chart")` declares one (props type → registry
 `SetIsland` → manifest `islands` → `NexusIslandProps` in client.d.ts; `*view.Signal[T]` types as `T` via
 `registry.SchemaAs`); `@Chart(props, view.Visible(), view.SSR()) { fallback }` places it. It mounts a
@@ -391,8 +424,12 @@ DataTable/TableRow (server paging/search/sort: `OnSearch` = `view.Change` with `
 Loader, PageHeader, Badge, Icon — templ + Tailwind utilities over `--ui-*` tokens (fall back to shadcn tokens;
 light/dark). `@ui.Script()` after `@view.Script()` loads `/_view/ui/ui.{css,js}` (served on import). ui.js
 (attributes + delegation, never edits runtime.js): `ui.Loading(view.Send(x.Run), "preview")` covers ids until
-the live root drops `aria-busy` (attr form `ui.LoadingAttr`), `data-ui-hotkey`, `data-ui-copy`, menus, dialogs,
-tabs, row clicks, `nxui.toast`. `nexus add ui <component|all> [--dir ui] [--package p]` vendors a component.
+the live root drops `aria-busy` (attr form `ui.LoadingAttr`), `data-ui-hotkey`, `data-ui-copy`, menus,
+row clicks, `nxui.toast`. Dialogs and tabs are JS commands: a browser-side Dialog carries `data-cancel`
+(Hide + PopFocus) its X/`data-ui-close`/Esc/backdrop Exec; `data-ui-open`/`nxui.dialog.open` run PushFocus +
+Show + FocusFirst (close buttons `data-nx-nofocus`); a Tab's onclick sets aria-selected across the strip
+(`view.Within("[data-ui-tabs]")`), switches Panels, then Execs its OnSelect (`data-ui-select`) — the choice
+survives re-renders. viewtest runs ui.js too (inert MutationObserver). `nexus add ui <component|all> [--dir ui] [--package p]` vendors a component.
 `nexus docs views`, docs/guide/views.md, example `view/example` (+ `web/`; `/registry` uses the kit).
 
 ## 2. App entry & config (`nexus.toml`)
@@ -699,6 +736,25 @@ Every annotation has a Go equivalent (table in docs/guide/controllers.md).
 Directives are Go directive comments: gofmt leaves `//nexus:x` unspaced and moves it
 below the doc prose (the scanner reads every line, so placement is free); go/doc hides it.
 The v1 `//@x` / `// @x` spelling is a file:line error — run `nexus migrate v2`.
+
+**Named routes & URLs.** Every REST route has a name — its handler's, first letter
+lowered (`(*Users).Show` → `show`; controller actions: the method), in its module's
+namespace (`users:show`) or the router chain's, stacked by `Include`
+(`v1:billing:show`). `nexus.Name("x")` overrides (`Name("")` = the namespace itself; two
+explicit alike fail boot; default names clashing on different paths go ambiguous);
+`nexus.DefaultName` is an extension's default (view.Page → component, view.Live → its
+router, auth → `login`/`me`/…); `nexus.NoName()` for plumbing. `nexus.URL(ctx, name,
+params…)` / `nexus.Reverse` build the path in the app serving ctx (any transport; else
+the one running app) with `Path`/prefixes/`route_prefix` applied and ids maskid-masked.
+Handles: `AsRest`, `inertia.Page`, `view.Page` return `*nexus.Route` (an Option) with
+`URL(ctx, params…)`/`Reverse`/`Method()`; `view.Live[*T]` → `page.URL(ctx, …)`;
+`ctrl.URL(ctx, (*C).Show, 7)`; `router.URL(ctx, "rel", …)`. Params: scalars fill path
+params in order, `nexus.P{"id": 7}` by name, a struct's `path:`/`query:` fields,
+`nexus.Query{…}`. Failures panic under nexus dev/tests (did-you-mean), log + `"#"` in
+prod. A page linking to its own route (form posting back) is a Go init cycle on the
+handle's package var — declare it, assign it in `init()`. `nexus.WithApp(ctx, app)` picks
+the app outside a request. `App.Routes()`, `nexus routes --name`, `GET /__nexus/routes`.
+`nexus docs urls`.
 
 **Inertia resources (`inertia.Resource[T](prefix)`).** A controller whose actions are
 pages and forms: Index `GET /`, New `GET /new`, Show `GET /:id`, Edit `GET /:id/edit`

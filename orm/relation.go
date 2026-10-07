@@ -25,6 +25,9 @@ type relation struct {
 	Target reflect.Type // the related model's struct type
 	Ptr    bool         // the field (or the slice's elements) is a pointer
 	Slice  bool
+	// Single is a reverse foreign key holding one row (GORM's has-one):
+	// the related model holds this row's key, at most once.
+	Single bool
 
 	fkTag, relTag, m2mTag, gormFK string
 	OnDelete                      string // a foreign key's: cascade, set_null, restrict
@@ -101,7 +104,12 @@ func (r *relation) settle(m *model) error {
 		if r.Column == "" {
 			f, ok := m.field(r.gormFK)
 			if !ok {
-				return fmt.Errorf("orm: %s.%s: foreignKey %s is no field of %s", m.Name, r.Name, r.gormFK, m.Name)
+				// GORM's has-one: the key is on the related model.
+				if m.PK == nil {
+					return fmt.Errorf("orm: %s.%s: foreignKey %s is no field of %s, and %s has no primary key for a has-one", m.Name, r.Name, r.gormFK, m.Name, m.Name)
+				}
+				r.Kind, r.Single = relRev, true
+				return nil
 			}
 			r.Column = f.Column
 		}

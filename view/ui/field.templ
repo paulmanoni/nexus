@@ -30,9 +30,10 @@ func fieldError(ctx context.Context, name, explicit string) string {
 	return view.Errors(ctx).Field(name)
 }
 
-// Field lays out a label, the control (its children: an Input, Select,
-// Textarea or any markup), help text and the error message.
-templ Field(p FieldProps) {
+// FieldWrap lays out a label, the control (its children: an Input, Select,
+// Textarea or any markup), help text and the error message. ui.Field — a
+// Form's field by name — picks the control too.
+templ FieldWrap(p FieldProps) {
 	{{ msg := fieldError(ctx, p.Name, p.Error) }}
 	<div class={ join("ui-field grid gap-1.5", p.Class) }>
 		if p.Label != "" {

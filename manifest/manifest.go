@@ -453,6 +453,9 @@ type Route struct {
 	Method     string `json:"method,omitempty"`    // REST only
 	Path       string `json:"path,omitempty"`      // REST/WS only
 	Operation  string `json:"operation,omitempty"` // GraphQL only
+	// Name is a REST route's name ("users:show") — what nexus.URL builds
+	// it by; empty when it has none.
+	Name string `json:"name,omitempty"`
 	// Auth is "none" | "optional" | "required". Empty defaults to
 	// "none" on the consumer side; emitters should set it explicitly.
 	Auth         string `json:"auth,omitempty"`

@@ -33,8 +33,8 @@ func newAddUICmd(stdout, _ io.Writer) *cobra.Command {
 		Short: "Vendor components of the view/ui kit into the project",
 		Long: `Copy components of github.com/paulmanoni/nexus/v2/view/ui into the project,
 for an app that wants to own and change them: each component's .templ file,
-the components it renders, and the kit's shared pieces (base.go, ui.go with
-Script and Loading, icon.templ, ui.js and ui.css).
+the components it renders, and the kit's shared pieces (base.go, commands.go,
+ui.go with Script and Loading, icon.templ, ui.js and ui.css).
 
 Components: ` + strings.Join(ui.ComponentNames(), ", ") + `, or all. A component
 function's name works too (datatable, rowactions, select, …).

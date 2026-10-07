@@ -360,3 +360,18 @@ func TestRoutes_CobraCommand_WiredInRoot(t *testing.T) {
 	}
 	t.Fatal("routes not registered on root")
 }
+
+func TestRoutes_NameColumnAndFilter(t *testing.T) {
+	routes := sampleRoutes()
+	routes[0].Name = "users:show"
+	routes[1].Name = "users:index"
+	path := writeRoutesJSON(t, routes)
+	stdout := new(bytes.Buffer)
+	if err := runRoutes(stdout, new(bytes.Buffer), routesOptions{filePath: path, nameFilter: "users:sh"}); err != nil {
+		t.Fatal(err)
+	}
+	out := stdout.String()
+	if !strings.Contains(out, "NAME") || !strings.Contains(out, "users:show") || strings.Contains(out, "users:index") {
+		t.Errorf("--name users:sh:\n%s", out)
+	}
+}

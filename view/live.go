@@ -62,9 +62,9 @@ func Live[T any](prefix string, gates ...nexus.MiddlewareOption) *LiveRouter[T] 
 		return l
 	}
 	def.routed = true
-	r.Rest("GET", "", def.pageHandler(), append([]nexus.RestOption{HTML(), nexus.Tag(LiveTag, LiveKey(t))}, def.liveTags()...)...)
-	r.Rest("GET", "/_live", def.socketHandler(), nexus.WithRenderer(upgraded{}), nexus.HideFromDashboard())
-	r.Rest("POST", "/_upload", uploadHandler, nexus.MaxBody(0), nexus.HideFromDashboard())
+	r.Rest("GET", "", def.pageHandler(), append([]nexus.RestOption{HTML(), nexus.Tag(LiveTag, LiveKey(t)), nexus.DefaultName("")}, def.liveTags()...)...)
+	r.Rest("GET", "/_live", def.socketHandler(), nexus.WithRenderer(upgraded{}), nexus.HideFromDashboard(), nexus.NoName())
+	r.Rest("POST", "/_upload", uploadHandler, nexus.MaxBody(0), nexus.HideFromDashboard(), nexus.NoName())
 	return l
 }
 
@@ -89,6 +89,24 @@ func LiveKey(t reflect.Type) string {
 }
 
 var liveKeys sync.Map // reflect.Type → LiveKey
+
+// URL is the live page's URL in the app serving ctx, its path parameters
+// and query filled from params as nexus.Route.Reverse does — a struct of
+// Mount's props works:
+//
+//	var UserPage = view.Live[*UserShow]("/users/:id")
+//	href={ UserPage.URL(ctx, u.ID) }
+//
+// Its route is named after the page (UserShow → "userShow"), in the
+// namespace of the routers that include it.
+func (l *LiveRouter[T]) URL(ctx context.Context, params ...any) string {
+	return l.Router.URL(ctx, "", params...)
+}
+
+// Reverse is URL with the error returned.
+func (l *LiveRouter[T]) Reverse(ctx context.Context, params ...any) (string, error) {
+	return l.Router.Reverse(ctx, "", params...)
+}
 
 // Provide adds constructors — usually T's — under the live page's module.
 func (l *LiveRouter[T]) Provide(fns ...any) *LiveRouter[T] {
@@ -325,9 +343,43 @@ func newLiveDef(t reflect.Type) (*liveDef, error) {
 
 // promoted reports whether t's method name comes from the embedded
 // LiveView — a helper, not an event.
+// promoted reports whether name reaches t's method set from something the
+// view package gave it — the embedded LiveView, or an embedded view.Form —
+// so Mount, events and the Update convention see only the page's own
+// methods.
 func promoted(t reflect.Type, name string) bool {
-	_, ok := reflect.PointerTo(liveViewType).MethodByName(name)
-	return ok
+	if _, ok := reflect.PointerTo(liveViewType).MethodByName(name); ok {
+		return true
+	}
+	st := t
+	for st.Kind() == reflect.Pointer {
+		st = st.Elem()
+	}
+	return formPromoted(st, name)
+}
+
+// formPromoted reports whether name comes from a view.Form t embeds,
+// directly or through a struct it embeds.
+func formPromoted(st reflect.Type, name string) bool {
+	for i := 0; i < st.NumField(); i++ {
+		f := st.Field(i)
+		if !f.Anonymous || f.Type.Kind() != reflect.Struct {
+			continue
+		}
+		if f.Type.PkgPath() == liveViewType.PkgPath() && f.Type.Name() == "Form" {
+			if _, ok := reflect.PointerTo(f.Type).MethodByName(name); ok {
+				return true
+			}
+			continue
+		}
+		if f.Type.PkgPath() == liveViewType.PkgPath() {
+			continue
+		}
+		if formPromoted(f.Type, name) {
+			return true
+		}
+	}
+	return false
 }
 
 // method classifies m's parameters, or reports that m is not Mount or an
@@ -369,6 +421,17 @@ type instance struct {
 	gen   uint64                // its renders so far
 	sock  *socket               // a page's connection
 	nav   *string               // a page's: where an event under way moves the browser
+	// pushed is a page's: the JS commands and browser events its views
+	// pushed (PushJS, PushEvent) for the next reply to carry.
+	pushed []any
+}
+
+// form is the instance's view.Form named name, nil when there is none.
+func (in *instance) form(name string) liveForm {
+	if in.tr == nil || name == "" {
+		return nil
+	}
+	return in.tr.forms[name]
 }
 
 // root is the page an instance belongs to: itself, or a component's page.
@@ -444,6 +507,13 @@ func (in *instance) callValues(ctx context.Context, m *liveMethod, args []reflec
 
 // mount runs Mount with props (a zero Value when it takes none).
 func (in *instance) mount(ctx context.Context, props reflect.Value) error {
+	if in.tr != nil {
+		// A fresh form's Init (its defaults) runs before the page's Mount,
+		// which may still Load over them.
+		for _, lf := range in.tr.forms {
+			lf.initOnce(ctx)
+		}
+	}
 	if in.def.mount == nil {
 		return nil
 	}
@@ -651,6 +721,14 @@ type liveEvent struct {
 	Form   map[string][]string `json:"form,omitempty"`   // a form event's fields
 	Upload *uploadMsg          `json:"upload,omitempty"` // __upload, __cancel_upload
 	URL    string              `json:"url,omitempty"`    // __nav: the URL the browser moves to
+	// FormName is the view.Form a form event is for (__form, a submit);
+	// Touched the fields of it the user has left, Fields every control the
+	// form had (so an absent checkbox reads unticked), and Then the change
+	// method __form runs after merging.
+	FormName string   `json:"formName,omitempty"`
+	Touched  []string `json:"touched,omitempty"`
+	Fields   []string `json:"fields,omitempty"`
+	Then     string   `json:"then,omitempty"`
 }
 
 type liveReply struct {
@@ -674,6 +752,9 @@ type liveReply struct {
 	// Uploads are the URLs the browser sends the files it offered to, by
 	// their refs (upload.go).
 	Uploads map[string]string `json:"uploads,omitempty"`
+	// Push is what the page's views pushed (PushJS, PushEvent), run once the
+	// reply is applied: {"js": [ops]} or {"event": name, "detail": payload}.
+	Push []any `json:"push,omitempty"`
 }
 
 // upgraded is the renderer of the socket route: the handler already took
@@ -823,6 +904,11 @@ func (d *liveDef) serve(ctx context.Context, rq liveRequest, lc *liveConn, in *i
 		return reply
 	}
 	send := func(r liveReply) bool {
+		if r.Error == "" {
+			r.Push, in.pushed = in.pushed, nil
+		} else {
+			in.pushed = nil
+		}
 		b, err := marshal(r)
 		if err != nil {
 			return false
@@ -1025,23 +1111,101 @@ func (d *liveDef) event(ctx context.Context, in *instance, ev liveEvent, render 
 		}
 		d, in = c.setup.def, c.in
 	}
+	if ev.Event == "__form" {
+		// A view.Form's change: lay the browser's values over the form's,
+		// re-check them, and run the form's change method when it has one.
+		f := in.form(ev.FormName)
+		if f == nil {
+			return liveReply{Ref: ev.Ref, Error: fmt.Sprintf("no view.Form %q on the page", ev.FormName)}
+		}
+		f.change(ctx, ev.Form, ev.Touched, ev.Fields)
+		if ev.Then != "" {
+			m, ok := d.events[ev.Then]
+			if !ok || !isExported(ev.Then) {
+				return liveReply{Ref: ev.Ref, Error: fmt.Sprintf("no event %q", ev.Then)}
+			}
+			var args []reflect.Value
+			if len(m.args) == 1 {
+				args = []reflect.Value{f.valueArg()}
+			}
+			if err := in.callValues(ctx, m, args); err != nil {
+				if errs, ok := validation(err); ok {
+					f.addErrs(errs)
+				} else {
+					return liveReply{Ref: ev.Ref, Error: fmt.Sprintf("%s: %v", ev.Then, nexus.ErrorOf(err))}
+				}
+			}
+		}
+		return render(ev.Ref, false)
+	}
+	if ev.Event == "__save" {
+		// The form's own Save method takes the submit: same gating as a
+		// page submit — it only runs when every rule passes.
+		lf := in.form(ev.FormName)
+		if lf == nil {
+			return liveReply{Ref: ev.Ref, Error: fmt.Sprintf("no view.Form %q on the page", ev.FormName)}
+		}
+		lf.change(ctx, ev.Form, ev.Touched, ev.Fields)
+		if lf.anyErrs() {
+			lf.submitFailed(nil)
+			page.setErrs(lf.errors())
+			return render(ev.Ref, true)
+		}
+		err, ok := lf.saveSelf(ctx)
+		if !ok {
+			return liveReply{Ref: ev.Ref, Error: fmt.Sprintf("view.Form %q has no Save method", ev.FormName)}
+		}
+		if errs, isValidation := validation(err); isValidation {
+			lf.submitFailed(errs)
+			page.setErrs(lf.errors())
+			return render(ev.Ref, true)
+		}
+		if err != nil {
+			return liveReply{Ref: ev.Ref, Error: fmt.Sprintf("Save: %v", nexus.ErrorOf(err))}
+		}
+		lf.submitOK()
+		page.setErrs(nil)
+		return render(ev.Ref, false)
+	}
 	m, known := d.events[ev.Event]
 	if !known || !isExported(ev.Event) {
 		return liveReply{Ref: ev.Ref, Error: fmt.Sprintf("no event %q", ev.Event)}
 	}
 	var err error
+	var lf liveForm
 	if ev.Form != nil {
 		if len(m.args) != 1 {
 			return liveReply{Ref: ev.Ref, Error: fmt.Sprintf("%s: a form event takes one argument, the form struct", ev.Event)}
+		}
+		// A view.Form's submit: it takes the values first — merged, checked
+		// against every rule, its Validate included — and the event only
+		// runs when they all pass, so it never sees invalid values.
+		if lf = in.form(ev.FormName); lf != nil {
+			lf.change(ctx, ev.Form, ev.Touched, ev.Fields)
+			if lf.anyErrs() {
+				lf.submitFailed(nil)
+				page.setErrs(lf.errors())
+				return render(ev.Ref, true)
+			}
 		}
 		arg, berr := bindForm(m.fn.Type().In(m.args[0]), ev.Form)
 		if berr != nil {
 			return liveReply{Ref: ev.Ref, Error: fmt.Sprintf("%s: %v", ev.Event, berr)}
 		}
+		if lf != nil && lf.valueArg().Type() == m.fn.Type().In(m.args[0]) {
+			arg = lf.valueArg() // the merged values, not the raw fields
+		}
 		// The form's validate: tags run before the event, as on every
 		// transport; a failure re-renders like an Invalid() the event returns.
 		if err = nexus.Validate(arg.Interface()); err == nil {
 			err = in.callValues(ctx, m, []reflect.Value{arg})
+		}
+		if lf != nil {
+			if errs, ok := validation(err); ok {
+				lf.submitFailed(errs)
+			} else if err == nil {
+				lf.submitOK()
+			}
 		}
 	} else {
 		err = in.call(ctx, m, ev.Args)

@@ -27,7 +27,7 @@ func TestAddUI(t *testing.T) {
 		got = append(got, filepath.Base(f))
 	}
 	sort.Strings(got)
-	want := "base.go button.templ field.templ icon.templ menu.templ table.templ ui.css ui.go ui.js"
+	want := "base.go button.templ commands.go field.templ icon.templ menu.templ table.templ ui.css ui.go ui.js"
 	if strings.Join(got, " ") != want {
 		t.Fatalf("wrote %v, want %s", got, want)
 	}

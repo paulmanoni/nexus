@@ -122,15 +122,20 @@ func buildModel(t reflect.Type, table string) (*model, error) {
 	if err := collect(m, t, nil, ""); err != nil {
 		return nil, err
 	}
+	keys := 0
 	for _, f := range m.Fields {
 		if f.PK {
-			if m.PK != nil {
-				return nil, fmt.Errorf("orm: %s has two primary keys, %s and %s", m.Name, m.PK.Name, f.Name)
-			}
+			keys++
 			m.PK = f
 		}
 	}
-	if m.PK == nil {
+	// A composite key (a table between two others) has no one column to
+	// find a row by: such a model is filtered, inserted and deleted by
+	// QuerySet, never saved or removed as a row.
+	if keys > 1 {
+		m.PK = nil
+	}
+	if m.PK == nil && keys == 0 {
 		if f, ok := m.byName["id"]; ok {
 			f.PK = true
 			m.PK = f

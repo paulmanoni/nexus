@@ -377,3 +377,27 @@ templ (b *Board) Render() {
 		t.Errorf("generated Go:\n%s", got)
 	}
 }
+
+// JS commands are scripts too: inside templ.Attributes they become text.
+func TestJSInAttributes(t *testing.T) {
+	src := `package app
+
+import (
+	"github.com/paulmanoni/nexus/v2/view"
+	"example.com/ui/button"
+)
+
+templ (b *Board) Render() {
+	@button.Button(button.Props{Attributes: templ.Attributes{"onclick": view.JS(view.Show("#menu"), view.Push(b.Open))}}) {
+		menu
+	}
+}
+`
+	res, err := File("app/board.templ", src, &Package{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := string(res.Go); !strings.Contains(got, `templ.Attributes{"onclick": view.ScriptAttr(view.JS(view.Show("#menu"), view.Push(b.Open)))}`) {
+		t.Errorf("generated Go:\n%s", got)
+	}
+}

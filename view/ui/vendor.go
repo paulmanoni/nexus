@@ -10,12 +10,13 @@ import (
 // The kit's sources, for `nexus add ui`: an app that wants to own a
 // component gets a copy of its template and of what it needs.
 //
-//go:embed *.templ base.go ui.go ui.js ui.css
+//go:embed *.templ base.go commands.go ui.go ui.js ui.css
 var sources embed.FS
 
-// core is what every vendored component needs: the helpers, the assets
-// and Script/Loading, and the icons.
-var core = []string{"base.go", "ui.go", "ui.js", "ui.css", "icon.templ"}
+// core is what every vendored component needs: the helpers, the JS
+// commands dialogs and tabs run, the assets and Script/Loading, and the
+// icons.
+var core = []string{"base.go", "commands.go", "ui.go", "ui.js", "ui.css", "icon.templ"}
 
 // components maps a component name to its template and the components it
 // renders.
@@ -25,6 +26,7 @@ var components = map[string]struct {
 }{
 	"button": {"button.templ", nil},
 	"field":  {"field.templ", nil},
+	"forms":  {"formfields.templ", []string{"field"}},
 	"tabs":   {"tabs.templ", nil},
 	"dialog": {"dialog.templ", nil},
 	"menu":   {"menu.templ", []string{"button"}},
@@ -42,6 +44,8 @@ var aliases = map[string]string{
 	"tabpanel": "tabs", "dropdown": "menu", "menubutton": "menu", "rowactions": "menu",
 	"datatable": "table", "tablerow": "table", "emptystate": "table", "searchinput": "table",
 	"skeleton": "loader", "pageheader": "header",
+	"textfield": "forms", "textareafield": "forms", "selectfield": "forms", "checkboxfield": "forms",
+	"switchfield": "forms", "submitbutton": "forms",
 }
 
 // ComponentNames lists what Vendor accepts (aliases aside), sorted.

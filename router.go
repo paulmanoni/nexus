@@ -40,6 +40,8 @@ type Router struct {
 	raw      []Option                                                // Provide/Register — grouped, never gated
 	children []*Router
 	parent   string
+	// up is the router that includes this one.
+	up       *Router
 	errs     []error
 	expanded bool
 
@@ -161,6 +163,7 @@ func (r *Router) Include(child *Router) *Router {
 		r.errs = append(r.errs, fmt.Errorf("nexus: router %q is already included in %q", child.name, child.parent))
 	default:
 		child.parent = r.name
+		child.up = r
 		r.children = append(r.children, child)
 	}
 	return r
@@ -280,10 +283,18 @@ func (r *Router) expand(parentPrefix string, inherited []MiddlewareOption) Optio
 	case full != "":
 		opts = append(opts, Path(full))
 	}
+	ns := r.namespace()
 	for _, b := range r.builders {
-		opts = append(opts, b(full, sh))
+		op := b(full, sh)
+		if a, ok := op.(namespaceAnnotator); ok {
+			a.setNamespace(ns)
+		}
+		opts = append(opts, op)
 	}
 	for _, op := range r.attached {
+		if a, ok := op.(namespaceAnnotator); ok {
+			a.setNamespace(ns)
+		}
 		if a, ok := op.(sharedMiddlewareAnnotator); ok {
 			// Prepend in reverse so the shared options run in declaration
 			// order, ahead of the op's own.
@@ -304,6 +315,19 @@ func (r *Router) expand(parentPrefix string, inherited []MiddlewareOption) Optio
 	}
 	return Options(out...)
 }
+
+// namespace is the prefix of the route names the router's routes take: the
+// names of the routers that include it, then its own ("v1:billing").
+func (r *Router) namespace() string {
+	if r.up == nil {
+		return r.name
+	}
+	return joinName(r.up.namespace(), r.name)
+}
+
+// namespaceAnnotator is implemented by routes, which a router stamps with
+// its namespace as it expands.
+type namespaceAnnotator interface{ setNamespace(string) }
 
 // sharedMiddlewareAnnotator lets a router apply its shared options to an op
 // that was already constructed (the decorator form registers ops before the
@@ -431,9 +455,11 @@ func assembleRouters() []Option {
 // bundle, so shared middleware runs in declaration order ahead of the op's
 // own — the same order the builder path produces.
 
-func (r *restOption) prependSharedMiddleware(m MiddlewareOption) {
-	r.cfg.bundles = append([]middleware.Middleware{m.mw}, r.cfg.bundles...)
-	stampRequiresTag(&r.cfg.baseEndpointConfig, m.mw.Requires)
+func (r *Route) prependSharedMiddleware(m MiddlewareOption) {
+	r.each(func(x *Route) {
+		x.cfg.bundles = append([]middleware.Middleware{m.mw}, x.cfg.bundles...)
+		stampRequiresTag(&x.cfg.baseEndpointConfig, m.mw.Requires)
+	})
 }
 
 func (g *gqlFieldOption) prependSharedMiddleware(m MiddlewareOption) {

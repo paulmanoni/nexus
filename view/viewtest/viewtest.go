@@ -23,7 +23,8 @@
 // the page explicitly.
 //
 // It is not a browser: there is no layout or CSS (Visible means no hidden
-// ancestor), only the view runtime's scripts run, and islands don't mount
+// ancestor and no display: none), only the view runtime's scripts and the
+// component kit's (view/ui) run, and islands don't mount
 // (there is no Vite build to load them from). viewtest checks behaviour;
 // layout needs a real browser.
 package viewtest
@@ -37,6 +38,7 @@ import (
 	"net/http/httptest"
 	"net/url"
 	"reflect"
+	"slices"
 	"strings"
 	"sync"
 	"testing"
@@ -255,8 +257,8 @@ func (p *Page) load(n navigation) {
 	}
 	for _, src := range srcs.Export().([]any) {
 		u, err := url.Parse(src.(string))
-		if err != nil || (u.Path != "/_view/twins.js" && u.Path != "/_view/runtime.js") {
-			continue // only the view runtime runs
+		if err != nil || (u.Path != "/_view/twins.js" && u.Path != "/_view/runtime.js" && u.Path != "/_view/ui/ui.js") {
+			continue // only the view runtime and the kit's script run
 		}
 		abs, _ := url.Parse(res.URL)
 		js, err := p.request(http.MethodGet, abs.ResolveReference(u).String(), nil, "")
@@ -588,6 +590,21 @@ func (p *Page) URL() string { return p.call("url").String() }
 // HTML is the page's document as it stands, serialised.
 func (p *Page) HTML() string { return p.call("html").String() }
 
+// Eval runs script in the page and returns its value as a string — to
+// listen for an event the page dispatches, say. The page settles first.
+func (p *Page) Eval(script string) string {
+	p.t.Helper()
+	p.settle()
+	v, err := p.b.VM.RunString(script)
+	if err != nil {
+		p.t.Fatalf("viewtest: Eval: %v", err)
+	}
+	if v == nil || goja.IsUndefined(v) || goja.IsNull(v) {
+		return ""
+	}
+	return v.String()
+}
+
 // Console is what the page logged ("level: message").
 func (p *Page) Console() []string {
 	p.mu.Lock()
@@ -747,6 +764,32 @@ func (e *Expectation) NoAttr(name string) *Expectation {
 	return e.element("not to have "+name, func(el goja.Value) (bool, string) {
 		v := e.p.call("attr", el, name)
 		return goja.IsNull(v), fmt.Sprintf("%s=%q", name, v.String())
+	})
+}
+
+// HasClass expects the element's class attribute to list class.
+func (e *Expectation) HasClass(class string) *Expectation {
+	e.p.t.Helper()
+	return e.element(fmt.Sprintf("to have class %q", class), func(el goja.Value) (bool, string) {
+		v := e.p.call("attr", el, "class")
+		got := ""
+		if !goja.IsNull(v) {
+			got = v.String()
+		}
+		return slices.Contains(strings.Fields(got), class), fmt.Sprintf("class=%q", got)
+	})
+}
+
+// NoClass expects the element's class attribute not to list class.
+func (e *Expectation) NoClass(class string) *Expectation {
+	e.p.t.Helper()
+	return e.element(fmt.Sprintf("not to have class %q", class), func(el goja.Value) (bool, string) {
+		v := e.p.call("attr", el, "class")
+		got := ""
+		if !goja.IsNull(v) {
+			got = v.String()
+		}
+		return !slices.Contains(strings.Fields(got), class), fmt.Sprintf("class=%q", got)
 	})
 }
 

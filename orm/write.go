@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"log/slog"
 	"reflect"
 	"slices"
 	"strings"
@@ -54,7 +55,7 @@ func stamp(f *field) any {
 func (m *Manager[T]) insertable(v reflect.Value) []*field {
 	var out []*field
 	for _, f := range m.meta.Fields {
-		if f.PK && peek(v, f.Index, f.Type).IsZero() {
+		if f == m.meta.PK && peek(v, f.Index, f.Type).IsZero() {
 			continue
 		}
 		out = append(out, f)
@@ -137,6 +138,27 @@ func (m *Manager[T]) BulkCreate(ctx context.Context, rows []*T) error {
 			}
 		}
 	}
+	if _, ok := m.mirrorOf(ctx); ok {
+		// The rows as written now, keys included: the caller may change
+		// them before the mirror writes after the commit.
+		snap := make([]*T, len(rows))
+		for i, row := range rows {
+			cp := *row
+			snap[i] = &cp
+		}
+		m.mirrored(ctx, c, "create", func(ctx context.Context) error {
+			mc, err := m.conn(ctx)
+			if err != nil {
+				return err
+			}
+			for batch := range slices.Chunk(snap, per) {
+				if err := m.insert(ctx, mc, batch); err != nil {
+					return err
+				}
+			}
+			return nil
+		})
+	}
 	for _, row := range rows {
 		if err := m.afterCreate(ctx, row); err != nil {
 			return err
@@ -165,7 +187,7 @@ func (m *Manager[T]) insert(ctx context.Context, c conn, rows []*T) error {
 		if w != nil {
 			vals = w.Values(row, vals)
 			for i, f := range m.meta.Fields {
-				if !(skipPK && f.PK) {
+				if !(skipPK && f == m.meta.PK) {
 					marks = append(marks, b.arg(vals[i]))
 				}
 			}
@@ -180,6 +202,9 @@ func (m *Manager[T]) insert(ctx context.Context, c conn, rows []*T) error {
 	s := "INSERT INTO " + b.d.Quote(m.meta.Table) + " (" + strings.Join(cols, ", ") + ") VALUES " + strings.Join(tuples, ", ")
 	pk := m.meta.PK
 	needKey := pk != nil && !slices.Contains(fields, pk)
+	if needKey && c.d.Name() == "postgres" {
+		m.syncSequence(ctx, c)
+	}
 	if needKey && c.d.Returning() {
 		rs, err := c.query(ctx, s+" RETURNING "+b.bare(pk), b.args())
 		if err != nil {
@@ -213,6 +238,25 @@ func (m *Manager[T]) insert(ctx context.Context, c conn, rows []*T) error {
 		}
 	}
 	return nil
+}
+
+// syncSequence moves a Postgres table's key sequence past its highest
+// key, once per database in the process, before the first insert that
+// takes a key from it: rows written with their keys (a mirror, a copy
+// from another database) don't move the sequence, so a table cut over to
+// Postgres would otherwise hand out keys it already holds.
+func (m *Manager[T]) syncSequence(ctx context.Context, c conn) {
+	if _, loaded := m.synced.LoadOrStore(c.db, true); loaded {
+		return
+	}
+	table := strings.ReplaceAll(c.d.Quote(m.meta.Table), "'", "''")
+	pk := c.d.Quote(m.meta.PK.Column)
+	q := "SELECT setval(pg_get_serial_sequence('" + table + "', '" + strings.ReplaceAll(m.meta.PK.Column, "'", "''") + "'), COALESCE(MAX(" + pk + "), 0) + 1, false) FROM " + c.d.Quote(m.meta.Table) +
+		" WHERE pg_get_serial_sequence('" + table + "', '" + strings.ReplaceAll(m.meta.PK.Column, "'", "''") + "') IS NOT NULL"
+	if _, err := c.exec(ctx, q, nil); err != nil {
+		m.synced.Delete(c.db)
+		slog.WarnContext(ctx, "orm: moving the key sequence past the table's keys", "table", m.meta.Table, "err", err)
+	}
 }
 
 // Save writes every field of row to its row, found by primary key; auto_now

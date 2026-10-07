@@ -101,9 +101,11 @@ type App struct {
 	// context; nil (one atomic load per request) when nothing does.
 	requestValues   atomic.Pointer[[][2]any]
 	requestValuesMu sync.Mutex
-	cronSched       *cron.Scheduler
-	rlStore         ratelimit.Store
-	metricsStore    metrics.Store
+	// routes are the mounted REST routes by handle and name, for URL.
+	routes       routeTable
+	cronSched    *cron.Scheduler
+	rlStore      ratelimit.Store
+	metricsStore metrics.Store
 	// liveNotifier signals "registry state changed" to the dashboard's
 	// live snapshot stream. Wired in New so registry mutations push
 	// snapshots instead of poll.
@@ -369,6 +371,7 @@ func New(cfg config.Runtime) *App {
 	if traceCapacity > 0 {
 		a.bus = trace.NewBus(traceCapacity)
 	}
+	a.SetRequestValue(appCtxKey{}, a)
 
 	a.liveNotifier = notify.New()
 	// NOTE: we deliberately do NOT forward trace.Bus events into the

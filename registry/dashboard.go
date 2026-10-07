@@ -10,6 +10,7 @@ import (
 // supplied dashboard router group:
 //
 //	GET /endpoints    → {services, endpoints}
+//	GET /routes       → {routes}: every REST route with its name
 //	GET /resources    → {resources}
 //	GET /workers      → {workers}
 //	GET /middlewares  → {middlewares, global}
@@ -23,6 +24,9 @@ func MountDashboard(g httpx.Group, reg *Registry) {
 			"services":  reg.Services(),
 			"endpoints": reg.VisibleEndpoints(),
 		})
+	})
+	g.GET("/routes", func(c *httpx.Ctx) {
+		c.JSON(http.StatusOK, httpx.H{"routes": reg.Routes()})
 	})
 	g.GET("/resources", func(c *httpx.Ctx) {
 		c.JSON(http.StatusOK, httpx.H{"resources": reg.Resources()})

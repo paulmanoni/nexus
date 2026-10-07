@@ -191,3 +191,52 @@ templ (a *Archive) Render() {
 		}
 	}
 }
+
+// p.Edit.F("name") names a field of the form's struct: a misspelt one is
+// an error at generate time, with what it might have meant.
+func TestFormFieldNames(t *testing.T) {
+	root := t.TempDir()
+	files := map[string]string{
+		"go.mod":  "module example.com/app\n\ngo 1.26\n",
+		"main.go": "package main\n\nfunc main() {}\n",
+		"users/users.go": `package users
+
+import "github.com/paulmanoni/nexus/v2/view"
+
+type UserForm struct {
+	view.Form
+	Name  string ` + "`form:\"name\" validate:\"required\"`" + `
+	Email string ` + "`form:\"email\"`" + `
+}
+
+type Users struct {
+	view.LiveView
+	Edit UserForm
+}
+`,
+		"users/users.templ": `package users
+
+import "github.com/paulmanoni/nexus/v2/view"
+
+templ (p *Users) Render() {
+	<p>{ p.Edit.F("name").Value }</p>
+	<p>{ p.Edit.F("Email").Value }</p>
+	<p>{ p.Edit.F("emial").Value }</p>
+	<p>{ view.Errors(ctx).Field("x") }</p>
+}
+`,
+	}
+	writeTree(t, root, files)
+	_, err := GenerateWith(root, Options{})
+	if err == nil || !strings.Contains(err.Error(), `p.Edit.F("emial"): UserForm has no form field "emial" — its fields are name, email (did you mean "email"?)`) {
+		t.Fatalf("err = %v", err)
+	}
+	if !strings.Contains(err.Error(), "users.templ:8:") {
+		t.Errorf("not at the call: %v", err)
+	}
+	files["users/users.templ"] = strings.Replace(files["users/users.templ"], `"emial"`, `"email"`, 1)
+	writeTree(t, root, files)
+	if _, err := GenerateWith(root, Options{}); err != nil {
+		t.Fatal(err)
+	}
+}

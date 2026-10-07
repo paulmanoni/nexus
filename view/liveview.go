@@ -1,7 +1,9 @@
 package view
 
 import (
+	"encoding/json"
 	"fmt"
+	"log"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
@@ -133,6 +135,45 @@ func (v *LiveView) push(href string) {
 			*p.nav = href
 		}
 	}
+}
+
+// PushJS runs commands in the browser once the reply to the event under way
+// (or to the Info, or the connected Mount) is applied — close a dialog after
+// a save, focus a field, flash a row:
+//
+//	func (p *Orders) Save(ctx context.Context, f OrderForm) error {
+//		…
+//		p.PushJS(view.Hide("#order-dialog"), view.Transition("flash", "#row-"+id))
+//		return nil
+//	}
+//
+// A selector "" is the page's live root. An event that fails sends none of
+// what it pushed; the first, server-rendered load has no browser to run
+// them in and drops them.
+func (v *LiveView) PushJS(ops ...JSOp) {
+	v.pushOut(map[string]any{"js": opList(ops)})
+}
+
+// PushEvent dispatches a CustomEvent named name on window once the reply is
+// applied, with payload (JSON-encoded) as its detail — for islands and page
+// scripts: window.addEventListener("orders:saved", e => …e.detail…).
+func (v *LiveView) PushEvent(name string, payload any) {
+	if _, err := json.Marshal(payload); err != nil {
+		log.Printf("view: PushEvent(%q): the payload is not JSON-encodable: %v", name, err)
+		return
+	}
+	v.pushOut(map[string]any{"event": name, "detail": payload})
+}
+
+func (v *LiveView) pushOut(item any) {
+	if v.in == nil {
+		return
+	}
+	p := v.in.root()
+	if p.sock == nil || !p.sock.connected {
+		return
+	}
+	p.pushed = append(p.pushed, item)
 }
 
 // PutFlash sets a message of kind ("info", "error", …) for the next

@@ -531,6 +531,7 @@ func routeFromEndpoint(e registry.Endpoint) (manifest.Route, bool) {
 		r.Kind = "rest"
 		r.Method = e.Method
 		r.Path = e.Path
+		r.Name = e.Route
 		r.ID = mod + ".rest." + e.Method + "." + e.Path
 	case registry.WebSocket:
 		r.Kind = "ws"

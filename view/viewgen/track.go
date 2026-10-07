@@ -4,8 +4,10 @@ import (
 	"fmt"
 	"go/scanner"
 	"go/token"
+	"maps"
 	"slices"
 	"sort"
+	"strconv"
 	"strings"
 
 	"github.com/a-h/templ/parser/v2"
@@ -30,6 +32,13 @@ type Fields struct {
 	Assigns []string
 	Plain   []Field
 	Embeds  []Field // structs embedded by value: their fields are the struct's
+	// Forms are the form fields (a struct embedding view.Form), by field
+	// name: the form struct's type. IsForm marks such a struct itself.
+	Forms  map[string]string
+	IsForm bool
+	// FormNames are what a view.Form of this struct calls its fields: the
+	// form: tags, and the Go names.
+	FormNames []string
 }
 
 // Field is a struct field that isn't an Assign or a signal — or, among
@@ -60,7 +69,7 @@ func (p *Package) flatten(name string, seen map[string]bool) *Fields {
 		return nil
 	}
 	seen[p.ImportPath+"."+name] = true
-	out := &Fields{Assigns: slices.Clone(base.Assigns), Plain: slices.Clone(base.Plain)}
+	out := &Fields{Assigns: slices.Clone(base.Assigns), Plain: slices.Clone(base.Plain), Forms: maps.Clone(base.Forms), FormNames: base.FormNames}
 	for _, e := range base.Embeds {
 		var inner *Fields
 		switch {
@@ -75,6 +84,12 @@ func (p *Package) flatten(name string, seen map[string]bool) *Fields {
 		}
 		out.Assigns = append(out.Assigns, inner.Assigns...)
 		out.Plain = append(out.Plain, inner.Plain...)
+		for k, v := range inner.Forms {
+			if out.Forms == nil {
+				out.Forms = map[string]string{}
+			}
+			out.Forms[k] = v
+		}
 	}
 	return out
 }
@@ -104,6 +119,9 @@ func (c *component) trackWarnings(t *parser.HTMLTemplate) {
 			a, b, n := toks[i], toks[i+1], toks[i+2]
 			if a.tok != token.IDENT || b.tok != token.PERIOD || n.tok != token.IDENT {
 				continue
+			}
+			if c.recvName != "" && a.lit == c.recvName && info.Forms[n.lit] != "" {
+				c.checkFormField(info.Forms[n.lit], n.lit, toks[i+3:])
 			}
 			switch {
 			case c.recvName != "" && a.lit == c.recvName && plain[n.lit]:
@@ -183,6 +201,61 @@ func (f *fileRewriter) isState(typ string) bool {
 		return path != "" && f.pkg.Lookup != nil && len(f.pkg.Lookup(path, name)) > 0
 	}
 	return len(f.pkg.States[typ]) > 0
+}
+
+// checkFormField checks p.Edit.F("name") against the form struct typ: a
+// name it has no field by is an error, where the struct is the package's.
+func (c *component) checkFormField(typ, field string, rest []goTok) {
+	if len(rest) < 5 || rest[0].tok != token.PERIOD || rest[1].lit != "F" || rest[2].tok != token.LPAREN || rest[3].tok != token.STRING || rest[4].tok != token.RPAREN {
+		return
+	}
+	st := c.pkg.AllStructs[typ]
+	if st == nil {
+		return
+	}
+	name, err := strconv.Unquote(rest[3].lit)
+	if err != nil || slices.Contains(st.FormNames, name) {
+		return
+	}
+	msg := fmt.Sprintf("%s.%s.F(%q): %s has no form field %q — its fields are %s", c.recvName, field, name, typ, name, strings.Join(formTagNames(st), ", "))
+	if near := nearest(name, st.FormNames); near != "" {
+		msg += fmt.Sprintf(" (did you mean %q?)", near)
+	}
+	c.errs = append(c.errs, &PositionError{File: c.file, Line: rest[3].line, Col: rest[3].col, Msg: msg})
+}
+
+// formTagNames are a form struct's form: names (the first half of FormNames).
+func formTagNames(f *Fields) []string { return f.FormNames[:len(f.FormNames)/2] }
+
+// nearest is the name in names closest to s, within two edits.
+func nearest(s string, names []string) string {
+	best, bestD := "", 3
+	for _, n := range names {
+		if d := editDistance(strings.ToLower(s), strings.ToLower(n)); d < bestD {
+			best, bestD = n, d
+		}
+	}
+	return best
+}
+
+func editDistance(a, b string) int {
+	prev := make([]int, len(b)+1)
+	for j := range prev {
+		prev[j] = j
+	}
+	for i := 1; i <= len(a); i++ {
+		cur := make([]int, len(b)+1)
+		cur[0] = i
+		for j := 1; j <= len(b); j++ {
+			cost := 1
+			if a[i-1] == b[j-1] {
+				cost = 0
+			}
+			cur[j] = min(prev[j]+1, cur[j-1]+1, prev[j-1]+cost)
+		}
+		prev = cur
+	}
+	return prev[len(b)]
 }
 
 func (f *fileRewriter) warn(line, col int, format string, args ...any) {

@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"iter"
+	"maps"
 	"reflect"
 	"slices"
 	"strings"
@@ -305,6 +306,20 @@ func (qs QuerySet[T]) Unfiltered() QuerySet[T] {
 	return qs.with(func(q *query) { q.every = true })
 }
 
+// keys is the primary keys of the rows qs matches.
+func (qs QuerySet[T]) keys(ctx context.Context) ([]any, error) {
+	rows, err := qs.All(ctx)
+	if err != nil {
+		return nil, err
+	}
+	pk := qs.q.m.PK
+	out := make([]any, len(rows))
+	for i := range rows {
+		out[i] = value(peek(reflect.ValueOf(&rows[i]).Elem(), pk.Index, pk.Type))
+	}
+	return out, nil
+}
+
 // guardEvery refuses a write that would reach every row by accident.
 func (qs QuerySet[T]) guardEvery(op, where string) error {
 	if where != "" || qs.q.every {
@@ -331,13 +346,23 @@ func (qs QuerySet[T]) Delete(ctx context.Context) (int64, error) {
 	if err := qs.guardEvery("Delete", w); err != nil {
 		return 0, err
 	}
+	var gone []T
+	if !quiet(ctx) && qs.m.listening() {
+		if gone, err = qs.All(ctx); err != nil {
+			return 0, err
+		}
+	}
 	res, err := c.exec(ctx, "DELETE FROM "+b.d.Quote(qs.q.m.Table)+w, b.args())
 	if err != nil {
 		return 0, qs.m.mapErr(c, err)
 	}
+	qs.m.mirrored(ctx, c, "delete", func(ctx context.Context) error {
+		_, err := qs.Delete(ctx)
+		return err
+	})
 	n, err := res.RowsAffected()
 	if err == nil && n > 0 && !quiet(ctx) {
-		qs.m.changed(ctx, c, Change[T]{Kind: BulkDeleted, Count: n})
+		qs.m.changed(ctx, c, Change[T]{Kind: BulkDeleted, Count: n, Rows: gone})
 	}
 	return n, err
 }
@@ -377,9 +402,15 @@ func (qs QuerySet[T]) Update(ctx context.Context, values Set) (int64, error) {
 		}
 		sets = append(sets, b.bare(f)+" = "+val)
 	}
+	stamped := values
 	for _, f := range m.Fields {
 		if f.AutoNow && !seen[f] {
-			sets = append(sets, b.bare(f)+" = "+b.arg(stamp(f)))
+			now := stamp(f)
+			sets = append(sets, b.bare(f)+" = "+b.arg(now))
+			if len(stamped) == len(values) {
+				stamped = maps.Clone(values)
+			}
+			stamped[f.Name] = now
 		}
 	}
 	if len(sets) == 0 {
@@ -395,13 +426,23 @@ func (qs QuerySet[T]) Update(ctx context.Context, values Set) (int64, error) {
 	if err := qs.guardEvery("Update", w); err != nil {
 		return 0, err
 	}
+	var touched []any
+	if !quiet(ctx) && qs.m.listening() && m.PK != nil {
+		if touched, err = qs.keys(ctx); err != nil {
+			return 0, err
+		}
+	}
 	res, err := c.exec(ctx, "UPDATE "+b.d.Quote(m.Table)+" SET "+strings.Join(sets, ", ")+w, b.args())
 	if err != nil {
 		return 0, qs.m.mapErr(c, err)
 	}
+	qs.m.mirrored(ctx, c, "update", func(ctx context.Context) error {
+		_, err := qs.Update(ctx, stamped)
+		return err
+	})
 	n, err := res.RowsAffected()
 	if err == nil && n > 0 && !quiet(ctx) {
-		qs.m.changed(ctx, c, Change[T]{Kind: BulkUpdated, Count: n})
+		qs.m.changed(ctx, c, Change[T]{Kind: BulkUpdated, Count: n, Keys: touched})
 	}
 	return n, err
 }

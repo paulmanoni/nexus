@@ -35,6 +35,7 @@ type routesOptions struct {
 	moduleFilter string
 	methodFilter string // case-insensitive
 	pathFilter   string // substring match
+	nameFilter   string // substring match on the route name
 	authFilter   string // "none" | "optional" | "required"
 }
 
@@ -94,6 +95,8 @@ Filters (AND-combined):
   --module <name>                 (exact match)
   --method GET|POST|...           (case-insensitive)
   --path /users                   (substring match)
+  --name users:                   (substring match on the route name —
+                                    what nexus.URL builds a route by)
   --auth none|optional|required
 
 An unrecognized --kind / --method / --auth value is an error listing the
@@ -116,6 +119,7 @@ Manifest.Routes slice verbatim for machine consumers.`,
 	cmd.Flags().StringVar(&opts.moduleFilter, "module", "", "only routes owned by this module")
 	cmd.Flags().StringVar(&opts.methodFilter, "method", "", "only routes with this HTTP method (case-insensitive)")
 	cmd.Flags().StringVar(&opts.pathFilter, "path", "", "only routes whose path contains this substring")
+	cmd.Flags().StringVar(&opts.nameFilter, "name", "", "only routes whose name (what nexus.URL builds them by) contains this substring")
 	cmd.Flags().StringVar(&opts.authFilter, "auth", "", "only routes with this auth setting (none, optional, required)")
 
 	var tomlIn bool
@@ -256,6 +260,7 @@ func describeFilters(opts routesOptions) string {
 		{"--module", opts.moduleFilter},
 		{"--method", opts.methodFilter},
 		{"--path", opts.pathFilter},
+		{"--name", opts.nameFilter},
 		{"--auth", opts.authFilter},
 	} {
 		if f.val != "" {
@@ -321,7 +326,7 @@ func normalizeTransport(t string) string {
 // simply declares no auth).
 func applyFilters(routes []nexusmanifest.Route, opts routesOptions) []nexusmanifest.Route {
 	if opts.kindFilter == "" && opts.moduleFilter == "" && opts.methodFilter == "" &&
-		opts.pathFilter == "" && opts.authFilter == "" {
+		opts.pathFilter == "" && opts.authFilter == "" && opts.nameFilter == "" {
 		return routes
 	}
 	out := routes[:0]
@@ -339,6 +344,9 @@ func applyFilters(routes []nexusmanifest.Route, opts routesOptions) []nexusmanif
 			continue
 		}
 		if opts.authFilter != "" && authLabel(r.Auth) != opts.authFilter {
+			continue
+		}
+		if opts.nameFilter != "" && !strings.Contains(r.Name, opts.nameFilter) {
 			continue
 		}
 		out = append(out, r)
@@ -443,7 +451,7 @@ func emitRoutesTable(stdout io.Writer, source string, routes []nexusmanifest.Rou
 	fmt.Fprintf(stdout, "nexus routes: %s (%d route%s)\n\n", source, len(routes), pluralize("", len(routes)))
 
 	w := tabwriter.NewWriter(stdout, 0, 0, 2, ' ', 0)
-	fmt.Fprintln(w, "KIND\tMETHOD\tPATH / OPERATION\tMODULE\tAUTH")
+	fmt.Fprintln(w, "KIND\tMETHOD\tPATH / OPERATION\tNAME\tMODULE\tAUTH")
 	for _, r := range routes {
 		target := r.Path
 		if target == "" {
@@ -453,10 +461,11 @@ func emitRoutesTable(stdout io.Writer, source string, routes []nexusmanifest.Rou
 		if method == "" {
 			method = "-"
 		}
-		fmt.Fprintf(w, "%s\t%s\t%s\t%s\t%s\n",
+		fmt.Fprintf(w, "%s\t%s\t%s\t%s\t%s\t%s\n",
 			emptyDash(r.Kind),
 			method,
 			emptyDash(target),
+			emptyDash(r.Name),
 			emptyDash(r.Module),
 			authLabel(r.Auth),
 		)

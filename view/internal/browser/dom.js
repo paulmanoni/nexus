@@ -1295,6 +1295,14 @@
   G.location = location;
   G.history = history;
   G.navigator = { userAgent: "nexus-viewtest", onLine: true, language: "en" };
+  // MutationObserver is inert: the kit's script (ui.js) boots, and what it
+  // watches the page for (toasts, loading) is not seen in tests.
+  G.MutationObserver = class {
+    constructor(fn) { this.fn = fn; }
+    observe() {}
+    disconnect() {}
+    takeRecords() { return []; }
+  };
   G.scrollTo = G.scroll = function () {};
   G.Node = Node;
   G.Element = G.HTMLElement = Element;
@@ -1345,6 +1353,7 @@
   function visible(el) {
     for (var n = el; n && n.nodeType === 1; n = n.parentNode) {
       if (n.hasAttribute("hidden")) return false;
+      if (/(?:^|;)\s*display\s*:\s*none/i.test(n.getAttribute("style") || "")) return false;
       var t = n.tagName;
       if (t === "TEMPLATE" || t === "SCRIPT" || t === "STYLE" || t === "HEAD") return false;
       if (t === "INPUT" && n.type === "hidden") return false;

@@ -249,6 +249,49 @@ func Scan(dir string) (*Package, error) {
 			return true
 		})
 	}
+	// A struct embedding view.Form is a form: on a page, a field of that
+	// type is tracked state (the Form is an assign) — never plain fields.
+	formTypes := map[string]bool{}
+	for name, f := range pkg.AllStructs {
+		if f.IsForm {
+			formTypes[name] = true
+		}
+	}
+	if len(formTypes) > 0 {
+		for _, f := range pkg.AllStructs {
+			if f.IsForm {
+				// Its data fields are the form's, not page state.
+				f.Plain = nil
+				continue
+			}
+			kept := f.Plain[:0]
+			for _, p := range f.Plain {
+				if formTypes[strings.TrimPrefix(p.Type, "*")] {
+					f.Assigns = append(f.Assigns, p.Name)
+					if f.Forms == nil {
+						f.Forms = map[string]string{}
+					}
+					f.Forms[p.Name] = strings.TrimPrefix(p.Type, "*")
+					continue
+				}
+				kept = append(kept, p)
+			}
+			f.Plain = kept
+			embeds := f.Embeds[:0]
+			for _, e := range f.Embeds {
+				if e.Import == "" && formTypes[e.Name] {
+					f.Assigns = append(f.Assigns, e.Name)
+					if f.Forms == nil {
+						f.Forms = map[string]string{}
+					}
+					f.Forms[e.Name] = e.Name
+					continue
+				}
+				embeds = append(embeds, e)
+			}
+			f.Embeds = embeds
+		}
+	}
 	return pkg, nil
 }
 
@@ -268,14 +311,28 @@ func importName(p string) string {
 // are the page's (Package.fieldsOf).
 func structFields(fset *token.FileSet, src []byte, st *ast.StructType, view string, imports map[string]string) *Fields {
 	out := &Fields{}
+	var tags, goNames []string
+	defer func() { out.FormNames = append(tags, goNames...) }()
 	for _, f := range st.Fields.List {
 		typ := string(src[f.Type.Pos()-1 : f.Type.End()-1])
+		if f.Tag != nil {
+			if tag, err := strconv.Unquote(f.Tag.Value); err == nil {
+				if name, _, _ := strings.Cut(reflect.StructTag(tag).Get("form"), ","); name != "" && name != "-" {
+					for _, n := range f.Names {
+						tags, goNames = append(tags, name), append(goNames, n.Name)
+					}
+				}
+			}
+		}
 		if f.Tag != nil {
 			if tag, err := strconv.Unquote(f.Tag.Value); err == nil && reflect.StructTag(tag).Get("view") == "-" {
 				continue
 			}
 		}
 		switch {
+		case typ == view+".Form" && len(f.Names) == 0:
+			out.IsForm = true
+			continue
 		case strings.HasPrefix(typ, view+".Assign["), strings.HasPrefix(typ, view+".Stream["), typ == view+".Upload", typ == view+".LiveView":
 			for _, name := range f.Names {
 				out.Assigns = append(out.Assigns, name.Name)

@@ -134,6 +134,12 @@ func fetchRelated(ctx context.Context, c conn, m *model, r *relation, parents []
 			byKey[k] = append(byKey[k], row)
 		}
 		for _, p := range parents {
+			if r.Single {
+				if rows := byKey[key(p, m.PK)]; len(rows) > 0 {
+					setOne(fieldOf(p, r.Index), r, rows[0])
+				}
+				continue
+			}
 			setMany(fieldOf(p, r.Index), r, byKey[key(p, m.PK)])
 		}
 	case relM2M:

@@ -1,0 +1,299 @@
+package ui
+
+import (
+	"context"
+	"io"
+	"strconv"
+	"strings"
+
+	"github.com/paulmanoni/nexus/v2/view"
+)
+
+// Form renders a view.Form wired to the page: fields inside find the form
+// on their own, and with no children at all it renders every field and a
+// Save button — the whole form from the struct's declaration:
+//
+//	@ui.Form(p.Edit, p.Save)
+//
+//	@ui.Form(p.Edit, p.Save, ui.Live) {   // checked as the user types
+//		@ui.Field("name")
+//		@ui.Field("roleId", ui.Label("Role"))
+//		@ui.Submit("Create user")
+//	}
+//
+// The first method among extras is the submit; without one the form's own
+// Save method takes it (@ui.Form(p.Edit) alone). A second method is the
+// change method — the form checks as the user types — and the rest are
+// ui.Live, view.ConfirmLeave, view.FormAttrs or a templ.Attributes.
+func Form(f view.AnyForm, extras ...any) templ.Component {
+	return templ.ComponentFunc(func(ctx context.Context, w io.Writer) error {
+		kids := templ.GetChildren(ctx)
+		body := templ.ComponentFunc(func(ctx context.Context, w io.Writer) error {
+			var b strings.Builder
+			if kids != nil {
+				if err := kids.Render(ctx, &b); err != nil {
+					return err
+				}
+			}
+			if strings.TrimSpace(b.String()) != "" {
+				_, err := io.WriteString(w, b.String())
+				return err
+			}
+			if err := AllFields().Render(ctx, w); err != nil {
+				return err
+			}
+			return formActions(Submit("Save")).Render(ctx, w)
+		})
+		return view.RenderForm(f, extras...).Render(templ.WithChildren(ctx, body), w)
+	})
+}
+
+// Live makes a Form check its values as the user types (view.LiveValidation).
+var Live = view.LiveValidation
+
+// FieldOpt tunes one rendered field.
+type FieldOpt interface{ applyField(*fieldRender) }
+
+type fieldRender struct {
+	f        view.FormField
+	choices  []Option
+	bare     Option // the Placeholder option of a select; Label "" keeps none
+	disabled bool
+	byName   map[string][]Option
+}
+
+type fieldOptFn func(*fieldRender)
+
+func (fn fieldOptFn) applyField(r *fieldRender) { fn(r) }
+
+// Label overrides the field's label.
+func Label(s string) FieldOpt { return fieldOptFn(func(r *fieldRender) { r.f.Label = s }) }
+
+// Help overrides the field's help text.
+func Help(s string) FieldOpt { return fieldOptFn(func(r *fieldRender) { r.f.Help = s }) }
+
+// Placeholder overrides the field's placeholder — on a select, the empty
+// first option.
+func Placeholder(s string) FieldOpt {
+	return fieldOptFn(func(r *fieldRender) { r.f.Placeholder = s })
+}
+
+// Disabled disables the field.
+func Disabled() FieldOpt { return fieldOptFn(func(r *fieldRender) { r.disabled = true }) }
+
+// Options gives the field its choices at render, where the form's own
+// <Field>Choices method isn't the place — it then renders as a select.
+func Options(opts []Option) FieldOpt {
+	return fieldOptFn(func(r *fieldRender) { r.choices = opts })
+}
+
+// Choices gives fields their choices by name — for AllFields.
+type Choices map[string][]Option
+
+func (c Choices) applyField(r *fieldRender) { r.byName = c }
+
+// Field renders one field of the Form it is inside: label, control, help
+// and error, all from the form's struct. The control follows the field —
+// an input of its type, a select when it has choices, a checkbox, switch,
+// textarea or multi-select.
+func Field(name string, opts ...FieldOpt) templ.Component {
+	return templ.ComponentFunc(func(ctx context.Context, w io.Writer) error {
+		form, ok := view.ActiveForm(ctx)
+		if !ok {
+			panic("ui.Field(" + strconv.Quote(name) + "): not inside a ui.Form")
+		}
+		r := fieldRender{f: form.F(name)}
+		if r.f.HasChoices {
+			r.choices = choiceOptions(form.ChoicesFor(ctx, name))
+		}
+		for _, o := range opts {
+			o.applyField(&r)
+		}
+		if r.choices == nil && r.byName != nil {
+			r.choices = r.byName[r.f.Name]
+		}
+		return formField(r).Render(ctx, w)
+	})
+}
+
+// AllFields renders every field of the Form it is inside, in the struct's
+// order, honoring each field's span: tag in a 12-column row.
+func AllFields(opts ...FieldOpt) templ.Component {
+	return templ.ComponentFunc(func(ctx context.Context, w io.Writer) error {
+		form, ok := view.ActiveForm(ctx)
+		if !ok {
+			panic("ui.AllFields: not inside a ui.Form")
+		}
+		if _, err := io.WriteString(w, `<div class="grid grid-cols-12 gap-4">`); err != nil {
+			return err
+		}
+		for _, name := range form.FieldNames() {
+			r := fieldRender{f: form.F(name)}
+			if r.f.HasChoices {
+				r.choices = choiceOptions(form.ChoicesFor(ctx, name))
+			}
+			for _, o := range opts {
+				o.applyField(&r)
+			}
+			if r.choices == nil && r.byName != nil {
+				r.choices = r.byName[r.f.Name]
+			}
+			if r.f.Kind == "input" && r.f.Type == "hidden" {
+				if err := hiddenField(r.f).Render(ctx, w); err != nil {
+					return err
+				}
+				continue
+			}
+			span := r.f.Span
+			if span == 0 {
+				span = 12
+			}
+			if _, err := io.WriteString(w, `<div style="grid-column: span `+strconv.Itoa(span)+` / span `+strconv.Itoa(span)+`">`); err != nil {
+				return err
+			}
+			if err := formField(r).Render(ctx, w); err != nil {
+				return err
+			}
+			if _, err := io.WriteString(w, `</div>`); err != nil {
+				return err
+			}
+		}
+		_, err := io.WriteString(w, `</div>`)
+		return err
+	})
+}
+
+func choiceOptions(cs []view.Choice) []Option {
+	out := make([]Option, len(cs))
+	for i, c := range cs {
+		out[i] = Option{Value: c.Value, Label: c.Label, Disabled: c.Disabled}
+	}
+	return out
+}
+
+// formField renders one field with the control its kind asks for.
+templ formField(r fieldRender) {
+	switch {
+		case r.f.Kind == "checkbox":
+			@FieldWrap(FieldProps{Name: r.f.Name, ID: r.f.ID, Error: r.f.Error, Help: r.f.Help}) {
+				@Checkbox(CheckboxProps{Name: r.f.Name, ID: r.f.ID, Value: "true", Label: r.f.Label, Checked: r.f.Checked, Disabled: r.disabled})
+			}
+		case r.f.Kind == "switch":
+			@FieldWrap(FieldProps{Name: r.f.Name, ID: r.f.ID, Error: r.f.Error, Help: r.f.Help}) {
+				<label class="inline-flex items-center gap-2 text-sm text-[color:var(--ui-fg)] has-disabled:opacity-50">
+					<input type="checkbox" role="switch" class="ui-switch" name={ r.f.Name } id={ r.f.ID } value="true" checked?={ r.f.Checked } disabled?={ r.disabled }/>
+					<span>{ r.f.Label }</span>
+				</label>
+			}
+		case r.f.Kind == "textarea":
+			@FieldWrap(fieldProps(r.f)) {
+				@Textarea(TextareaProps{Name: r.f.Name, ID: r.f.ID, Value: r.f.Value, Placeholder: r.f.Placeholder, Required: r.f.Required, Disabled: r.disabled, Invalid: r.f.Error != ""})
+			}
+		case r.f.Kind == "multiselect":
+			@FieldWrap(fieldProps(r.f)) {
+				@MultiSelect(r.f, r.choices, r.disabled)
+			}
+		case len(r.choices) > 0:
+			@FieldWrap(fieldProps(r.f)) {
+				@Select(SelectProps{Name: r.f.Name, ID: r.f.ID, Options: r.choices, Value: r.f.Value, Placeholder: or(r.f.Placeholder, "Select…"), Required: r.f.Required, Disabled: r.disabled, Invalid: r.f.Error != ""})
+			}
+		default:
+			@FieldWrap(fieldProps(r.f)) {
+				@Input(InputProps{Name: r.f.Name, ID: r.f.ID, Type: r.f.Type, Value: r.f.Value, Placeholder: r.f.Placeholder, Required: r.f.Required, Disabled: r.disabled, Invalid: r.f.Error != ""})
+			}
+	}
+}
+
+templ hiddenField(f view.FormField) {
+	<input type="hidden" name={ f.Name } id={ f.ID } value={ f.Value }/>
+}
+
+// MultiSelect is a native multiple select for a slice field.
+templ MultiSelect(f view.FormField, options []Option, disabled bool) {
+	<select
+		multiple
+		size={ strconv.Itoa(min(max(len(options), 3), 8)) }
+		class={ join(controlBase, "py-1") }
+		disabled?={ disabled }
+		{ controlAttrs(ctx, f.Name, f.ID, f.Error != "", nil)... }
+	>
+		for _, o := range options {
+			<option value={ o.Value } selected?={ selectedIn(f.Values, o.Value) } disabled?={ o.Disabled }>{ or(o.Label, o.Value) }</option>
+		}
+	</select>
+}
+
+func selectedIn(values []string, v string) bool {
+	for _, x := range values {
+		if x == v {
+			return true
+		}
+	}
+	return false
+}
+
+func fieldProps(f view.FormField) FieldProps {
+	return FieldProps{Name: f.Name, ID: f.ID, Label: f.Label, Help: f.Help, Error: f.Error, Required: f.Required}
+}
+
+// The explicit per-control components, for layouts the field's own kind
+// shouldn't decide.
+
+// TextField is a labelled input for a form field.
+templ TextField(f view.FormField) {
+	@FieldWrap(fieldProps(f)) {
+		@Input(InputProps{Name: f.Name, ID: f.ID, Type: f.Type, Value: f.Value, Placeholder: f.Placeholder, Required: f.Required, Invalid: f.Error != ""})
+	}
+}
+
+// TextareaField is a labelled multi-line input for a form field.
+templ TextareaField(f view.FormField) {
+	@FieldWrap(fieldProps(f)) {
+		@Textarea(TextareaProps{Name: f.Name, ID: f.ID, Value: f.Value, Required: f.Required, Invalid: f.Error != ""})
+	}
+}
+
+// SelectField is a labelled select for a form field.
+templ SelectField(f view.FormField, options []Option, placeholder string) {
+	@FieldWrap(fieldProps(f)) {
+		@Select(SelectProps{Name: f.Name, ID: f.ID, Options: options, Value: f.Value, Placeholder: placeholder, Required: f.Required, Invalid: f.Error != ""})
+	}
+}
+
+// CheckboxField is a checkbox for a bool form field, its label beside it.
+templ CheckboxField(f view.FormField) {
+	@FieldWrap(FieldProps{Name: f.Name, ID: f.ID, Error: f.Error}) {
+		@Checkbox(CheckboxProps{Name: f.Name, ID: f.ID, Value: "true", Label: f.Label, Checked: f.Checked})
+	}
+}
+
+// SwitchField is a bool form field as a switch.
+templ SwitchField(f view.FormField) {
+	@formField(fieldRender{f: switched(f)})
+}
+
+func switched(f view.FormField) view.FormField { f.Kind = "switch"; return f }
+
+templ formActions(buttons ...templ.Component) {
+	<div class="mt-4 flex justify-end gap-2">
+		for _, b := range buttons {
+			@b
+		}
+	</div>
+}
+
+// Submit submits the form it is in. While the submit is on its way — the
+// form is busy — it shows a spinner and can't be pressed again.
+templ Submit(label string) {
+	<button type="submit" class={ join(buttonClass(ButtonProps{}), "ui-submit") }>
+		<span class="ui-submit-spin" aria-hidden="true">
+			@Icon("spinner", "size-4 animate-spin")
+		</span>
+		{ label }
+	</button>
+}
+
+// SubmitButton is Submit.
+templ SubmitButton(label string) {
+	@Submit(label)
+}

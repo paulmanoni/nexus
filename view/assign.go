@@ -122,6 +122,8 @@ type tracker struct {
 	rec     *recorder // the tracked render under way, if any
 	off     string    // why the page isn't tracked; "" when it is
 	uploads map[string]*Upload
+	// forms are the page's view.Forms, by field name.
+	forms map[string]liveForm
 	// flushers are the streams, which let go of a change once it is sent.
 	flushers []interface{ flush() }
 }
@@ -188,6 +190,16 @@ func (t *tracker) walk(s reflect.Value) {
 		}
 		if f, ok := ptr.Interface().(interface{ flush() }); ok {
 			t.flushers = append(t.flushers, f)
+		}
+		if lf, ok := ptr.Interface().(interface {
+			liveForm
+			bindOuter(self reflect.Value, name, comp string)
+		}); ok {
+			lf.bindOuter(ptr, f.Name, componentType(LiveKey(reflect.TypeOf(t.page))))
+			if t.forms == nil {
+				t.forms = map[string]liveForm{}
+			}
+			t.forms[f.Name] = lf
 		}
 		if ptr.Type().Implements(assignFieldType) {
 			a := ptr.Interface().(assignField)

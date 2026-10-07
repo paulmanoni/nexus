@@ -52,6 +52,7 @@ templ Dialog(p DialogProps) {
 		if !hasScript(p.OnClose) {
 			hidden?={ !p.Open }
 			data-nx-ignore
+			data-cancel={ dialogCancel }
 		}
 		if p.Persistent {
 			data-persistent
@@ -83,11 +84,11 @@ templ Dialog(p DialogProps) {
 					}
 				</div>
 				if hasScript(p.OnClose) {
-					<button type="button" class={ dialogCloseClass } aria-label="Close" data-ui-dialog-close onclick={ p.OnClose }>
+					<button type="button" class={ dialogCloseClass } aria-label="Close" data-ui-dialog-close data-nx-nofocus onclick={ p.OnClose }>
 						@Icon("x")
 					</button>
 				} else {
-					<button type="button" class={ dialogCloseClass } aria-label="Close" data-ui-dialog-close data-ui-close>
+					<button type="button" class={ dialogCloseClass } aria-label="Close" data-ui-dialog-close data-nx-nofocus onclick={ closeDialog }>
 						@Icon("x")
 					</button>
 				}
