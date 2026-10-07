@@ -3,7 +3,7 @@ module github.com/paulmanoni/nexus/orm
 go 1.27
 
 require (
-	github.com/paulmanoni/nexus/v2 v2.22.1
+	github.com/paulmanoni/nexus/v2 v2.22.2
 	golang.org/x/tools v0.47.0
 	gorm.io/gorm v1.31.1
 )
