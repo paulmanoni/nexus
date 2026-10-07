@@ -203,9 +203,22 @@ func bindFromTag(ptr any, tag string, lookup func(string) ([]string, bool), altT
 	if rv.Kind() != reflect.Struct {
 		return fmt.Errorf("bind: target must point to a struct")
 	}
+	return bindStructFromTag(rv, tag, lookup, altTags)
+}
+
+// bindStructFromTag binds rv's tagged fields, and those of the structs it
+// embeds as encoding/json does — an embedded struct's fields are the
+// outer struct's.
+func bindStructFromTag(rv reflect.Value, tag string, lookup func(string) ([]string, bool), altTags []string) error {
 	rt := rv.Type()
 	for i := 0; i < rt.NumField(); i++ {
 		f := rt.Field(i)
+		if f.Anonymous && f.Type.Kind() == reflect.Struct && f.Tag.Get(tag) == "" {
+			if err := bindStructFromTag(rv.Field(i), tag, lookup, altTags); err != nil {
+				return err
+			}
+			continue
+		}
 		if !f.IsExported() {
 			continue
 		}

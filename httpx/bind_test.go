@@ -1,7 +1,9 @@
 package httpx
 
 import (
+	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 )
 
@@ -54,5 +56,36 @@ func TestShouldBindQuery_Slices(t *testing.T) {
 	bad := &Ctx{Request: httptest.NewRequest("GET", "/?id=3&id=x", nil)}
 	if err := bad.ShouldBindQuery(&a); err == nil {
 		t.Error("a non-number in an []int64 binds")
+	}
+}
+
+type bindAddress struct {
+	City string `form:"city" query:"city"`
+}
+
+type bindPerson struct {
+	bindAddress
+	Name string `form:"name" query:"name"`
+}
+
+// An embedded struct's fields bind as the outer struct's, as encoding/json
+// treats them — from a form and from a query alike.
+func TestBindEmbeddedStruct(t *testing.T) {
+	req := httptest.NewRequest(http.MethodPost, "/?name=q&city=qc", strings.NewReader("name=Ann&city=Dodoma"))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	c := NewCtx(httptest.NewRecorder(), req)
+	var p bindPerson
+	if err := c.ShouldBind(&p); err != nil {
+		t.Fatal(err)
+	}
+	if p.Name != "Ann" || p.City != "Dodoma" {
+		t.Errorf("form: %+v", p)
+	}
+	var q bindPerson
+	if err := c.ShouldBindQuery(&q); err != nil {
+		t.Fatal(err)
+	}
+	if q.Name != "q" || q.City != "qc" {
+		t.Errorf("query: %+v", q)
 	}
 }

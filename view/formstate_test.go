@@ -137,3 +137,52 @@ func TestFormChangeMergesOverValues(t *testing.T) {
 		t.Fatalf("after submitOK: %+v", f)
 	}
 }
+
+type petDetails struct {
+	Name string `form:"name"`
+	Kind string `form:"kind"`
+}
+
+type embeddedDetailsForm struct {
+	Form
+	petDetails
+}
+
+// A form may take its fields from a struct it embeds.
+func TestFormEmbeddedDetails(t *testing.T) {
+	f := &embeddedDetailsForm{}
+	f.bindOuter(reflect.ValueOf(f), "Edit", "")
+	f.Load(embeddedDetailsForm{petDetails: petDetails{Name: "a", Kind: "b"}})
+	f.change(context.Background(), map[string][]string{"name": {"x"}, "kind": {"y"}}, nil, []string{"name", "kind"})
+	if f.Name != "x" || f.Kind != "y" {
+		t.Fatalf("embedded fields after a change: %+v", f.petDetails)
+	}
+}
+
+type blockWithLiveView struct {
+	LiveView
+	Edit embeddedDetailsForm
+	N    Assign[int]
+}
+
+type pageWithBlock struct {
+	blockWithLiveView
+}
+
+// A struct the page embeds is walked even when it embeds the LiveView
+// itself (which has an Assign's methods): its forms bind and its Assigns
+// are tracked.
+func TestTrackerWalksBlockEmbeddingLiveView(t *testing.T) {
+	p := &pageWithBlock{}
+	tr := trackAssigns(reflect.ValueOf(p))
+	if tr.forms["Edit"] == nil {
+		t.Fatalf("the block's form isn't bound: %v", tr.forms)
+	}
+	if len(tr.fields) < 3 {
+		t.Fatalf("tracked %d fields, want the LiveView, the form and N", len(tr.fields))
+	}
+	p.Edit.Load(embeddedDetailsForm{petDetails: petDetails{Name: "z"}})
+	if p.Edit.Name != "z" {
+		t.Fatalf("Load: %+v", p.Edit.petDetails)
+	}
+}

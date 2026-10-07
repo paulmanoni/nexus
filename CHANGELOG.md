@@ -4,6 +4,19 @@ All notable changes to nexus are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and the project
 adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.22.1] - 2026-10-07
+
+### Fixed
+
+- A live page's struct that embeds `view.LiveView` itself (a shared list
+  block, say) was taken for a single Assign — the LiveView's methods are
+  promoted to it — so its forms were never bound (`Load` panicked "not
+  bound to a page") and its Assigns weren't tracked. Embedded structs are
+  now always walked as part of the page.
+- Tag binding (`form:`, `query:`, `header:`, path) skipped embedded
+  structs; their fields now bind as the outer struct's, as `encoding/json`
+  treats them. A `view.Form` can take its fields from a struct it embeds.
+
 ## [2.22.0] - 2026-10-07
 
 ### Added

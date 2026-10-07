@@ -191,15 +191,22 @@ func (t *tracker) walk(s reflect.Value) {
 		if f, ok := ptr.Interface().(interface{ flush() }); ok {
 			t.flushers = append(t.flushers, f)
 		}
-		if lf, ok := ptr.Interface().(interface {
+		lf, isForm := ptr.Interface().(interface {
 			liveForm
 			bindOuter(self reflect.Value, name, comp string)
-		}); ok {
+		})
+		if isForm {
 			lf.bindOuter(ptr, f.Name, componentType(LiveKey(reflect.TypeOf(t.page))))
 			if t.forms == nil {
 				t.forms = map[string]liveForm{}
 			}
 			t.forms[f.Name] = lf
+		}
+		// A struct the page embeds is part of the page, even one that
+		// embeds a LiveView itself and so has an Assign's methods.
+		if !isForm && f.Anonymous && f.Type.Kind() == reflect.Struct && f.Type != liveViewType && !isAssignType(f.Type) {
+			t.walk(s.Field(i))
+			continue
 		}
 		if ptr.Type().Implements(assignFieldType) {
 			a := ptr.Interface().(assignField)
@@ -218,6 +225,10 @@ func (t *tracker) walk(s reflect.Value) {
 			t.off = "field " + f.Name + " is not a view.Assign"
 		}
 	}
+}
+
+func isAssignType(t reflect.Type) bool {
+	return t.PkgPath() == signalPkg && strings.HasPrefix(t.Name(), "Assign[")
 }
 
 func isSignal(t reflect.Type) bool {
