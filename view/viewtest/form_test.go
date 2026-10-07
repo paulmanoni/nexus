@@ -364,3 +364,43 @@ func TestFormLiveErrorsInOwnMarkup(t *testing.T) {
 	p.Fill("name", "Meru").Blur()
 	p.Expect("#name-error").Text("")
 }
+
+// Swap renders the same id on a different element once enabled: a
+// disabled <span> turning into a link.
+type Swap struct {
+	view.LiveView
+	On view.Assign[bool]
+}
+
+func (s *Swap) Enable(ctx context.Context) error {
+	s.On.Set(true)
+	return nil
+}
+
+func (s *Swap) Render() templ.Component {
+	return templ.ComponentFunc(func(ctx context.Context, w io.Writer) error {
+		io.WriteString(w, `<!DOCTYPE html><html><head><title>Swap</title>`)
+		if err := view.Script().Render(ctx, w); err != nil {
+			return err
+		}
+		io.WriteString(w, `</head><body><div>`)
+		if s.On.Get() {
+			io.WriteString(w, `<a id="go" href="/print">Print</a>`)
+		} else {
+			io.WriteString(w, `<span id="go">Print</span>`)
+		}
+		io.WriteString(w, `</div><button id="enable" onclick="`+view.Send(s.Enable).Call+`">Enable</button></body></html>`)
+		return nil
+	})
+}
+
+// An element whose tag changes but whose id stays is replaced, not given
+// the new element's attributes.
+func TestMorphReplacesChangedTagWithSameID(t *testing.T) {
+	app := nexustest.New(t, config.Runtime{}, view.Live[*Swap]("/swap"))
+	p := viewtest.Mount[*Swap](t, app)
+	p.Expect("span#go").Text("Print")
+	p.Click("#enable").Wait()
+	p.Expect("a#go").Attr("href", "/print")
+	p.Expect("span#go").Absent()
+}

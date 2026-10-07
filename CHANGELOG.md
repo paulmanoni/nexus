@@ -4,6 +4,16 @@ All notable changes to nexus are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and the project
 adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.22.3] - 2026-10-07
+
+### Fixed
+
+- A live patch matched elements by `id` without comparing tags, so an element
+  that changed tag but kept its id (a disabled `<span id="print">` that
+  became `<a id="print" href>`) stayed the old element with the new one's
+  attributes: a link that looked enabled but couldn't be clicked. It is now
+  replaced.
+
 ## [2.22.2] - 2026-10-07
 
 ### Fixed

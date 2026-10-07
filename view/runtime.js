@@ -755,8 +755,10 @@
     kids.forEach(function (n) {
       var match = null;
       if (n.nodeType === 1 && n.id) {
+        // The same id on another tag is a new element: a disabled <span>
+        // that became a link is replaced, not given the link's attributes.
         var byId = Array.from(el.children).find(function (c) { return c.id === n.id; });
-        if (byId) match = byId;
+        if (byId && byId.tagName === n.tagName) match = byId;
       }
       if (!match && cur && sameKind(cur, n)) match = cur;
       if (match) {
