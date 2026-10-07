@@ -473,12 +473,35 @@ func (in *instance) call(ctx context.Context, m *liveMethod, raw []json.RawMessa
 	args := make([]reflect.Value, len(m.args))
 	for n, i := range m.args {
 		p := reflect.New(ft.In(i))
-		if err := json.Unmarshal(raw[n], p.Interface()); err != nil {
+		if err := json.Unmarshal(raw[n], p.Interface()); err != nil && !scalarFromString(raw[n], p) {
 			return nexus.Errf(nexus.InvalidInput, "argument %d: %v", n+1, err)
 		}
 		args[n] = p.Elem()
 	}
 	return in.callValues(ctx, m, args)
+}
+
+// scalarFromString decodes a JSON string into the number or bool p points
+// at, as a field's value read in the browser (view.This) arrives: "42" for
+// an int. An empty string leaves a pointer nil.
+func scalarFromString(raw json.RawMessage, p reflect.Value) bool {
+	var s string
+	if json.Unmarshal(raw, &s) != nil {
+		return false
+	}
+	t := p.Elem().Type()
+	if t.Kind() == reflect.Pointer {
+		if s == "" {
+			return true
+		}
+		t = t.Elem()
+	}
+	switch t.Kind() {
+	case reflect.Bool, reflect.Int, reflect.Int8, reflect.Int16, reflect.Int32, reflect.Int64,
+		reflect.Uint, reflect.Uint8, reflect.Uint16, reflect.Uint32, reflect.Uint64, reflect.Float32, reflect.Float64:
+		return s != "" && json.Unmarshal([]byte(s), p.Interface()) == nil
+	}
+	return false
 }
 
 // callValues runs m with its arguments as Go values. A panic becomes an

@@ -881,8 +881,16 @@ left, all after a submit; success resets to the loaded values; Load/Reset
 replace even typed values; busy forms drop a second submit; Dirty() +
 view.ConfirmLeave(msg) guard leaving. view.RenderForm for kit-free markup;
 @view.CSRF() for plain-HTTP forms.
-JS commands (Phoenix's JS): onclick={ view.JS(view.Show("#menu"),
-view.AddClass("is-open", "#menu"), view.Push(p.Load)) } — Show/Hide/Toggle
+JS commands (Phoenix's JS): onclick={ view.JS(view.Show("#menu").
+AddClass("is-open", "#menu").Push(p.Load)) } — commands chain (a chain is a
+value: closing := view.Hide("#m").PopFocus(); closing.Push(p.Save)); Confirm
+(msg) stops the rest on no, SetValue(v, sel) fires input/change, Copy(sel)/
+CopyText(s), ScrollTo(sel), Debounce(d)/Throttle(d) (time the steps after
+them); view.This() = JS this: a command target (AddClass("on", view.This()))
+and Send/Push args read when sent (.Value(), .Checked(), .Attr(n));
+data-nx-busy on a button: aria-busy until its
+event's reply; @view.Behaviors(): data-nx-filter, data-nx-check-all,
+data-nx-valid. Show/Hide/Toggle
 (view.Display("flex")), AddClass/RemoveClass/ToggleClass, SetAttr/RemoveAttr/
 ToggleAttr, Focus/FocusFirst, Push/PushTo, Transition(classes, sel),
 PushFocus/PopFocus, Exec(attr, sel) (runs view.Commands(…) or a live script

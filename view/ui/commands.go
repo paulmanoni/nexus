@@ -13,7 +13,7 @@ import (
 func tabSelect(p TabsProps, t Tab) templ.ComponentScript {
 	ops := []view.JSOp{
 		view.SetAttr("aria-selected", "false", "[data-ui-tab]", view.Within("[data-ui-tabs]")),
-		view.SetAttr("aria-selected", "true", ""),
+		view.SetAttr("aria-selected", "true", view.This()),
 	}
 	if t.Panel != "" {
 		for _, o := range p.Tabs {
@@ -24,7 +24,7 @@ func tabSelect(p TabsProps, t Tab) templ.ComponentScript {
 		ops = append(ops, view.Show("#"+t.Panel))
 	}
 	if hasScript(t.OnSelect) {
-		ops = append(ops, view.Exec("data-ui-select", ""))
+		ops = append(ops, view.Exec("data-ui-select", view.This()))
 	}
 	return view.JS(ops...)
 }
@@ -32,7 +32,7 @@ func tabSelect(p TabsProps, t Tab) templ.ComponentScript {
 // dialogCancel is what closes a browser-side dialog — its close button,
 // CloseDialog, Esc and a backdrop click all run it: hide it, and give focus
 // back to what opened it.
-var dialogCancel = view.Commands(view.Hide(""), view.PopFocus())
+var dialogCancel = view.Commands(view.Hide(view.This()), view.PopFocus())
 
 // closeDialog runs the dialog's closing steps from inside it.
 var closeDialog = view.JS(view.Exec("data-cancel", "[data-ui-dialog]", view.Closest()))

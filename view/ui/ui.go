@@ -88,8 +88,11 @@ func version(s string) string {
 //	@ui.Script()
 func Script() templ.Component {
 	css, js := versions()
-	return templ.Raw(`<link rel="stylesheet" href="` + Prefix + `ui.css?v=` + css + `"/>` +
-		`<script src="` + Prefix + `ui.js?v=` + js + `" defer></script>`)
+	return templ.Join(
+		templ.Raw(`<link rel="stylesheet" href="`+Prefix+`ui.css?v=`+css+`"/>`+
+			`<script src="`+Prefix+`ui.js?v=`+js+`" defer></script>`),
+		view.Behaviors(),
+	)
 }
 
 // versions are the kit's files' versions, hashed once.

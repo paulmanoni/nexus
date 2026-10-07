@@ -374,8 +374,10 @@ flows to fields. Kit: `ui.Form(f, extras…)` (childless → `ui.AllFields()` gr
 `ui.Field(name, ui.Label/Help/Placeholder/Options/Disabled/Choices{…})`, explicit `TextField/...Field`,
 `ui.Live`, `ui.Submit` (spins while form busy). viewgen fails `F("typo")` in-package (did-you-mean); `ui.Field`
 errors at render. `@view.CSRF()` for plain-HTTP forms.
-**JS commands** (Phoenix's `JS`): `onclick={ view.JS(view.Show("#m"), view.AddClass("on", "#m"),
-view.Push(p.Load, id)) }` — a `templ.ComponentScript` (also in `templ.Attributes`; viewgen wraps it in
+**JS commands** (Phoenix's `JS`): `onclick={ view.JS(view.Show("#m").AddClass("on", "#m").Push(p.Load, id)) }`
+— commands chain (each a `JSOp` method; a chain is an immutable value, `a.Then(b…)` joins; `view.JS(a, b)` and
+`ops...` spreads still work); also `Confirm(msg)` (stops the chain on no), `SetValue(v, sel)` (fires input/change),
+`Copy(sel)`/`CopyText(s)` (sets `data-copied`), `ScrollTo(sel)` — a `templ.ComponentScript` (also in `templ.Attributes`; viewgen wraps it in
 `view.ScriptAttr` like `view.Send`); ops `Show/Hide/Toggle` (`view.Display(v)`), `AddClass/RemoveClass/
 ToggleClass`, `SetAttr/RemoveAttr/ToggleAttr`, `Focus/FocusFirst`, `Push/PushTo`, `Transition(classes, sel)`,
 `PushFocus/PopFocus` (a stack), `Exec(attr, sel)` (runs `view.Commands(…)` JSON — or any script, e.g. view.Send —
@@ -383,12 +385,21 @@ held in an attribute: a dialog's `data-cancel`), `Dispatch(event, sel, view.Deta
 `view.Animate(during, from, to)` + `view.Time(d)` (200ms) make Show/Hide/Toggle transitions (classes not sticky; a
 new transition on an element finishes the running one). Server side: `x.PushJS(ops…)` / `x.PushEvent(name,
 payload)` (window CustomEvent) from an event, Info or connected Mount ride the next reply (`push` field) and run
-after it is applied (`""` = the live root; an Error reply drops them; the HTTP render has none); viewtest
-`p.Eval(js)`. Selector `""` = the
-element, `view.Closest()`/`view.Inner()` scope it. Runtime `__nx.js` (runtime.js) records per element each
+after it is applied (`view.This()` = the live root; an Error reply drops them; the HTTP render has none); viewtest
+`p.Eval(js)`. Target `view.This()` = the
+element (pushed: the live root), `view.Closest()`/`view.Inner()` scope a selector. Runtime `__nx.js` (runtime.js) records per element each
 attribute a command changed with the server's value at the time; `syncAttributes` re-applies it while the
 server renders that attribute unchanged, and drops it when the server changes it (server wins). Show/Hide edit
-the `style` attribute's display (+ remove `hidden`). viewtest: `Visible/Hidden/HasClass/NoClass`. Generator: `view/viewgen` (+ `viewgen/jsgen`, coherence-tested in goja).
+the `style` attribute's display (+ remove `hidden`). `Debounce(d)`/`Throttle(d)` are chain steps timing the steps after them (runtime `nx.js` hands the rest to
+`nx.debounce`/`nx.throttle`, per element+event type; throttle keeps a field's last input; a waiting debounce in a
+form runs before its submit). `view.This()` = JS `this`: a command target (selector params are `view.Target` =
+any: a string or This(); `""` still means the element) and `.Value()`/`.Checked()`/`.Attr(n)` as Send/SendTo/Push
+args, `{"$nx":…}` markers the runtime's `readThis` fills when sending (an event's number/bool param takes a numeric
+string). `data-nx-busy` on an element: `aria-busy="true"` from its event's
+send to its reply (runtime `busyEls`, kept through morphs, released on socket close; inline CSS makes it inert);
+forms being submitted use the same. `@view.Behaviors()` (`/_view/behaviors.js`, also in kit `ui.Script()`):
+`data-nx-filter`/`-item`/`-empty`, `data-nx-check-all` (+`data-nx-checks`, `data-nx-checked-count`), `data-nx-valid`;
+re-applied after morphs (guarded writes). Ladder: server event → JS command → behavior → island/own script. viewtest: `Visible/Hidden/HasClass/NoClass`. Generator: `view/viewgen` (+ `viewgen/jsgen`, coherence-tested in goja).
 **Islands**: `var Chart = view.NewIsland[ChartProps]("Chart")` declares one (props type → registry
 `SetIsland` → manifest `islands` → `NexusIslandProps` in client.d.ts; `*view.Signal[T]` types as `T` via
 `registry.SchemaAs`); `@Chart(props, view.Visible(), view.SSR()) { fallback }` places it. It mounts a

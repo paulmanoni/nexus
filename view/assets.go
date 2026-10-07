@@ -17,6 +17,9 @@ import (
 //go:embed runtime.js
 var runtimeJS string
 
+//go:embed behaviors.js
+var behaviorsJS string
+
 // importJS gives the runtime import(), which a classic script cannot parse
 // everywhere: islands load their modules through it. Script puts it first,
 // so it runs before the runtime; the event covers a page that does not.
@@ -97,11 +100,23 @@ var runtimeVersions = sync.OnceValues(func() (string, string) { return version(i
 //	</head>
 func Script() templ.Component {
 	imp, rt := runtimeVersions()
-	return templ.Raw(`<style>nx-t,nx-if,nx-shard,nx-c{display:contents}nx-if[hidden]{display:none}nx-island{display:block}</style>` +
+	return templ.Raw(`<style>nx-t,nx-if,nx-shard,nx-c{display:contents}nx-if[hidden]{display:none}nx-island{display:block}[data-nx-busy][aria-busy=true]{pointer-events:none}</style>` +
 		`<script type="module" src="/_view/import.js?v=` + imp + `"></script>` +
 		`<script src="/_view/twins.js?v=` + twinsVersion() + `" defer></script>` +
 		`<script src="/_view/runtime.js?v=` + rt + `" defer></script>`)
 }
+
+// Behaviors loads behaviors.js: what a page's markup asks for with data-nx
+// attributes and no styling — a box filtering a list, a "select all" box,
+// a form's submit enabled once it is valid. Put it after Script:
+//
+//	@view.Script()
+//	@view.Behaviors()
+func Behaviors() templ.Component {
+	return templ.Raw(`<script src="/_view/behaviors.js?v=` + behaviorsVersion() + `" defer></script>`)
+}
+
+var behaviorsVersion = sync.OnceValue(func() string { return version(behaviorsJS) })
 
 func serveJS(body func() string) httpx.HandlerFunc {
 	return func(c *httpx.Ctx) {

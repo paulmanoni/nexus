@@ -524,12 +524,29 @@
 
   function syncAttributes(el, next) {
     Array.from(el.attributes).forEach(function (a) {
+      if (a.name === "aria-busy" && busyEls.has(el)) return; // its reply is on its way
       if (!next.hasAttribute(a.name)) el.removeAttribute(a.name);
     });
     Array.from(next.attributes).forEach(function (a) {
       if (el.getAttribute(a.name) !== a.value) el.setAttribute(a.name, a.value);
     });
     keepJS(el, next);
+  }
+
+  // busyEls are the elements waiting for their event's reply: a form being
+  // submitted, a data-nx-busy element whose event went. They carry
+  // aria-busy, which a re-render meanwhile leaves alone, until the reply.
+  var busyEls = new Set();
+
+  function markBusy(state, ref, el) {
+    el.setAttribute("aria-busy", "true");
+    busyEls.add(el);
+    (state.submits[ref] = state.submits[ref] || []).push(el);
+  }
+
+  function unmarkBusy(el) {
+    busyEls.delete(el);
+    el.removeAttribute("aria-busy");
   }
 
   // ---- JS commands (view.JS) ----------------------------------------------
@@ -718,7 +735,53 @@
       if (f) f.focus();
     },
     push: function (el, a) { nx.live.send(el, a.event, a.args, a.ct); },
+    // confirm stops the commands after it unless the user agrees.
+    confirm: function (el, a) { return window.confirm(a.message); },
+    set_value: function (el, a) {
+      jsTargets(el, a).forEach(function (t) {
+        if (!("value" in t)) return;
+        t.value = a.value;
+        t.dispatchEvent(new Event("input", { bubbles: true }));
+        t.dispatchEvent(new Event("change", { bubbles: true }));
+      });
+    },
+    copy: function (el, a) {
+      var text = a.text;
+      if (text == null) {
+        var t = jsTargets(el, a)[0];
+        if (!t) return;
+        text = "value" in t && t.tagName !== "BUTTON" ? t.value : t.textContent.trim();
+      }
+      copyText(text);
+      el.setAttribute("data-copied", "");
+      setTimeout(function () { el.removeAttribute("data-copied"); }, 1500);
+    },
+    scroll_to: function (el, a) {
+      var t = jsTargets(el, a)[0];
+      if (t) t.scrollIntoView({ block: "nearest", behavior: "smooth" });
+    },
   };
+
+  // copyText puts text on the clipboard; without the clipboard API (a page
+  // not served over https), through a selected textarea.
+  function copyText(text) {
+    if (navigator.clipboard && window.isSecureContext) {
+      navigator.clipboard.writeText(text).catch(function () { copyByCommand(text); });
+      return;
+    }
+    copyByCommand(text);
+  }
+  function copyByCommand(text) {
+    var ta = document.createElement("textarea");
+    ta.value = text;
+    ta.setAttribute("readonly", "");
+    ta.style.position = "fixed";
+    ta.style.opacity = "0";
+    document.body.appendChild(ta);
+    ta.select();
+    try { document.execCommand("copy"); } catch (err) { /* nothing to copy with */ }
+    ta.remove();
+  }
 
   // runPushed runs what the page's views pushed with a reply (PushJS,
   // PushEvent), once it is applied; a command's own element is the live root.
@@ -735,12 +798,81 @@
 
   // js runs what view.JS rendered: [[command, args], ...], in order.
   nx.js = function (el, e, ops) {
-    ops.forEach(function (op) {
-      var run = jsOps[op[0]];
-      if (run) run(el, op[1] || {}, e);
-      else console.warn("nexus view: unknown JS command " + op[0]);
-    });
+    for (var i = 0; i < ops.length; i++) {
+      if (ops[i][0] === "debounce" || ops[i][0] === "throttle") {
+        // The steps after it run at its pace.
+        var rest = ops.slice(i + 1);
+        nx[ops[i][0]](el, e, (ops[i][1] || {}).ms || 0, function () { nx.js(el, e, rest); });
+        return;
+      }
+      var run = jsOps[ops[i][0]];
+      if (!run) {
+        console.warn("nexus view: unknown JS command " + ops[i][0]);
+        continue;
+      }
+      if (run(el, ops[i][1] || {}, e) === false) return; // a confirm declined
+    }
   };
+
+  // debounce and throttle run fn, the steps after a view.Debounce or
+  // view.Throttle in a chain, at a pace kept per element and event type. A submit held back is still kept from
+  // reaching the server as a page load.
+  var paced = new WeakMap();
+  function pacedFor(el, key) {
+    var m = paced.get(el);
+    if (!m) paced.set(el, (m = {}));
+    return m[key] || (m[key] = { el: el });
+  }
+  function holdSubmit(e) {
+    if (e && e.type === "submit") e.preventDefault();
+  }
+  var debouncing = new Set();
+  nx.debounce = function (el, e, ms, fn) {
+    holdSubmit(e);
+    var type = e ? e.type : "";
+    var p = pacedFor(el, "debounce " + type);
+    clearTimeout(p.timer);
+    p.type = type;
+    p.run = function () {
+      clearTimeout(p.timer);
+      debouncing.delete(p);
+      fn.call(el, e);
+    };
+    debouncing.add(p);
+    p.timer = setTimeout(p.run, ms);
+  };
+  nx.throttle = function (el, e, ms, fn) {
+    var p = pacedFor(el, "throttle " + (e ? e.type : ""));
+    if (p.closed) {
+      holdSubmit(e);
+      // A field's last value still goes when the interval is up.
+      if (e && (e.type === "input" || e.type === "change")) p.last = function () { fn.call(el, e); };
+      return;
+    }
+    p.closed = true;
+    var reopen = function () {
+      var last = p.last;
+      p.last = null;
+      if (!last) {
+        p.closed = false;
+        return;
+      }
+      last();
+      setTimeout(reopen, ms);
+    };
+    setTimeout(reopen, ms);
+    fn.call(el, e);
+  };
+  // A form being submitted first runs the debounced scripts waiting inside
+  // it, so the submit never overtakes them.
+  if (typeof document !== "undefined") {
+    document.addEventListener("submit", function (e) {
+      var form = e.target;
+      debouncing.forEach(function (p) {
+        if (p.type !== "submit" && form.contains && form.contains(p.el)) p.run();
+      });
+    }, true);
+  }
 
   function sameKind(a, b) {
     if (a.nodeType !== b.nodeType) return false;
@@ -1037,9 +1169,11 @@
           return;
         }
         root.removeAttribute("aria-busy");
-        var submitted = msg.ref ? state.submits[msg.ref] : null;
+        var waiting = msg.ref ? state.submits[msg.ref] : null;
         if (msg.ref) delete state.submits[msg.ref];
-        if (submitted) submitted.removeAttribute("aria-busy");
+        if (waiting) waiting.forEach(unmarkBusy);
+        // The form this event submitted, if it was one: reset on success.
+        var submitted = waiting && waiting.filter(function (el) { return el.tagName === "FORM"; })[0];
         if (msg.error && !recovered) {
           console.error("nexus view: live:", msg.error);
           root.setAttribute("data-nx-live-error", msg.error);
@@ -1089,6 +1223,9 @@
         runPushed(root, msg.push);
       };
       ws.onclose = function () {
+        // Replies to what this socket carried won't come: nothing stays busy.
+        Object.keys(state.submits).forEach(function (ref) { state.submits[ref].forEach(unmarkBusy); });
+        state.submits = {};
         if (state.closed) return; // navigated away: stay closed
         root.setAttribute("data-nx-live-state", "disconnected");
         // Back off with jitter, so a restarted server is not hit by every
@@ -1587,6 +1724,21 @@
     });
   }
 
+  // readThis fills in the arguments view.This() rendered as {"$nx": read}
+  // markers with what el holds now.
+  function readThis(el, args) {
+    if (!Array.isArray(args)) return args;
+    return args.map(function (a) {
+      if (!a || typeof a !== "object" || Array.isArray(a) || typeof a.$nx !== "string") return a;
+      switch (a.$nx) {
+        case "value": return el && el.value != null ? String(el.value) : "";
+        case "checked": return !!(el && el.checked);
+        case "attr": return el && el.getAttribute ? el.getAttribute(a.name) : null;
+      }
+      return a;
+    });
+  }
+
   nx.live = {
     // cancelUpload is what view.CancelUpload renders: stop an entry's
     // request and have the page drop it.
@@ -1601,8 +1753,12 @@
     // send is what view.Send renders into an on* attribute; comp names the
     // live component type the method belongs to.
     send: function (el, event, args, comp) {
+      var busy = el && el.hasAttribute && el.hasAttribute("data-nx-busy");
+      if (busy && el.getAttribute("aria-busy") === "true") return; // sent already: the reply is on its way
       var live = liveState(el, event);
-      if (live) liveSend(live, target({ event: event, args: args }, el, comp));
+      if (!live) return;
+      var ref = liveSend(live, target({ event: event, args: readThis(el, args) }, el, comp));
+      if (busy) markBusy(live.state, ref, el);
     },
     // submit is what view.Submit renders into a form's onsubmit.
     submit: function (e, form, event, comp) {
@@ -1610,7 +1766,6 @@
       if (form.hasAttribute("aria-busy")) return; // sent already: the reply is on its way
       var live = liveState(form, event);
       if (!live) return;
-      form.setAttribute("aria-busy", "true");
       var msg = { event: event, form: formFields(form) };
       var name = form.getAttribute("data-nx-form");
       if (name !== null) {
@@ -1619,7 +1774,10 @@
         msg.fields = fieldNames(form);
       }
       var ref = liveSend(live, target(msg, form, comp));
-      live.state.submits[ref] = form;
+      markBusy(live.state, ref, form);
+      // A data-nx-busy button that submitted it waits for the reply too.
+      var by = e && e.submitter;
+      if (by && by.hasAttribute("data-nx-busy")) markBusy(live.state, ref, by);
     },
     // form is what a live view.Form renders into its oninput/onchange: the
     // fields go to the form, checked as the user types, after typing pauses.

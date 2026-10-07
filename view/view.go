@@ -43,6 +43,7 @@ func options() []nexus.Option {
 	return []nexus.Option{
 		// Every page loads the runtime, a sign-in page included.
 		nexus.AsRest("GET", "/_view/runtime.js", serveJS(func() string { return runtimeJS }), nexus.Public(), nexus.HideFromDashboard()),
+		nexus.AsRest("GET", "/_view/behaviors.js", serveJS(func() string { return behaviorsJS }), nexus.Public(), nexus.HideFromDashboard()),
 		nexus.AsRest("GET", "/_view/import.js", serveJS(func() string { return importJS }), nexus.Public(), nexus.HideFromDashboard()),
 		nexus.AsRest("GET", "/_view/twins.js", serveJS(twinsJS), nexus.Public(), nexus.HideFromDashboard()),
 		nexus.Invoke(func(app *nexus.App, lc nexus.Lifecycle) {

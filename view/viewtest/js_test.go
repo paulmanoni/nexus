@@ -81,7 +81,7 @@ func (p *Panel) Render() templ.Component {
 		on("fade-out", "fade out", view.JS(view.Hide("#fade", fade)))
 		on("shake", "shake", view.JS(view.Transition("shaking", "#fade", view.Time(5*time.Second))))
 		b.WriteString(`<p id="fade" hidden>fade</p>`)
-		on("opener", "open dialog", view.JS(view.PushFocus(""), view.Show("#dlg"), view.FocusFirst("#dlg")))
+		on("opener", "open dialog", view.JS(view.PushFocus(view.This()).Show("#dlg").FocusFirst("#dlg")))
 		fmt.Fprintf(&b, `<div id="dlg" hidden data-cancel="%s"><input id="dlg-field">`, html.EscapeString(view.Commands(view.Hide("#dlg"), view.PopFocus())))
 		on("dlg-close", "close dialog", view.JS(view.Exec("data-cancel", "#dlg")))
 		b.WriteString(`</div>`)

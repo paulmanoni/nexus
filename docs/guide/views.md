@@ -567,7 +567,7 @@ func (r *Room) Info(ctx context.Context, msg view.Message) error {
 | `push_patch` / `push_navigate` / `<.link patch navigate>` | `v.PushPatch` / `v.PushNavigate` / `@view.Link(href)` |
 | `put_flash` / `@flash` | `v.PutFlash(kind, msg)` / `v.Flash(kind)` |
 | `phx-update="ignore"` | `data-nx-ignore` on an element with an `id` |
-| `JS.show/hide/toggle/add_class/set_attr/focus/push` | `view.JS(view.Show(…), view.AddClass(…), view.Push(p.Save))` — see [JS commands](#js-commands) |
+| `JS.show/hide/toggle/add_class/set_attr/focus/push` | `view.JS(view.Show(…).AddClass(…).Push(p.Save))` — see [JS commands](#js-commands) |
 | `push_event(socket, "saved", payload)` / `JS.exec` from the server | `p.PushEvent("saved", payload)` / `p.PushJS(ops…)` |
 | JS hooks | islands (Vue/React/TS components), `view.State` signals for browser-only state |
 | form recovery on reconnect | the same (`view.Change` forms are re-sent) |
@@ -580,17 +580,31 @@ func (r *Room) Info(ctx context.Context, msg view.Message) error {
 ### JS commands
 
 Some of what a click does needs no server: opening a menu, showing a step,
-marking a row. `view.JS` runs a list of commands in the browser, in order —
-Phoenix LiveView's `JS` — and is a script like `view.Send`, so it goes in any
-`on*` attribute (and in a component library's `templ.Attributes`):
+marking a row. `view.JS` runs commands in the browser, in order — Phoenix
+LiveView's `JS` — and is a script like `view.Send`, so it goes in any `on*`
+attribute (and in a component library's `templ.Attributes`). Commands chain,
+each step a method of the one before:
 
 ```templ
-<button onclick={ view.JS(view.Show("#confirm"), view.FocusFirst("#confirm")) }>Delete</button>
+<button onclick={ view.JS(view.Show("#confirm").FocusFirst("#confirm")) }>Delete</button>
 <div id="confirm" hidden>
 	Delete { p.Name }?
-	<button onclick={ view.JS(view.Hide("#confirm"), view.Push(p.Delete, p.ID)) }>Yes</button>
+	<button onclick={ view.JS(view.Hide("#confirm").Push(p.Delete, p.ID)) }>Yes</button>
 </div>
 ```
+
+A chain is a value: extending it never changes it, so steps shared by several
+buttons are built once —
+
+```go
+closing := view.Hide("#confirm").PopFocus()
+yes := closing.Push(p.Delete, p.ID)   // closing itself is unchanged
+no := closing
+```
+
+— and `a.Then(b, c)` joins chains. `view.JS(a, b)` with separate commands
+still works and runs the same as `a.Then(b)`; a `[]view.JSOp` built in code
+spreads into `view.JS(ops...)`.
 
 | Command | |
 |---|---|
@@ -600,7 +614,12 @@ Phoenix LiveView's `JS` — and is a script like `view.Send`, so it goes in any
 | `Focus(sel, …)` / `FocusFirst(sel, …)` | the element / its first focusable descendant |
 | `Push(p.Method, args…)` / `PushTo(p, "Method", args…)` | `view.Send` / `view.SendTo` as a step |
 | `Transition(classes, sel, …)` | adds classes for a while (`view.Time`, 200ms by default) — a shake, a flash |
-| `PushFocus(sel, …)` / `PopFocus()` | remembers an element (`""`: the one the event is on) / focuses the last remembered |
+| `Confirm(message)` | asks with the browser's confirm dialog; the commands after it run only on yes — `view.Confirm("Delete it?").Push(p.Delete, id)` |
+| `SetValue(value, sel, …)` | sets a field's value as if typed: its `input` and `change` fire, so a `view.Change` or live form hears it — clearing a search box |
+| `Copy(sel, …)` / `CopyText(text)` | puts a field's value (else the element's text) or `text` on the clipboard; the clicked element carries `data-copied` for a moment |
+| `ScrollTo(sel, …)` | scrolls the element into view |
+| `PushFocus(sel, …)` / `PopFocus()` | remembers an element (`view.This()`: the one the event is on) / focuses the last remembered |
+| `Debounce(d)` / `Throttle(d)` | time the steps after them — see [Debounce and throttle](#busy-buttons-behaviors-and-when-to-write-javascript) |
 | `Exec(attr, sel, …)` | runs the commands held in an attribute — `view.Commands(…)`, or any live script such as `view.Send` |
 | `Dispatch(event, sel, …)` | fires a `CustomEvent` (`view.Detail(v)`, `view.NoBubble()`) — for islands and scripts |
 
@@ -620,7 +639,7 @@ A dialog keeps its closing steps once, so its close button, a Cancel and
 anything else that closes it share them:
 
 ```templ
-<button onclick={ view.JS(view.PushFocus(""), view.Show("#confirm"), view.FocusFirst("#confirm")) }>Delete</button>
+<button onclick={ view.JS(view.PushFocus(view.This()).Show("#confirm").FocusFirst("#confirm")) }>Delete</button>
 <div id="confirm" hidden data-cancel={ view.Commands(view.Hide("#confirm"), view.PopFocus()) }>
 	<button onclick={ view.JS(view.Exec("data-cancel", "#confirm")) }>Cancel</button>
 </div>
@@ -638,13 +657,14 @@ func (p *Orders) Save(ctx context.Context, f OrderForm) error {
 }
 ```
 
-A pushed command's `""` selector is the page's live root. An event that fails
+In a pushed command `view.This()` is the page's live root. An event that fails
 sends none of what it pushed, and the first, server-rendered load drops them —
 there is no browser to run them in yet. `viewtest`'s `p.Eval(js)` listens for a
 pushed event.
 
-A selector matches anywhere on the page; `""` is the element the event is on;
-`view.Closest()` makes it the nearest matching ancestor (a row's own row:
+A command's target is a CSS selector, matching anywhere on the page, or
+`view.This()` — the element the event is on (JavaScript's
+`this`): `view.AddClass("is-on", view.This())`. `view.Closest()` makes a selector the nearest matching ancestor (a row's own row:
 `view.ToggleClass("picked", "tr", view.Closest())`), `view.Inner()` matches
 inside the element only, and `view.Within(container)` matches inside the
 element's nearest `container` — an accordion section's own panel:
@@ -661,6 +681,91 @@ one that renders it differently wins, and the attribute is the server's again
 the `style` attribute's `display`, and Show removes `hidden`; both are kept the
 same way. In tests, `viewtest` runs the commands: `Expect(loc).Visible()`,
 `Hidden()`, `HasClass(c)`, `NoClass(c)`, `Attr`, `Focused()`.
+
+### Busy buttons, behaviors, and when to write JavaScript
+
+**A button that waits for its reply.** Mark any element whose event goes to
+the server with `data-nx-busy`; from the click until that event's reply it
+carries `aria-busy="true"`, ignores further clicks, and a re-render meanwhile
+leaves the marker alone:
+
+```templ
+<button class="group" data-nx-busy onclick={ view.Send(p.FetchOrders) }>
+	<span class="group-aria-busy:hidden">Fetch orders</span>
+	<span class="hidden animate-spin group-aria-busy:inline-block">…</span>
+</button>
+```
+
+Style it with CSS keyed to the element itself (`group-aria-busy:`, or
+`[aria-busy=true]`) — not to an ancestor: the live page's root is busy
+during every event. There is no script to write. A `view.JS(… .Push(…))`
+chain on such an element counts too; a form being submitted is busy the
+same way, and so is its `data-nx-busy` submit button; a dropped connection
+releases every element whose reply can no longer come.
+
+**Debounce and throttle.** `Debounce(d)` and `Throttle(d)` are chain steps:
+they time the steps after them, as `Confirm` gates them, and steps before run
+at once:
+
+```templ
+<input oninput={ view.JS(view.Debounce(300*time.Millisecond).Push(p.Search, view.This().Value())) }/>
+<div onscroll={ view.JS(view.Throttle(200*time.Millisecond).Push(p.Seen)) }>…</div>
+<button onclick={ view.JS(view.AddClass("is-saving", view.This()).Debounce(time.Second).Push(p.Save)) }>Save</button>
+```
+
+`Debounce` runs the rest once the event has stopped firing for `d` (each new
+event restarts the wait). `Throttle` runs it for the first event at once and
+drops the rest within `d` — except a field's last `input`/`change`, which
+still runs when `d` is up, so the final value is never lost. A debounced chain
+still waiting inside a form runs before that form's submit. `view.Send`,
+`view.Change` and `view.Submit` are the one-event shortcuts — `view.Change`
+already waits 150ms for typing to pause, and a form being submitted ignores a
+second submit; anything more (timing, a confirm, several steps) is a
+`view.JS` chain.
+
+**Reading the element: `view.This()`.** Event arguments are fixed when the
+page renders; `view.This()` — JavaScript's `this`, the element whose `on…`
+attribute runs — gives arguments the browser reads as the event is sent:
+
+```templ
+<input oninput={ view.JS(view.Debounce(300*time.Millisecond).Push(p.Search, view.This().Value())) }/>
+<input type="checkbox" onchange={ view.Send(p.Toggle, row.ID, view.This().Checked()) }/>
+<button data-id={ row.ID } onclick={ view.Send(p.Open, view.This().Attr("data-id")) }>Open</button>
+```
+
+`view.This()` is also a command target (above). `Value()` is a string, `Checked()` a bool, `Attr(name)` a string (null when
+missing, so a pointer parameter is nil); a number parameter takes a string
+that holds one. They work wherever arguments go — `view.Send`, `view.SendTo`,
+`view.Push`. On a form's `oninput`, `this` is the form, not the field typed
+into: send a form's fields with `view.Change`.
+
+**Behaviors.** `@view.Behaviors()` (after `@view.Script()`; the kit's
+`ui.Script()` includes it) adds what markup asks for with `data-nx`
+attributes — no styling of its own, so any design system uses it:
+
+| Attribute | |
+|---|---|
+| `data-nx-filter="<selector>"` on a text box | hides, as it is typed in, the `[data-nx-filter-item]` elements inside the selector's match whose text doesn't contain it (`data-nx-filter-item="<text>"` matches that text instead); a `[data-nx-filter-empty]` element shows when none is left. Hidden checkboxes stay checked and are still sent |
+| `data-nx-check-all` on a checkbox | checks or clears the other boxes of its group (nearest `[data-nx-checks]`, else its form) before the form's own `view.Change` reads them; shows partly checked; `[data-nx-checked-count]` shows how many |
+| `data-nx-valid` on a form | its submit buttons are enabled only while the fields pass the browser's own checks (`required`, `minlength`, `pattern`, `type=email`) |
+
+Each is applied again after a live re-render, so a filtered list stays
+filtered when the server renders it anew.
+
+**Which tool, in order.** Reach for the first that does the job:
+
+1. **A server event** (`view.Send`, `view.Submit`, a live form): state the
+   server owns.
+2. **A JS command** (`view.JS`): what a click does to the page — show, hide,
+   classes, attributes, focus, a confirm, a copy — with at most one push.
+3. **A behavior** (`data-nx-*`): a small, stateless reaction to typing or
+   checking that no event should round-trip for.
+4. **An island or your own script**: a widget with state of its own — a
+   chart, an editor, a clock. Keep it thin: let it handle the DOM events it
+   must and hand back to commands with
+   `__nx.js(el, event, [["push", {event: "Drop", args: [id]}]])` — or, simpler,
+   `el.click()` on an element whose `onclick` is the `view.JS` chain — rather
+   than growing state of its own.
 
 ### Forms: `view.Form`
 

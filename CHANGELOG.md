@@ -4,6 +4,50 @@ All notable changes to nexus are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and the project
 adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+## [2.23.0] - 2026-10-07
+
+### Added
+
+- JS commands chain: `view.JS(view.Show("#m").FocusFirst("#m").Push(p.Load))`.
+  Every command is a method of the one before; a chain is a value — extending
+  it never changes it, so shared steps are built once
+  (`closing := view.Hide("#m").PopFocus()`) — and `a.Then(b, c)` joins chains.
+  `view.JS(a, b)` and spreading a `[]view.JSOp` keep working.
+- New commands: `view.Confirm(msg)` (the steps after it run only on yes),
+  `view.SetValue(v, sel)` (as if typed: `input`/`change` fire, so a
+  `view.Change` hears it), `view.Copy(sel)` / `view.CopyText(text)` (clipboard;
+  the clicked element carries `data-copied` for a moment), `view.ScrollTo(sel)`.
+- `view.Debounce(d)` / `view.Throttle(d)`: chain steps timing the steps after
+  them (as `Confirm` gates them; steps before run at once) —
+  `view.JS(view.Debounce(300*time.Millisecond).Push(p.Search, view.This().Value()))`.
+  Debounce runs them once the event stops firing for `d`; throttle runs the
+  first at once and drops the rest within `d`, keeping a field's last input.
+  A debounced chain waiting in a form runs before that form's submit.
+- `view.This()`: JavaScript's `this` — the element the event is on. A JS
+  command's target (`view.AddClass("on", view.This())`; commands' selector
+  parameters are now `view.Target`: a selector string or `view.This()`, so
+  `""` is no longer needed — it still works), and event arguments read when the
+  event is sent: `view.Send(p.Toggle, id, view.This().Checked())`, `.Value()`,
+  `.Attr(name)`, in `view.Send`, `view.SendTo` and `view.Push`. An event's
+  number or bool parameter now also takes a string holding one ("42").
+- `data-nx-busy`: an element whose event goes to the server carries
+  `aria-busy="true"` from the click until that event's reply, ignores clicks
+  meanwhile, and keeps the marker through re-renders; a dropped connection
+  releases it. Spinners are CSS (`aria-busy` variants), no script.
+- `@view.Behaviors()` (also loaded by the kit's `ui.Script()`): style-free
+  `data-nx` behaviors — `data-nx-filter` (a box filtering `[data-nx-filter-item]`s,
+  with `[data-nx-filter-empty]`), `data-nx-check-all` (+ `data-nx-checks`,
+  `[data-nx-checked-count]`; set before the form's `view.Change` reads the
+  boxes), `data-nx-valid` (submit enabled while the fields pass the browser's
+  checks). Each is applied again after a live re-render.
+
+### Fixed
+
+- A form being submitted kept its `aria-busy` (the double-submit guard) only
+  until the next re-render; a re-render meanwhile no longer clears it.
+
 ## [2.22.3] - 2026-10-07
 
 ### Fixed
