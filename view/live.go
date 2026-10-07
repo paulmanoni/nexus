@@ -1136,6 +1136,7 @@ func (d *liveDef) event(ctx context.Context, in *instance, ev liveEvent, render 
 				}
 			}
 		}
+		page.setErrs(f.shown())
 		return render(ev.Ref, false)
 	}
 	if ev.Event == "__save" {

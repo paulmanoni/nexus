@@ -392,6 +392,8 @@ type liveForm interface {
 	addErrs(errs *nexus.Error)
 	// errors are the form's current validation errors, nil when none.
 	errors() *nexus.Error
+	// shown are the errors a render shows, nil when none: see Form.shown.
+	shown() *nexus.Error
 	// submitOK resets the form: its submit succeeded.
 	submitOK()
 	// valueArg is the form's value, for calling an event that takes it.
@@ -425,7 +427,37 @@ func (f *Form) saveSelf(ctx context.Context) (error, bool) {
 	err, _ := out[0].Interface().(error)
 	return err, true
 }
-func (f *Form) anyErrs() bool        { return f.errs.Any() }
+func (f *Form) anyErrs() bool { return f.errs.Any() }
+
+// shown are the form's errors as a render shows them — a field's once the
+// user has left it (every field's after a submit), and the form-wide one —
+// so markup reading view.Errors matches the fields F gives the kit.
+func (f *Form) shown() *nexus.Error {
+	if !f.errs.Any() {
+		return nil
+	}
+	if f.submitted {
+		return f.errs
+	}
+	open := map[string]bool{nexus.GlobalErrorKey: true}
+	for _, name := range f.meta.names {
+		if fm := f.meta.byName[name]; f.touched[fm.name] {
+			open[fm.name], open[fm.errKey] = true, true
+		}
+	}
+	out := nexus.Invalid()
+	for key, msgs := range f.errs.Fields {
+		if open[key] {
+			for _, m := range msgs {
+				out.Field(key, m)
+			}
+		}
+	}
+	if !out.Any() {
+		return nil
+	}
+	return out
+}
 func (f *Form) errors() *nexus.Error { return f.errs }
 
 func (f *Form) addErrs(errs *nexus.Error) {

@@ -4,6 +4,15 @@ All notable changes to nexus are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and the project
 adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.22.2] - 2026-10-07
+
+### Fixed
+
+- A live-validated `view.Form` (`view.LiveValidation` or a change method)
+  now publishes its errors to `view.Errors(ctx)` as it checks — a field's
+  once it's left, every field's after a submit, as `F(name)` shows them.
+  Markup of your own around `view.RenderForm` showed errors only on submit.
+
 ## [2.22.1] - 2026-10-07
 
 ### Fixed

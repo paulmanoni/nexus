@@ -308,3 +308,59 @@ func TestFormAllFieldsDefault(t *testing.T) {
 	}
 	p.Expect("name").Value("") // reset to the loaded (Init) values
 }
+
+type hostForm struct {
+	view.Form
+	Name string `form:"name" validate:"required"`
+	Code string `form:"code" validate:"required"`
+}
+
+// Host renders its form with markup of its own, reading view.Errors as
+// hand-written fields do.
+type Host struct {
+	view.LiveView
+	Edit hostForm
+}
+
+func (h *Host) Mount(ctx context.Context) error {
+	h.Edit.Load(hostForm{Name: "Kibo", Code: "K1"})
+	return nil
+}
+
+func (h *Host) Save(ctx context.Context, f hostForm) error { return nil }
+
+func (h *Host) Render() templ.Component {
+	return templ.ComponentFunc(func(ctx context.Context, w io.Writer) error {
+		io.WriteString(w, `<!DOCTYPE html><html><head><title>Host</title>`)
+		if err := view.Script().Render(ctx, w); err != nil {
+			return err
+		}
+		io.WriteString(w, `</head><body>`)
+		fields := templ.ComponentFunc(func(ctx context.Context, w io.Writer) error {
+			errs := view.Errors(ctx)
+			_, err := io.WriteString(w, `<input name="name" value="`+h.Edit.Name+`"><p id="name-error">`+errs.Field("name")+`</p>`+
+				`<input name="code" value="`+h.Edit.Code+`"><p id="code-error">`+errs.Field("code")+`</p>`)
+			return err
+		})
+		if err := view.RenderForm(&h.Edit, h.Save, view.LiveValidation).Render(templ.WithChildren(ctx, fields), w); err != nil {
+			return err
+		}
+		_, err := io.WriteString(w, `</body></html>`)
+		return err
+	})
+}
+
+// A live form's errors reach view.Errors as they show on the kit's fields:
+// a field's once it is left, and not one the user hasn't touched.
+func TestFormLiveErrorsInOwnMarkup(t *testing.T) {
+	app := nexustest.New(t, config.Runtime{}, view.Live[*Host]("/host"))
+	p := viewtest.Mount[*Host](t, app)
+	p.Fill("name", "").Blur()
+	p.Expect("#name-error").Text("required")
+	p.Fill("code", "")
+	p.Expect("#code-error").Text("")
+	p.Blur()
+	p.Expect("#code-error").Text("required")
+	p.Fill("name", "Meru").Blur()
+	p.Expect("#name-error").Text("")
+}
