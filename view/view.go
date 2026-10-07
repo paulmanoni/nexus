@@ -106,7 +106,7 @@ func (renderer) Render(c *httpx.Ctx, result any) error {
 		return fmt.Errorf("view: the handler returned %T, want a templ.Component", result)
 	}
 	var buf bytes.Buffer
-	if err := comp.Render(withRender(withApp(c.Request.Context(), c), &render{}), &buf); err != nil {
+	if err := comp.Render(withPageURL(withRender(withApp(c.Request.Context(), c), &render{}), c.Request.URL), &buf); err != nil {
 		return err
 	}
 	c.Data(http.StatusOK, "text/html; charset=utf-8", buf.Bytes())

@@ -408,6 +408,7 @@ func (d *liveDef) method(m reflect.Method) (*liveMethod, bool) {
 
 // instance is one page's or connection's copy of the live state.
 type instance struct {
+	url  *url.URL // the page's URL as the browser shows it
 	def  *liveDef
 	v    reflect.Value // *T
 	deps []reflect.Value
@@ -585,6 +586,7 @@ func (in *instance) render(ctx context.Context) (_ []byte, _ *rframe, err error)
 	}
 	var buf bytes.Buffer
 	ctx = context.WithValue(ctx, formErrorsKey{}, in.errs)
+	ctx = withPageURL(ctx, in.root().url)
 	in.gen++
 	ctx = withInstance(ctx, in)
 	ctx, rec := withRecorder(ctx, &buf)
@@ -613,6 +615,7 @@ func (in *instance) renderTree(ctx context.Context, prev *spotTable, again map[u
 	}
 	var buf bytes.Buffer
 	ctx = context.WithValue(ctx, formErrorsKey{}, in.errs)
+	ctx = withPageURL(ctx, in.root().url)
 	in.gen++
 	ctx = withInstance(ctx, in)
 	ctx, rec := withRecorder(ctx, &buf)
@@ -705,11 +708,13 @@ func (d *liveDef) pageHandler() any {
 			return nil, err
 		}
 		in := d.instance(vs.template, vs.deps)
+		u := *c.Request.URL
+		in.url = &u
 		props, err := in.routedProps(c.Param, c.Request.URL)
 		if err != nil {
 			return nil, err
 		}
-		if err := in.mount(ctx, props); err != nil {
+		if err := in.mount(withPageURL(ctx, in.url), props); err != nil {
 			return nil, err
 		}
 		socket := strings.TrimSuffix(c.Request.URL.Path, "/") + "/_live"
@@ -973,12 +978,13 @@ func (d *liveDef) serve(ctx context.Context, rq liveRequest, lc *liveConn, in *i
 		if navigated != "" {
 			shown = pageURL(page, navigated)
 		}
+		in.url = shown
 		props, err := in.routedProps(param, shown)
 		if err != nil {
 			send(liveReply{Error: nexus.ErrorOf(err).Error()})
 			return
 		}
-		if err := in.mount(ctx, props); err != nil {
+		if err := in.mount(withPageURL(ctx, in.url), props); err != nil {
 			send(liveReply{Error: err.Error()})
 			return
 		}
@@ -1025,9 +1031,10 @@ func (d *liveDef) serve(ctx context.Context, rq liveRequest, lc *liveConn, in *i
 			lc.next, keep = target, false
 			return true, true
 		}
+		in.url = u
 		props, err := in.routedProps(param, u)
 		if err == nil {
-			err = in.update(ctx, props)
+			err = in.update(withPageURL(ctx, u), props)
 		}
 		if err != nil {
 			return false, send(liveReply{Ref: ref, Error: nexus.ErrorOf(err).Error()})

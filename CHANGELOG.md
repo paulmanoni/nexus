@@ -6,6 +6,16 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [2.26.0] - 2026-10-07
+
+### Added
+
+- `view.CurrentURL(ctx)`: the URL of the page being rendered — the request's
+  for a page, the one the browser shows for a live page (kept current as
+  `view.Link`/`PushPatch` patch it), the page a shard sits on for its
+  re-render. Mount, Update, Render and context processors read it — the path
+  breadcrumbs or an active menu entry follow.
+
 ## [2.25.0] - 2026-10-07
 
 ### Added

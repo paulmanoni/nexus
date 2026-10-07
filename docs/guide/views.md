@@ -603,6 +603,17 @@ templ topbar() {
 }
 ```
 
+A processor that depends on the page reads `view.CurrentURL(ctx)` — the
+URL of the page being rendered (a live page's as the browser shows it, kept
+current as `view.Link` or `PushPatch` patch it) — so breadcrumbs or the active
+menu entry can come from one place:
+
+```go
+view.ContextProcessor(func(ctx context.Context) Breadcrumbs {
+	return breadcrumbsFor(view.CurrentURL(ctx).Path)
+})
+```
+
 The processor takes `ctx` — the request's, or a live page's connection's,
 with the visitor's identity — then any dependencies from the app's DI
 container, and returns the value, with or without an error. Its result type

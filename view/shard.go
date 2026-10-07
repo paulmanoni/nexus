@@ -109,7 +109,7 @@ func (d *shardDef) serve(c *httpx.Ctx) {
 		in[i] = p.Elem()
 	}
 	r := &render{restore: req.States, forcePath: req.Path, rootPending: true}
-	ctx := withRender(withApp(c.Request.Context(), c), r)
+	ctx := withPageURL(withRender(withApp(c.Request.Context(), c), r), refererURL(c.Request))
 	comp, _ := d.fn.Call(in)[0].Interface().(templ.Component)
 	var buf bytes.Buffer
 	err := errors.New("view: shard returned no component")

@@ -301,7 +301,9 @@ Component libraries (templUI): reactive entries in a `templ.Attributes{…}` lit
 (Props.Attributes) compile like element attributes; `view.Assets(prefix, handler)` serves
 library/CSS files. **Context processors** (Django's): `view.ContextProcessor(func(ctx, deps…) (T[, error]))` (an Option; result type names
 it, deps from DI) + `view.FromContext[T](ctx)` in any template — lazy, memoized per render (`render.processed`),
-taints the tracked spot reading it; an error or an unregistered T panics the render. **Live views** — three tiers as in Phoenix: templ components (stateless), live views,
+taints the tracked spot reading it; an error or an unregistered T panics the render. `view.CurrentURL(ctx)`: the
+rendered page's URL (request's; live page's `instance.url`, set at mount and on patch; a shard's from a same-origin
+Referer) — what a processor reads for breadcrumbs/active menu. **Live views** — three tiers as in Phoenix: templ components (stateless), live views,
 signals (browser). A live view is a struct embedding `view.LiveView` **by value** (helpers: `Connected`, `Subscribe`,
 `Track`/`Untrack`, `PushPatch`/`PushNavigate`, `PutFlash`/`Flash` (cleared by the page's next event), `ID`); the
 same type is a page when routed — `view.Live[*T](path, gates…)` (`.Provide(NewT)` optional: the DI instance, else

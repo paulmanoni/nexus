@@ -890,6 +890,7 @@ CopyText(s), ScrollTo(sel), SetCookie(name, value, view.MaxAge(d)) + Reload()
 → __nx.config(key) in the browser (secret-named keys fail boot); context
 processors: view.ContextProcessor(func(ctx, deps…) (T, error)) +
 view.FromContext[T](ctx) in any template (once per render, from the request);
+view.CurrentURL(ctx) is the rendered page's URL (a live page's, patched);
 Debounce(d)/Throttle(d) (time the steps after
 them), If(cond)/ElseIf(cond)/Else() (cond: view.El("#a").Checked(),
 .Value(), .Attr(n), a read's .Eq(text), .Is(css), or view.El(sel)); view.El(sel) / view.This()
