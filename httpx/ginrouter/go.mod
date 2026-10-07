@@ -4,7 +4,7 @@ go 1.26.2
 
 require (
 	github.com/gin-gonic/gin v1.10.1
-	github.com/paulmanoni/nexus/v2 v2.22.2
+	github.com/paulmanoni/nexus/v2 v2.22.3
 )
 
 require (
