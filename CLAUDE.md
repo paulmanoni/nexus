@@ -392,9 +392,12 @@ attribute a command changed with the server's value at the time; `syncAttributes
 server renders that attribute unchanged, and drops it when the server changes it (server wins). Show/Hide edit
 the `style` attribute's display (+ remove `hidden`). `Debounce(d)`/`Throttle(d)` are chain steps timing the steps after them (runtime `nx.js` hands the rest to
 `nx.debounce`/`nx.throttle`, per element+event type; throttle keeps a field's last input; a waiting debounce in a
-form runs before its submit). `view.This()` = JS `this`: a command target (selector params are `view.Target` =
-any: a string or This(); `""` still means the element) and `.Value()`/`.Checked()`/`.Attr(n)` as Send/SendTo/Push
-args, `{"$nx":…}` markers the runtime's `readThis` fills when sending (an event's number/bool param takes a numeric
+form runs before its submit). `If(cond)`/`ElseIf(cond)`/`Else()` are chain steps (cond = `view.Condition`: an Element (selector matches
+anything), its read `Checked()`/`Value()` (non-empty)/`Attr(n)` (present), or `.Is(css)`; scoped like a target; runtime `jsBranch`: Else/ElseIf reached while running ends the branch, an If met
+while skipping owns what follows; opList panics on Else/ElseIf without an If or after Else; read when reached, never
+a reply). `view.Element` (string type): selector params take it — a literal compiles,
+`view.El(s)` wraps a built string, `view.This()` (= "") is JS `this`; `.Value()`/`.Checked()`/`.Attr(n)` are
+`ElementRead`s, as Send/SendTo/Push args `{"$nx":…,"to"?}` markers the runtime's `readArgs` fills when sending (an event's number/bool param takes a numeric
 string). `data-nx-busy` on an element: `aria-busy="true"` from its event's
 send to its reply (runtime `busyEls`, kept through morphs, released on socket close; inline CSS makes it inert);
 forms being submitted use the same. `@view.Behaviors()` (`/_view/behaviors.js`, also in kit `ui.Script()`):

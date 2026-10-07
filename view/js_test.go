@@ -2,6 +2,7 @@ package view
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"html"
 	"strings"
@@ -90,14 +91,46 @@ func TestJSTimingAndThis(t *testing.T) {
 	if got != want {
 		t.Errorf("got  %s\nwant %s", got, want)
 	}
-	type sel string
-	if got := JS(Hide(sel(".x"))).Call; got != JS(Hide(".x")).Call {
-		t.Errorf("a named string type: %s", got)
+	id := "row-7"
+	if got := JS(Hide(El("#" + id))).Call; got != JS(Hide("#row-7")).Call {
+		t.Errorf("a selector built at render: %s", got)
 	}
-	defer func() {
-		if r := recover(); r == nil || !strings.Contains(fmt.Sprint(r), "view.This()") {
-			t.Errorf("a target that is no selector: %v", r)
-		}
-	}()
-	Show(42)
+}
+
+func TestJSConditionsEncoding(t *testing.T) {
+	got := JS(If(El("#a:checked")).Show("#x").ElseIf(This().Is(".on"), Closest()).Hide("#x").Else().Toggle("#y")).Call
+	want := `__nx.js(this,event,[[&#34;if&#34;,{&#34;to&#34;:&#34;#a:checked&#34;}],[&#34;show&#34;,{&#34;to&#34;:&#34;#x&#34;}],[&#34;elif&#34;,{&#34;is&#34;:&#34;.on&#34;,&#34;scope&#34;:&#34;closest&#34;}],[&#34;hide&#34;,{&#34;to&#34;:&#34;#x&#34;}],[&#34;else&#34;,{}],[&#34;toggle&#34;,{&#34;to&#34;:&#34;#y&#34;}]])`
+	if got != want {
+		t.Errorf("got  %s\nwant %s", got, want)
+	}
+	// An If inside a branch starts a new one: its Else is allowed.
+	JS(If(El("#a")).If(El("#b")).Show("#x").Else().Hide("#x"))
+
+	for name, chain := range map[string]JSOp{
+		"Else without an If before it":   Show("#x").Else(),
+		"ElseIf without an If before it": ElseIf(El("#a")).Show("#x"),
+		"ElseIf after an Else":           If(El("#a")).Else().ElseIf(El("#b")),
+		"Else after an Else":             If(El("#a")).Else().Else(),
+	} {
+		func() {
+			defer func() {
+				if r := recover(); r == nil || !strings.Contains(fmt.Sprint(r), name) {
+					t.Errorf("%s: %v", name, r)
+				}
+			}()
+			JS(chain)
+		}()
+	}
+}
+
+func TestElementReadsAndConditions(t *testing.T) {
+	b, _ := json.Marshal([]any{7, This().Value(), El("#q").Value(), This().Checked(), El("#r").Attr("data-id")})
+	if got, want := string(b), `[7,{"$nx":"value"},{"$nx":"value","to":"#q"},{"$nx":"checked"},{"$nx":"attr","name":"data-id","to":"#r"}]`; got != want {
+		t.Errorf("reads: got %s\nwant %s", got, want)
+	}
+	got := JS(If(El("#agree").Checked()).ElseIf(El("#q").Value()).ElseIf(El("#m").Attr("open")).ElseIf(El("#m").Is("[hidden]")).ElseIf(This()).Else()).Call
+	want := `__nx.js(this,event,[[&#34;if&#34;,{&#34;read&#34;:&#34;checked&#34;,&#34;to&#34;:&#34;#agree&#34;}],[&#34;elif&#34;,{&#34;read&#34;:&#34;value&#34;,&#34;to&#34;:&#34;#q&#34;}],[&#34;elif&#34;,{&#34;name&#34;:&#34;open&#34;,&#34;read&#34;:&#34;attr&#34;,&#34;to&#34;:&#34;#m&#34;}],[&#34;elif&#34;,{&#34;is&#34;:&#34;[hidden]&#34;,&#34;to&#34;:&#34;#m&#34;}],[&#34;elif&#34;,{}],[&#34;else&#34;,{}]])`
+	if got != want {
+		t.Errorf("conditions: got %s\nwant %s", got, want)
+	}
 }

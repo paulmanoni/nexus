@@ -619,6 +619,7 @@ spreads into `view.JS(ops...)`.
 | `Copy(sel, …)` / `CopyText(text)` | puts a field's value (else the element's text) or `text` on the clipboard; the clicked element carries `data-copied` for a moment |
 | `ScrollTo(sel, …)` | scrolls the element into view |
 | `PushFocus(sel, …)` / `PopFocus()` | remembers an element (`view.This()`: the one the event is on) / focuses the last remembered |
+| `If(cond)` / `ElseIf(cond)` / `Else()` | run the steps after them only when the condition holds — see [Conditions](#conditions) |
 | `Debounce(d)` / `Throttle(d)` | time the steps after them — see [Debounce and throttle](#busy-buttons-behaviors-and-when-to-write-javascript) |
 | `Exec(attr, sel, …)` | runs the commands held in an attribute — `view.Commands(…)`, or any live script such as `view.Send` |
 | `Dispatch(event, sel, …)` | fires a `CustomEvent` (`view.Detail(v)`, `view.NoBubble()`) — for islands and scripts |
@@ -682,6 +683,44 @@ the `style` attribute's `display`, and Show removes `hidden`; both are kept the
 same way. In tests, `viewtest` runs the commands: `Expect(loc).Visible()`,
 `Hidden()`, `HasClass(c)`, `NoClass(c)`, `Attr`, `Focused()`.
 
+### Conditions
+
+`If`, `ElseIf` and `Else` are chain steps too: what follows an `If` runs only
+when its condition holds, up to the next `ElseIf` or `Else`. A condition is
+about an [element](#elements-view-el-and-view-this) — `view.El(sel)` or
+`view.This()`, found as a target is (scoped with `view.Closest()`,
+`view.Inner()` or `view.Within()`):
+
+| Condition | Holds when |
+|---|---|
+| `view.El("#agree").Checked()` | it is checked |
+| `view.El("#q").Value()` | its value isn't empty |
+| `view.El("#m").Attr("open")` | it has the attribute |
+| `view.This().Is(":invalid")` | it matches the CSS selector |
+| `view.El(".row.selected")` | the selector matches anything |
+
+```templ
+<button onclick={ view.JS(view.If(view.El("#agree").Checked()).Push(p.Continue).Else().Transition("shake", view.This())) }>Continue</button>
+<input type="checkbox" onchange={ view.JS(view.If(view.This().Checked()).Show("#extra").Else().Hide("#extra")) }/>
+<button onclick={ view.JS(view.If(view.El("#email").Is(":placeholder-shown")).Focus("#email").
+	ElseIf(view.El("#email").Is(":invalid")).AddClass("error", "#email").
+	Else().Push(p.Invite)) }>Invite</button>
+```
+
+`Is` takes any CSS selector, so the rest needs nothing new: `:checked`,
+`:placeholder-shown` (empty), `:valid`/`:invalid`, `:focus-within`, `:empty`,
+`[open]`, `[hidden]`, `.is-open`, `:not(…)`. A few rules:
+
+- A condition reads the page when the chain reaches it — after a `Debounce`,
+  once the pause is over. It never sees a reply: `Push` sends and moves on, so
+  what depends on the server's answer is pushed back by the event (`PushJS`).
+- An `If` reaches to the end of the chain, or its `ElseIf`/`Else`. Steps that
+  always run go before it. An `If` inside a branch takes the `ElseIf` and
+  `Else` after it.
+- What the server knows (permissions, a dirty record) is a Go `if` choosing
+  which chain to render; what only the browser knows (ticked, typed, open,
+  focused) is a condition.
+
 ### Busy buttons, behaviors, and when to write JavaScript
 
 **A button that waits for its reply.** Mark any element whose event goes to
@@ -723,19 +762,27 @@ already waits 150ms for typing to pause, and a form being submitted ignores a
 second submit; anything more (timing, a confirm, several steps) is a
 `view.JS` chain.
 
-**Reading the element: `view.This()`.** Event arguments are fixed when the
-page renders; `view.This()` — JavaScript's `this`, the element whose `on…`
-attribute runs — gives arguments the browser reads as the event is sent:
+### Elements: `view.El` and `view.This`
+
+A `view.Element` is an element of the page named by a CSS selector. A
+selector written in place is one (`view.Show("#menu")`); `view.El(sel)` makes
+one from a string built at render time (`view.Show(view.El("#row-" + id))`),
+and `view.This()` is the element the event is on — JavaScript's `this` (in a
+command pushed from the server, the live root). The same element is a
+command's target, a [condition](#conditions), and a value read as the event is
+sent — event arguments are otherwise fixed when the page renders:
 
 ```templ
 <input oninput={ view.JS(view.Debounce(300*time.Millisecond).Push(p.Search, view.This().Value())) }/>
 <input type="checkbox" onchange={ view.Send(p.Toggle, row.ID, view.This().Checked()) }/>
 <button data-id={ row.ID } onclick={ view.Send(p.Open, view.This().Attr("data-id")) }>Open</button>
+<button onclick={ view.Send(p.Search, view.El("#q").Value()) }>Search</button>
 ```
 
-`view.This()` is also a command target (above). `Value()` is a string, `Checked()` a bool, `Attr(name)` a string (null when
+`Value()` is a string, `Checked()` a bool, `Attr(name)` a string (null when
 missing, so a pointer parameter is nil); a number parameter takes a string
-that holds one. They work wherever arguments go — `view.Send`, `view.SendTo`,
+that holds one. A read of `view.El(sel)` reads the first element `sel`
+matches. Reads work wherever arguments go — `view.Send`, `view.SendTo`,
 `view.Push`. On a form's `oninput`, `this` is the form, not the field typed
 into: send a form's fields with `view.Change`.
 

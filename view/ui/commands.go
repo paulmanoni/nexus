@@ -18,10 +18,10 @@ func tabSelect(p TabsProps, t Tab) templ.ComponentScript {
 	if t.Panel != "" {
 		for _, o := range p.Tabs {
 			if o.Panel != "" && o.Panel != t.Panel {
-				ops = append(ops, view.Hide("#"+o.Panel))
+				ops = append(ops, view.Hide(view.El("#"+o.Panel)))
 			}
 		}
-		ops = append(ops, view.Show("#"+t.Panel))
+		ops = append(ops, view.Show(view.El("#"+t.Panel)))
 	}
 	if hasScript(t.OnSelect) {
 		ops = append(ops, view.Exec("data-ui-select", view.This()))

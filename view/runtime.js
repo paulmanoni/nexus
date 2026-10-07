@@ -796,10 +796,44 @@
     });
   }
 
+  // jsHolds tests an If's condition on the elements it names (scoped as a
+  // target): one matches "is", one's read holds (checked, a value, the
+  // attribute), or - for a bare Element - one exists.
+  function jsHolds(el, a) {
+    var found = jsTargets(el, a);
+    if (a.is) return found.some(function (t) { return t.matches && t.matches(a.is); });
+    if (a.read) {
+      return found.some(function (t) {
+        var v = readElement(t, a);
+        return a.read === "attr" ? v !== null : !!v;
+      });
+    }
+    return found.length > 0;
+  }
+
+  // jsBranch picks the branch of the If at i: the index its steps start
+  // after, or -1 when none holds. An If met while skipping a branch is
+  // inside it, and so is every ElseIf and Else after that If.
+  function jsBranch(el, ops, i) {
+    for (var j = i; ; ) {
+      if (ops[j][0] === "else" || jsHolds(el, ops[j][1] || {})) return j;
+      do j++; while (j < ops.length && ["if", "elif", "else"].indexOf(ops[j][0]) < 0);
+      if (j >= ops.length || ops[j][0] === "if") return -1;
+    }
+  }
+
   // js runs what view.JS rendered: [[command, args], ...], in order.
   nx.js = function (el, e, ops) {
     for (var i = 0; i < ops.length; i++) {
-      if (ops[i][0] === "debounce" || ops[i][0] === "throttle") {
+      var name = ops[i][0];
+      // Reached while running, an ElseIf or Else ends the branch taken.
+      if (name === "elif" || name === "else") return;
+      if (name === "if") {
+        i = jsBranch(el, ops, i);
+        if (i < 0) return; // no branch holds
+        continue;
+      }
+      if (name === "debounce" || name === "throttle") {
         // The steps after it run at its pace.
         var rest = ops.slice(i + 1);
         nx[ops[i][0]](el, e, (ops[i][1] || {}).ms || 0, function () { nx.js(el, e, rest); });
@@ -1724,18 +1758,23 @@
     });
   }
 
-  // readThis fills in the arguments view.This() rendered as {"$nx": read}
-  // markers with what el holds now.
-  function readThis(el, args) {
+  // readElement is what an Element read (view.This().Value(),
+  // view.El("#q").Checked(), ...) finds on t, the element it names.
+  function readElement(t, a) {
+    switch (a.$nx || a.read) {
+      case "value": return t && t.value != null ? String(t.value) : "";
+      case "checked": return !!(t && t.checked);
+      case "attr": return t && t.getAttribute ? t.getAttribute(a.name) : null;
+    }
+  }
+
+  // readArgs fills in the arguments an Element read rendered as {"$nx": read}
+  // markers with what the element holds now: el, or the first match of "to".
+  function readArgs(el, args) {
     if (!Array.isArray(args)) return args;
     return args.map(function (a) {
       if (!a || typeof a !== "object" || Array.isArray(a) || typeof a.$nx !== "string") return a;
-      switch (a.$nx) {
-        case "value": return el && el.value != null ? String(el.value) : "";
-        case "checked": return !!(el && el.checked);
-        case "attr": return el && el.getAttribute ? el.getAttribute(a.name) : null;
-      }
-      return a;
+      return readElement(a.to ? document.querySelector(a.to) : el, a);
     });
   }
 
@@ -1757,7 +1796,7 @@
       if (busy && el.getAttribute("aria-busy") === "true") return; // sent already: the reply is on its way
       var live = liveState(el, event);
       if (!live) return;
-      var ref = liveSend(live, target({ event: event, args: readThis(el, args) }, el, comp));
+      var ref = liveSend(live, target({ event: event, args: readArgs(el, args) }, el, comp));
       if (busy) markBusy(live.state, ref, el);
     },
     // submit is what view.Submit renders into a form's onsubmit.

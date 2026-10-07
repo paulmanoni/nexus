@@ -886,7 +886,10 @@ AddClass("is-open", "#menu").Push(p.Load)) } — commands chain (a chain is a
 value: closing := view.Hide("#m").PopFocus(); closing.Push(p.Save)); Confirm
 (msg) stops the rest on no, SetValue(v, sel) fires input/change, Copy(sel)/
 CopyText(s), ScrollTo(sel), Debounce(d)/Throttle(d) (time the steps after
-them); view.This() = JS this: a command target (AddClass("on", view.This()))
+them), If(cond)/ElseIf(cond)/Else() (cond: view.El("#a").Checked(),
+.Value(), .Attr(n), .Is(css), or view.El(sel)); view.El(sel) / view.This()
+(JS this) are Elements — targets, conditions, and Send/Push args read when
+sent; view.This() = JS this: a command target (AddClass("on", view.This()))
 and Send/Push args read when sent (.Value(), .Checked(), .Attr(n));
 data-nx-busy on a button: aria-busy until its
 event's reply; @view.Behaviors(): data-nx-filter, data-nx-check-all,

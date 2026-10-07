@@ -957,6 +957,17 @@
             case "checked": if (!(el.tagName === "OPTION" ? el.selected : el.tagName === "INPUT" && el.checked)) return false; break;
             case "disabled": if (!el.disabled) return false; break;
             case "enabled": if (el.disabled) return false; break;
+            case "placeholder-shown":
+              if (!((el.tagName === "INPUT" || el.tagName === "TEXTAREA") && el.hasAttribute("placeholder") && el.value === "")) return false;
+              break;
+            case "empty": if (el.firstChild) return false; break;
+            case "focus": if (el.ownerDocument.activeElement !== el) return false; break;
+            case "focus-within":
+              var act = el.ownerDocument.activeElement;
+              if (!act || !el.contains(act)) return false;
+              break;
+            case "valid": if (!fieldValid(el)) return false; break;
+            case "invalid": if (fieldValid(el)) return false; break;
             case "first-child": if (el.previousElementSibling) return false; break;
             case "last-child": if (el.nextElementSibling) return false; break;
             default: throw new SyntaxError("unsupported selector :" + c.v);
@@ -964,6 +975,28 @@
           break;
       }
     }
+    return true;
+  }
+
+  // fieldValid is the browser's constraint check, for the rules pages use:
+  // required, minlength/maxlength, pattern, type=email/number. A form is
+  // valid when its fields are.
+  function fieldValid(el) {
+    if (el.tagName === "FORM") {
+      return Array.prototype.every.call(el.querySelectorAll("input, select, textarea"), fieldValid);
+    }
+    if (["INPUT", "SELECT", "TEXTAREA"].indexOf(el.tagName) < 0 || el.disabled) return true;
+    var type = (el.getAttribute("type") || "").toLowerCase();
+    if (type === "checkbox" || type === "radio") return !el.hasAttribute("required") || el.checked;
+    var v = el.value == null ? "" : String(el.value);
+    if (v === "") return !el.hasAttribute("required");
+    var min = el.getAttribute("minlength"), max = el.getAttribute("maxlength");
+    if (min !== null && v.length < +min) return false;
+    if (max !== null && v.length > +max) return false;
+    var pat = el.getAttribute("pattern");
+    if (pat !== null && !new RegExp("^(?:" + pat + ")$").test(v)) return false;
+    if (type === "email" && !/^[^\s@]+@[^\s@]+$/.test(v)) return false;
+    if (type === "number" && isNaN(Number(v))) return false;
     return true;
   }
 

@@ -112,7 +112,7 @@ func (k *Toolkit) Render() templ.Component {
 <form id="v" data-nx-valid onsubmit="%s"><input id="email" name="email" type="email" required><button type="submit" id="go" data-nx-busy>Go</button></form>
 <input id="deb" oninput="%s"><input id="thr" oninput="%s"><button id="tap" onclick="%s">Tap</button>
 <form id="df" onsubmit="%s"><input id="dfq" oninput="%s"></form><span id="log">%s</span>
-<input id="tv" oninput="%s"><input type="checkbox" id="tc" onchange="%s"><button id="ta" data-n="7" onclick="%s">N</button><input id="tp" value="pushed" onclick="%s"><button id="gate" onclick="%s">Gate</button>
+<input id="tv" oninput="%s"><input type="checkbox" id="tc" onchange="%s"><button id="ta" data-n="7" onclick="%s">N</button><input id="tp" value="pushed" onclick="%s"><button id="gate" onclick="%s">Gate</button><input id="cmail" type="email" placeholder="mail"><button id="cond" onclick="%s">Cond</button>
 </body></html>`,
 			attr(view.JS(view.Confirm("Delete it?").Push(k.Delete))), k.Deleted,
 			attr(view.Change(k.Search)),
@@ -132,6 +132,9 @@ func (k *Toolkit) Render() templ.Component {
 			attr(view.Send(k.Num, view.This().Attr("data-n"))),
 			attr(view.JS(view.Push(k.Note, view.This().Value()))),
 			attr(view.JS(view.AddClass("pressed", view.This()).Debounce(300*time.Millisecond).Push(k.Note, "gated"))),
+			attr(view.JS(view.If(view.El("#cmail:placeholder-shown")).SetAttr("data-r", "empty", view.This()).
+				ElseIf(view.El("#cmail:invalid")).SetAttr("data-r", "bad", view.This()).
+				Else().SetAttr("data-r", "good", view.This()))),
 		)
 		_, err := io.WriteString(w, b.String())
 		return err
@@ -263,4 +266,20 @@ func TestCommandsBusyAndBehaviors(t *testing.T) {
 		t.Error("the step before Debounce didn't run at once, or the step after it didn't wait")
 	}
 	p.Expect("#log").Text(base + ",hello,on=true,n=8,pushed,gated")
+
+	// If / ElseIf / Else with the browser's own pseudo-classes.
+	cond := func() any {
+		return p.Eval(`(() => { const b = document.getElementById("cond"); b.click(); return b.getAttribute("data-r") })()`)
+	}
+	if r := cond(); r != "empty" {
+		t.Errorf("empty field: %v", r)
+	}
+	p.Fill("#cmail", "nope")
+	if r := cond(); r != "bad" {
+		t.Errorf("invalid field: %v", r)
+	}
+	p.Fill("#cmail", "a@b.co")
+	if r := cond(); r != "good" {
+		t.Errorf("valid field: %v", r)
+	}
 }

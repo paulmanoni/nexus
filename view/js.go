@@ -33,8 +33,24 @@ func JS(ops ...JSOp) templ.ComponentScript {
 
 func opList(ops []JSOp) []any {
 	list := make([]any, 0, len(ops))
+	branch := "" // "if" after an If or ElseIf, "else" after an Else
 	for _, op := range ops {
 		for _, o := range op.steps() {
+			switch o.name {
+			case "if":
+				branch = "if"
+			case "elif", "else":
+				if branch != "if" {
+					what := map[string]string{"elif": "ElseIf", "else": "Else"}[o.name]
+					if branch == "else" {
+						panic("view." + what + " after an Else: a chain's If has one Else, last")
+					}
+					panic("view." + what + " without an If before it")
+				}
+				if o.name == "else" {
+					branch = "else"
+				}
+			}
 			list = append(list, []any{o.name, o.args})
 		}
 	}
@@ -76,50 +92,53 @@ func (o JSOp) Then(next ...JSOp) JSOp {
 
 // Each command is also a step of a chain: o.Show(sel) is o, then Show(sel).
 
-func (o JSOp) Show(sel Target, opts ...JSOption) JSOp       { return o.Then(Show(sel, opts...)) }
-func (o JSOp) Hide(sel Target, opts ...JSOption) JSOp       { return o.Then(Hide(sel, opts...)) }
-func (o JSOp) Toggle(sel Target, opts ...JSOption) JSOp     { return o.Then(Toggle(sel, opts...)) }
-func (o JSOp) Focus(sel Target, opts ...JSOption) JSOp      { return o.Then(Focus(sel, opts...)) }
-func (o JSOp) FocusFirst(sel Target, opts ...JSOption) JSOp { return o.Then(FocusFirst(sel, opts...)) }
-func (o JSOp) PushFocus(sel Target, opts ...JSOption) JSOp  { return o.Then(PushFocus(sel, opts...)) }
-func (o JSOp) PopFocus() JSOp                               { return o.Then(PopFocus()) }
-func (o JSOp) AddClass(classes string, sel Target, opts ...JSOption) JSOp {
+func (o JSOp) Show(sel Element, opts ...JSOption) JSOp       { return o.Then(Show(sel, opts...)) }
+func (o JSOp) Hide(sel Element, opts ...JSOption) JSOp       { return o.Then(Hide(sel, opts...)) }
+func (o JSOp) Toggle(sel Element, opts ...JSOption) JSOp     { return o.Then(Toggle(sel, opts...)) }
+func (o JSOp) Focus(sel Element, opts ...JSOption) JSOp      { return o.Then(Focus(sel, opts...)) }
+func (o JSOp) FocusFirst(sel Element, opts ...JSOption) JSOp { return o.Then(FocusFirst(sel, opts...)) }
+func (o JSOp) PushFocus(sel Element, opts ...JSOption) JSOp  { return o.Then(PushFocus(sel, opts...)) }
+func (o JSOp) PopFocus() JSOp                                { return o.Then(PopFocus()) }
+func (o JSOp) AddClass(classes string, sel Element, opts ...JSOption) JSOp {
 	return o.Then(AddClass(classes, sel, opts...))
 }
-func (o JSOp) RemoveClass(classes string, sel Target, opts ...JSOption) JSOp {
+func (o JSOp) RemoveClass(classes string, sel Element, opts ...JSOption) JSOp {
 	return o.Then(RemoveClass(classes, sel, opts...))
 }
-func (o JSOp) ToggleClass(classes string, sel Target, opts ...JSOption) JSOp {
+func (o JSOp) ToggleClass(classes string, sel Element, opts ...JSOption) JSOp {
 	return o.Then(ToggleClass(classes, sel, opts...))
 }
-func (o JSOp) SetAttr(name, value string, sel Target, opts ...JSOption) JSOp {
+func (o JSOp) SetAttr(name, value string, sel Element, opts ...JSOption) JSOp {
 	return o.Then(SetAttr(name, value, sel, opts...))
 }
-func (o JSOp) RemoveAttr(name string, sel Target, opts ...JSOption) JSOp {
+func (o JSOp) RemoveAttr(name string, sel Element, opts ...JSOption) JSOp {
 	return o.Then(RemoveAttr(name, sel, opts...))
 }
-func (o JSOp) ToggleAttr(name, value string, sel Target, opts ...JSOption) JSOp {
+func (o JSOp) ToggleAttr(name, value string, sel Element, opts ...JSOption) JSOp {
 	return o.Then(ToggleAttr(name, value, sel, opts...))
 }
-func (o JSOp) Transition(classes string, sel Target, opts ...JSOption) JSOp {
+func (o JSOp) Transition(classes string, sel Element, opts ...JSOption) JSOp {
 	return o.Then(Transition(classes, sel, opts...))
 }
-func (o JSOp) Exec(attr string, sel Target, opts ...JSOption) JSOp {
+func (o JSOp) Exec(attr string, sel Element, opts ...JSOption) JSOp {
 	return o.Then(Exec(attr, sel, opts...))
 }
-func (o JSOp) Dispatch(event string, sel Target, opts ...JSOption) JSOp {
+func (o JSOp) Dispatch(event string, sel Element, opts ...JSOption) JSOp {
 	return o.Then(Dispatch(event, sel, opts...))
 }
-func (o JSOp) SetValue(value string, sel Target, opts ...JSOption) JSOp {
+func (o JSOp) SetValue(value string, sel Element, opts ...JSOption) JSOp {
 	return o.Then(SetValue(value, sel, opts...))
 }
-func (o JSOp) Copy(sel Target, opts ...JSOption) JSOp     { return o.Then(Copy(sel, opts...)) }
-func (o JSOp) CopyText(text string) JSOp                  { return o.Then(CopyText(text)) }
-func (o JSOp) Debounce(d time.Duration) JSOp              { return o.Then(Debounce(d)) }
-func (o JSOp) Throttle(d time.Duration) JSOp              { return o.Then(Throttle(d)) }
-func (o JSOp) ScrollTo(sel Target, opts ...JSOption) JSOp { return o.Then(ScrollTo(sel, opts...)) }
-func (o JSOp) Confirm(message string) JSOp                { return o.Then(Confirm(message)) }
-func (o JSOp) Push(method any, args ...any) JSOp          { return o.Then(Push(method, args...)) }
+func (o JSOp) Copy(sel Element, opts ...JSOption) JSOp      { return o.Then(Copy(sel, opts...)) }
+func (o JSOp) CopyText(text string) JSOp                    { return o.Then(CopyText(text)) }
+func (o JSOp) Debounce(d time.Duration) JSOp                { return o.Then(Debounce(d)) }
+func (o JSOp) Throttle(d time.Duration) JSOp                { return o.Then(Throttle(d)) }
+func (o JSOp) If(cond Condition, opts ...JSOption) JSOp     { return o.Then(If(cond, opts...)) }
+func (o JSOp) ElseIf(cond Condition, opts ...JSOption) JSOp { return o.Then(ElseIf(cond, opts...)) }
+func (o JSOp) Else() JSOp                                   { return o.Then(Else()) }
+func (o JSOp) ScrollTo(sel Element, opts ...JSOption) JSOp  { return o.Then(ScrollTo(sel, opts...)) }
+func (o JSOp) Confirm(message string) JSOp                  { return o.Then(Confirm(message)) }
+func (o JSOp) Push(method any, args ...any) JSOp            { return o.Then(Push(method, args...)) }
 func (o JSOp) PushTo(recv any, name string, args ...any) JSOp {
 	return o.Then(PushTo(recv, name, args...))
 }
@@ -173,12 +192,12 @@ func Detail(v any) JSOption { return func(a map[string]any) { a["detail"] = v } 
 // NoBubble keeps Dispatch's event from bubbling.
 func NoBubble() JSOption { return func(a map[string]any) { a["bubbles"] = false } }
 
-func jsOp(name string, sel Target, opts []JSOption, args map[string]any) JSOp {
+func jsOp(name string, sel Element, opts []JSOption, args map[string]any) JSOp {
 	if args == nil {
 		args = map[string]any{}
 	}
-	if to := selector(name, sel); to != "" {
-		args["to"] = to
+	if sel != "" {
+		args["to"] = string(sel)
 	}
 	for _, o := range opts {
 		o(args)
@@ -186,101 +205,121 @@ func jsOp(name string, sel Target, opts []JSOption, args map[string]any) JSOp {
 	return JSOp{name: name, args: args}
 }
 
-// Target is what a command acts on: a CSS selector string, or This() — the
-// element the event runs on (for a command pushed from the server with
-// PushJS, the live view's root).
+// Target is what a command acts on.
 //
-//	view.Toggle("#menu")
-//	view.AddClass("is-on", view.This())
-type Target = any
-
-func selector(command string, sel Target) string {
-	switch s := sel.(type) {
-	case string:
-		return s
-	case ThisElement:
-		return ""
-	}
-	if v := reflect.ValueOf(sel); v.Kind() == reflect.String {
-		return v.String()
-	}
-	panic(fmt.Sprintf("view JS command %s: the target is a %T; give a CSS selector string or view.This()", command, sel))
-}
+// Deprecated: commands take an Element; a selector written in place is one.
+type Target = Element
 
 // Show shows the elements sel matches:
 // it drops their hidden attribute and their display: none.
-func Show(sel Target, opts ...JSOption) JSOp { return jsOp("show", sel, opts, nil) }
+func Show(sel Element, opts ...JSOption) JSOp { return jsOp("show", sel, opts, nil) }
 
 // Hide hides the elements sel matches (display: none).
-func Hide(sel Target, opts ...JSOption) JSOp { return jsOp("hide", sel, opts, nil) }
+func Hide(sel Element, opts ...JSOption) JSOp { return jsOp("hide", sel, opts, nil) }
 
 // Toggle shows the elements sel matches that are hidden and hides the rest.
-func Toggle(sel Target, opts ...JSOption) JSOp { return jsOp("toggle", sel, opts, nil) }
+func Toggle(sel Element, opts ...JSOption) JSOp { return jsOp("toggle", sel, opts, nil) }
 
 // AddClass adds classes (space-separated) to the elements sel matches.
-func AddClass(classes string, sel Target, opts ...JSOption) JSOp {
+func AddClass(classes string, sel Element, opts ...JSOption) JSOp {
 	return jsOp("add_class", sel, opts, map[string]any{"names": classes})
 }
 
 // RemoveClass removes classes from the elements sel matches.
-func RemoveClass(classes string, sel Target, opts ...JSOption) JSOp {
+func RemoveClass(classes string, sel Element, opts ...JSOption) JSOp {
 	return jsOp("remove_class", sel, opts, map[string]any{"names": classes})
 }
 
 // ToggleClass adds each of classes the elements sel matches lack and removes
 // those they have.
-func ToggleClass(classes string, sel Target, opts ...JSOption) JSOp {
+func ToggleClass(classes string, sel Element, opts ...JSOption) JSOp {
 	return jsOp("toggle_class", sel, opts, map[string]any{"names": classes})
 }
 
 // SetAttr sets an attribute on the elements sel matches.
-func SetAttr(name, value string, sel Target, opts ...JSOption) JSOp {
+func SetAttr(name, value string, sel Element, opts ...JSOption) JSOp {
 	return jsOp("set_attr", sel, opts, map[string]any{"name": name, "value": value})
 }
 
 // RemoveAttr removes an attribute from the elements sel matches.
-func RemoveAttr(name string, sel Target, opts ...JSOption) JSOp {
+func RemoveAttr(name string, sel Element, opts ...JSOption) JSOp {
 	return jsOp("remove_attr", sel, opts, map[string]any{"name": name})
 }
 
 // ToggleAttr sets an attribute (to value) on the elements sel matches that
 // lack it and removes it from those that have it: ToggleAttr("open", "",
 // "details").
-func ToggleAttr(name, value string, sel Target, opts ...JSOption) JSOp {
+func ToggleAttr(name, value string, sel Element, opts ...JSOption) JSOp {
 	return jsOp("toggle_attr", sel, opts, map[string]any{"name": name, "value": value})
 }
 
 // Focus focuses the first element sel matches.
-func Focus(sel Target, opts ...JSOption) JSOp { return jsOp("focus", sel, opts, nil) }
+func Focus(sel Element, opts ...JSOption) JSOp { return jsOp("focus", sel, opts, nil) }
 
 // FocusFirst focuses the first focusable element inside the first element
 // sel matches — a dialog's first field: an [autofocus] one when there is,
 // and never one marked data-nx-nofocus (a dialog's close button).
-func FocusFirst(sel Target, opts ...JSOption) JSOp { return jsOp("focus_first", sel, opts, nil) }
+func FocusFirst(sel Element, opts ...JSOption) JSOp { return jsOp("focus_first", sel, opts, nil) }
 
 // Transition adds classes to the elements sel matches for a while (Time,
 // 200ms when unset) — a shake, a flash.
-func Transition(classes string, sel Target, opts ...JSOption) JSOp {
+func Transition(classes string, sel Element, opts ...JSOption) JSOp {
 	return jsOp("transition", sel, opts, map[string]any{"names": classes})
 }
 
 // PushFocus remembers the first element sel matches (view.This(): the
 // button opening a dialog) for PopFocus.
-func PushFocus(sel Target, opts ...JSOption) JSOp { return jsOp("push_focus", sel, opts, nil) }
+func PushFocus(sel Element, opts ...JSOption) JSOp { return jsOp("push_focus", sel, opts, nil) }
 
 // PopFocus focuses the element PushFocus remembered last, and forgets it.
 func PopFocus() JSOp { return JSOp{name: "pop_focus", args: map[string]any{}} }
 
 // SetValue sets the value of the fields sel matches as if the user typed it: their input and change events fire,
 // so a live form or view.Change hears it — clearing a search box, a preset.
-func SetValue(value string, sel Target, opts ...JSOption) JSOp {
+func SetValue(value string, sel Element, opts ...JSOption) JSOp {
 	return jsOp("set_value", sel, opts, map[string]any{"value": value})
 }
 
 // Copy puts on the clipboard the value of the field sel matches, else its
 // text. The element the event is on
 // carries data-copied for a moment after, for CSS to show it.
-func Copy(sel Target, opts ...JSOption) JSOp { return jsOp("copy", sel, opts, nil) }
+func Copy(sel Element, opts ...JSOption) JSOp { return jsOp("copy", sel, opts, nil) }
+
+// If runs the steps after it only when cond holds, up to an ElseIf or Else;
+// when it fails, the first ElseIf whose cond holds runs its steps, else the
+// steps after Else. cond is about an Element, found as a target is (scoped
+// by Closest, Inner or Within): a read of it — Checked, a non-empty Value, an
+// Attr it has — its match of a CSS selector (Is), or the Element itself,
+// which holds when its selector matches anything:
+//
+//	view.If(view.El("#agree").Checked()).Push(p.Continue)
+//	view.If(view.This().Is(":checked")).Show("#extra").Else().Hide("#extra")
+//	view.If(view.El(".row.selected"), view.Within("table")).Push(p.Bulk).
+//		ElseIf(view.This().Is(".primary")).Push(p.All).
+//		Else().Transition("shake", view.This())
+//
+// The condition reads the page when the chain gets to it — after a Debounce,
+// once the pause is over — never a reply: Push sends and goes on, so what
+// depends on the server's answer is pushed back by the event (PushJS). An If
+// reaches to the end of the chain, or its ElseIf or Else; an If inside a
+// branch takes the ElseIf and Else after it. Steps that always run go
+// before the If.
+func If(cond Condition, opts ...JSOption) JSOp { return condOp("if", cond, opts) }
+
+// ElseIf is a further condition of the If before it; see If.
+func ElseIf(cond Condition, opts ...JSOption) JSOp { return condOp("elif", cond, opts) }
+
+// Else starts the steps that run when no condition of the If before it
+// holds; see If.
+func Else() JSOp { return JSOp{name: "else", args: map[string]any{}} }
+
+func condOp(name string, cond Condition, opts []JSOption) JSOp {
+	args := cond.condition()
+	for _, o := range opts {
+		o(args)
+	}
+	return JSOp{name: name, args: args}
+}
 
 // Debounce runs the steps after it once the event has stopped firing for d:
 // each new event restarts the wait, so a box typed into sends once the
@@ -308,7 +347,7 @@ func Throttle(d time.Duration) JSOp {
 func CopyText(text string) JSOp { return JSOp{name: "copy", args: map[string]any{"text": text}} }
 
 // ScrollTo scrolls the first element sel matches into view.
-func ScrollTo(sel Target, opts ...JSOption) JSOp { return jsOp("scroll_to", sel, opts, nil) }
+func ScrollTo(sel Element, opts ...JSOption) JSOp { return jsOp("scroll_to", sel, opts, nil) }
 
 // Confirm asks message with the browser's confirm dialog; the commands
 // after it run only when the user agrees:
@@ -322,7 +361,7 @@ func Confirm(message string) JSOp {
 // — written with Commands, or any live script (view.Send) — as if their own
 // event fired. A dialog keeps its closing steps once, in data-cancel, and its
 // close button, Esc and backdrop all Exec them.
-func Exec(attr string, sel Target, opts ...JSOption) JSOp {
+func Exec(attr string, sel Element, opts ...JSOption) JSOp {
 	return jsOp("exec", sel, opts, map[string]any{"attr": attr})
 }
 
@@ -337,7 +376,7 @@ func Commands(ops ...JSOp) string {
 
 // Dispatch fires a DOM CustomEvent named event on the elements sel matches,
 // bubbling unless NoBubble, with Detail — for islands, scripts and widgets.
-func Dispatch(event string, sel Target, opts ...JSOption) JSOp {
+func Dispatch(event string, sel Element, opts ...JSOption) JSOp {
 	return jsOp("dispatch", sel, opts, map[string]any{"event": event})
 }
 

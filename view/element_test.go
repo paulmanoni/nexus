@@ -6,13 +6,6 @@ import (
 	"testing"
 )
 
-func TestThisEncoding(t *testing.T) {
-	b, _ := json.Marshal([]any{7, This().Value(), This().Checked(), This().Attr("data-id")})
-	if got, want := string(b), `[7,{"$nx":"value"},{"$nx":"checked"},{"$nx":"attr","name":"data-id"}]`; got != want {
-		t.Errorf("got %s\nwant %s", got, want)
-	}
-}
-
 func TestScalarFromString(t *testing.T) {
 	n := reflect.New(reflect.TypeOf(0))
 	if !scalarFromString(json.RawMessage(`"42"`), n) || n.Elem().Int() != 42 {

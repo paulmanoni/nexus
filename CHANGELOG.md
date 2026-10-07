@@ -6,6 +6,31 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Added
+
+- `view.Element` and `view.El(sel)`: an element of the page, as a command's
+  target, a value read as the event is sent (`view.Send(p.Search,
+  view.El("#q").Value())`) and a condition. `view.This()` is the Element the
+  event is on.
+- JS command conditions: `view.If(cond)`, `view.ElseIf(cond)`, `view.Else()`
+  chain steps — `view.JS(view.If(view.El("#agree").Checked()).Push(p.Go).Else().Show("#hint"))`.
+  A condition is a read of an element (`Checked()`, a non-empty `Value()`, an
+  `Attr(name)` present), `Is(css)`, or an Element (its selector matches
+  anything); it reads the page when the chain reaches it. `view.JS` refuses an
+  `Else` or `ElseIf` without an `If` before it, or after an `Else`.
+- viewtest's in-process browser matches `:placeholder-shown`, `:valid`,
+  `:invalid` (required, minlength/maxlength, pattern, type=email/number),
+  `:focus`, `:focus-within` and `:empty`.
+
+### Changed
+
+- JS commands take their target as a `view.Element` instead of `any`
+  (`view.Target`, now deprecated, is an alias of it). A selector written in
+  place still compiles; one built from a string at render time is wrapped:
+  `view.Show(view.El("#row-" + id))`. Anything else is a compile error rather
+  than a panic at render. `view.ThisElement` and `view.ThisValue` are
+  deprecated aliases of `view.Element` and `view.ElementRead`.
+
 ## [2.23.0] - 2026-10-07
 
 ### Added
