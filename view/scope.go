@@ -5,6 +5,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"reflect"
 	"strconv"
 )
 
@@ -15,6 +16,7 @@ type render struct {
 	rootPending bool                       // the next ShardStart is the shard being re-rendered
 	frames      []*frame                   // open shards, innermost last
 	shared      map[string]any             // the page's SharedState signals, by id
+	processed   map[reflect.Type]processed // context processors' values, computed once per render
 }
 
 // own records that the innermost open shard uses signal id, so a re-render

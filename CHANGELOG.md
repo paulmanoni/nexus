@@ -6,6 +6,32 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [2.25.0] - 2026-10-07
+
+### Added
+
+- Context processors: `view.ContextProcessor(func(ctx, deps…) (T, error))`
+  registers a value every template reads with `view.FromContext[T](ctx)` —
+  the layout's user, counts, navigation. Computed from the request (or a live
+  page's connection) with DI dependencies, only when read, at most once per
+  render; a live page's tracked parts that read it always render again.
+
+- `view.SetCookie(name, value, view.MaxAge(d))` and `view.Reload()` JS
+  commands: set a cookie the server reads on the next request (`Path=/`,
+  `SameSite=Lax`, `Secure` on https, value percent-encoded; `MaxAge(0)`
+  deletes) and load the page again —
+  `view.JS(view.SetCookie("lang", "sw", view.MaxAge(365*24*time.Hour)).Reload())`.
+- `[runtime.browser] config = ["shop.currency", …]`: the nexus.toml keys a
+  page's script may read, with `__nx.config(key)`. `view.Script()` sends their
+  values; boot fails on a key under `[databases]`, `[secrets]` or
+  `[extensions]`, one named like a password, secret, token, key or credential,
+  one that names nothing, or a table. `config.BrowserValues()` returns them.
+
+- `ElementRead.Eq(value)`: a condition comparing a read as text —
+  `view.If(view.This().Attr("aria-pressed").Eq("true"))`, a field's
+  `Value().Eq("m")`, `Checked().Eq("false")`. An attribute the element lacks
+  never equals, not even `""`.
+
 ## [2.24.0] - 2026-10-07
 
 ### Added

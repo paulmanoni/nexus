@@ -221,6 +221,7 @@ type runtimeBlock struct {
 	Logging               loggingBlock    `toml:"logging"`
 	Telemetry             telemetryBlock  `toml:"telemetry"`
 	Tailwind              tailwindBlock   `toml:"tailwind"`
+	Browser               browserBlock    `toml:"browser"`
 	Environment           string          `toml:"environment" doc:"development | staging | production; NEXUS_ENVIRONMENT overrides it"`
 	Version               string          `toml:"version"`
 	Introspection         bool            `toml:"introspection" doc:"open the /__nexus dashboard and JSON APIs (off by default)"`
@@ -243,6 +244,12 @@ type loggingBlock struct {
 // when they compile a stylesheet with the Tailwind CLI.
 type tailwindBlock struct {
 	Imports []string `toml:"imports" doc:"stylesheets of Go modules imported into sources.generated.css, as \"<module>/<file>.css\" and optional conditions (\"… layer(base)\"): a component library's styles"`
+}
+
+// browserBlock is [runtime.browser]: configuration a view page sends to
+// the browser, read through BrowserValues.
+type browserBlock struct {
+	Config []string `toml:"config" doc:"keys of nexus.toml whose values every page sends to the browser (read there with __nx.config(key)); never a secret — keys under [databases], [secrets] or [extensions], or named like a password, secret, token, key or credential, fail boot"`
 }
 
 // telemetryBlock is [runtime.telemetry]: trace export to an OpenTelemetry

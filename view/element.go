@@ -84,6 +84,27 @@ func (r ElementRead) condition() map[string]any {
 	return m
 }
 
+// Eq is the condition that the read equals value, compared as text: an
+// attribute's value (one the element lacks never equals), a field's value,
+// or "true"/"false" for Checked.
+//
+//	view.If(view.This().Attr("aria-pressed").Eq("true")).
+//		SetAttr("aria-pressed", "false", view.This()).
+//	Else().SetAttr("aria-pressed", "true", view.This())
+func (r ElementRead) Eq(value string) ElementEq { return ElementEq{read: r, value: value} }
+
+// ElementEq is the condition that a read equals a value; see ElementRead.Eq.
+type ElementEq struct {
+	read  ElementRead
+	value string
+}
+
+func (c ElementEq) condition() map[string]any {
+	m := c.read.condition()
+	m["eq"] = c.value
+	return m
+}
+
 // ElementIs is the condition that an element matches a CSS selector; see
 // Element.Is.
 type ElementIs struct{ to, is string }
@@ -97,8 +118,8 @@ func (c ElementIs) condition() map[string]any {
 }
 
 // Condition is what view.If and view.ElseIf test: an Element (it holds when
-// the selector matches anything), a read of one (Checked, Value, Attr) or
-// Element.Is.
+// the selector matches anything), a read of one (Checked, Value, Attr), a
+// read's Eq, or Element.Is.
 type Condition interface{ condition() map[string]any }
 
 // ThisElement is the type This returned.

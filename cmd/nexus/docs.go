@@ -885,9 +885,14 @@ JS commands (Phoenix's JS): onclick={ view.JS(view.Show("#menu").
 AddClass("is-open", "#menu").Push(p.Load)) } — commands chain (a chain is a
 value: closing := view.Hide("#m").PopFocus(); closing.Push(p.Save)); Confirm
 (msg) stops the rest on no, SetValue(v, sel) fires input/change, Copy(sel)/
-CopyText(s), ScrollTo(sel), Debounce(d)/Throttle(d) (time the steps after
+CopyText(s), ScrollTo(sel), SetCookie(name, value, view.MaxAge(d)) + Reload()
+(a language/theme switch; never a secret); [runtime.browser] config = [keys]
+→ __nx.config(key) in the browser (secret-named keys fail boot); context
+processors: view.ContextProcessor(func(ctx, deps…) (T, error)) +
+view.FromContext[T](ctx) in any template (once per render, from the request);
+Debounce(d)/Throttle(d) (time the steps after
 them), If(cond)/ElseIf(cond)/Else() (cond: view.El("#a").Checked(),
-.Value(), .Attr(n), .Is(css), or view.El(sel)); view.El(sel) / view.This()
+.Value(), .Attr(n), a read's .Eq(text), .Is(css), or view.El(sel)); view.El(sel) / view.This()
 (JS this) are Elements — targets, conditions, and Send/Push args read when
 sent; view.This() = JS this: a command target (AddClass("on", view.This()))
 and Send/Push args read when sent (.Value(), .Checked(), .Attr(n));

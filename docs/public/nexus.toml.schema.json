@@ -994,6 +994,19 @@
     "runtime": {
       "additionalProperties": false,
       "properties": {
+        "browser": {
+          "additionalProperties": false,
+          "properties": {
+            "config": {
+              "description": "keys of nexus.toml whose values every page sends to the browser (read there with __nx.config(key)); never a secret — keys under [databases], [secrets] or [extensions], or named like a password, secret, token, key or credential, fail boot",
+              "items": {
+                "type": "string"
+              },
+              "type": "array"
+            }
+          },
+          "type": "object"
+        },
         "dashboard": {
           "additionalProperties": false,
           "properties": {

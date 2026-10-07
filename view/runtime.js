@@ -756,6 +756,15 @@
       el.setAttribute("data-copied", "");
       setTimeout(function () { el.removeAttribute("data-copied"); }, 1500);
     },
+    set_cookie: function (el, a) {
+      var c = a.name + "=" + encodeURIComponent(a.value) + "; path=/; samesite=lax";
+      if (a.max_age != null) c += "; max-age=" + a.max_age;
+      if (location.protocol === "https:") c += "; secure";
+      document.cookie = c;
+    },
+    reload: function () {
+      location.reload();
+    },
     scroll_to: function (el, a) {
       var t = jsTargets(el, a)[0];
       if (t) t.scrollIntoView({ block: "nearest", behavior: "smooth" });
@@ -798,13 +807,14 @@
 
   // jsHolds tests an If's condition on the elements it names (scoped as a
   // target): one matches "is", one's read holds (checked, a value, the
-  // attribute), or - for a bare Element - one exists.
+  // attribute) or equals "eq" as text, or - for a bare Element - one exists.
   function jsHolds(el, a) {
     var found = jsTargets(el, a);
     if (a.is) return found.some(function (t) { return t.matches && t.matches(a.is); });
     if (a.read) {
       return found.some(function (t) {
         var v = readElement(t, a);
+        if (a.eq != null) return v !== null && String(v) === a.eq;
         return a.read === "attr" ? v !== null : !!v;
       });
     }
@@ -1777,6 +1787,21 @@
       return readElement(a.to ? document.querySelector(a.to) : el, a);
     });
   }
+
+  // config is what [runtime.browser] config sent: the value of a listed
+  // nexus.toml key, or all of them by key.
+  var browserConfig = null;
+  nx.config = function (key) {
+    if (browserConfig === null) {
+      var el = document.getElementById("nx-config");
+      try {
+        browserConfig = el ? JSON.parse(el.textContent) : {};
+      } catch (e) {
+        browserConfig = {};
+      }
+    }
+    return key === undefined ? Object.assign({}, browserConfig) : browserConfig[key];
+  };
 
   nx.live = {
     // cancelUpload is what view.CancelUpload renders: stop an entry's

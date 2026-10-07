@@ -299,7 +299,9 @@ drop-in gopls (accepts `serve`/gopls flags, passes other subcommands through), s
 uses it via `go.alternateTools.gopls` and a wrapper script.
 Component libraries (templUI): reactive entries in a `templ.Attributes{…}` literal
 (Props.Attributes) compile like element attributes; `view.Assets(prefix, handler)` serves
-library/CSS files. **Live views** — three tiers as in Phoenix: templ components (stateless), live views,
+library/CSS files. **Context processors** (Django's): `view.ContextProcessor(func(ctx, deps…) (T[, error]))` (an Option; result type names
+it, deps from DI) + `view.FromContext[T](ctx)` in any template — lazy, memoized per render (`render.processed`),
+taints the tracked spot reading it; an error or an unregistered T panics the render. **Live views** — three tiers as in Phoenix: templ components (stateless), live views,
 signals (browser). A live view is a struct embedding `view.LiveView` **by value** (helpers: `Connected`, `Subscribe`,
 `Track`/`Untrack`, `PushPatch`/`PushNavigate`, `PutFlash`/`Flash` (cleared by the page's next event), `ID`); the
 same type is a page when routed — `view.Live[*T](path, gates…)` (`.Provide(NewT)` optional: the DI instance, else
@@ -377,7 +379,8 @@ errors at render. `@view.CSRF()` for plain-HTTP forms.
 **JS commands** (Phoenix's `JS`): `onclick={ view.JS(view.Show("#m").AddClass("on", "#m").Push(p.Load, id)) }`
 — commands chain (each a `JSOp` method; a chain is an immutable value, `a.Then(b…)` joins; `view.JS(a, b)` and
 `ops...` spreads still work); also `Confirm(msg)` (stops the chain on no), `SetValue(v, sel)` (fires input/change),
-`Copy(sel)`/`CopyText(s)` (sets `data-copied`), `ScrollTo(sel)` — a `templ.ComponentScript` (also in `templ.Attributes`; viewgen wraps it in
+`Copy(sel)`/`CopyText(s)` (sets `data-copied`), `ScrollTo(sel)`, `SetCookie(name, value, view.MaxAge(d))`
+(Path=/, SameSite=Lax, Secure on https; never a secret) + `Reload()` — a `templ.ComponentScript` (also in `templ.Attributes`; viewgen wraps it in
 `view.ScriptAttr` like `view.Send`); ops `Show/Hide/Toggle` (`view.Display(v)`), `AddClass/RemoveClass/
 ToggleClass`, `SetAttr/RemoveAttr/ToggleAttr`, `Focus/FocusFirst`, `Push/PushTo`, `Transition(classes, sel)`,
 `PushFocus/PopFocus` (a stack), `Exec(attr, sel)` (runs `view.Commands(…)` JSON — or any script, e.g. view.Send —
@@ -393,7 +396,8 @@ server renders that attribute unchanged, and drops it when the server changes it
 the `style` attribute's display (+ remove `hidden`). `Debounce(d)`/`Throttle(d)` are chain steps timing the steps after them (runtime `nx.js` hands the rest to
 `nx.debounce`/`nx.throttle`, per element+event type; throttle keeps a field's last input; a waiting debounce in a
 form runs before its submit). `If(cond)`/`ElseIf(cond)`/`Else()` are chain steps (cond = `view.Condition`: an Element (selector matches
-anything), its read `Checked()`/`Value()` (non-empty)/`Attr(n)` (present), or `.Is(css)`; scoped like a target; runtime `jsBranch`: Else/ElseIf reached while running ends the branch, an If met
+anything), its read `Checked()`/`Value()` (non-empty)/`Attr(n)` (present), a read's `.Eq(text)` (a missing attr never
+equals), or `.Is(css)`; scoped like a target; runtime `jsBranch`: Else/ElseIf reached while running ends the branch, an If met
 while skipping owns what follows; opList panics on Else/ElseIf without an If or after Else; read when reached, never
 a reply). `view.Element` (string type): selector params take it — a literal compiles,
 `view.El(s)` wraps a built string, `view.This()` (= "") is JS `this`; `.Value()`/`.Checked()`/`.Attr(n)` are
@@ -514,6 +518,11 @@ route_prefix = ""                        # prepended to every REST/GraphQL/WS ro
 [runtime.server.listeners.admin]         # optional multi-scope listeners
 addr  = "127.0.0.1:7000"
 scope = "admin"                          # public | internal | admin
+
+[runtime.browser]                        # nexus.toml values a page's script may read:
+# config = ["shop.currency"]             # __nx.config("shop.currency"); boot fails on a
+                                          # secret-named key, [databases]/[secrets]/[extensions],
+                                          # a missing key or a table (config.BrowserValues)
 
 [runtime.telemetry]                      # trace export to an OpenTelemetry collector
 # otlp_endpoint = "http://localhost:4318" # OTLP/HTTP JSON → /v1/traces; unset = off

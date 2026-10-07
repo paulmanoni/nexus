@@ -76,6 +76,13 @@ func (g *Gate) Render() templ.Component {
 			ElseIf(view.El("#mail").Attr("data-flag")).SetAttr("data-c", "flag", me).
 			Else().SetAttr("data-c", "none", me)))
 		on("say", "", view.Send(g.Said, view.El("#mail").Value()))
+		on("press", `aria-pressed="false"`, view.JS(view.If(me.Attr("aria-pressed").Eq("true")).SetAttr("aria-pressed", "false", me).
+			Else().SetAttr("aria-pressed", "true", me)))
+		b.WriteString(`<select id="size"><option value="s">S</option><option value="m">M</option></select>`)
+		on("size-check", "", view.JS(view.If(view.El("#size").Value().Eq("m")).SetAttr("data-s", "medium", me).
+			ElseIf(me.Attr("data-x").Eq("")).SetAttr("data-s", "missing-attr", me).
+			ElseIf(view.El("#agree").Checked().Eq("false")).SetAttr("data-s", "unticked", me).
+			Else().SetAttr("data-s", "other", me)))
 		fmt.Fprintf(&b, `<span id="echo">%s</span>`, g.Echo)
 		b.WriteString(`</body></html>`)
 		_, err := io.WriteString(w, b.String())
@@ -161,6 +168,22 @@ func TestJSConditions(t *testing.T) {
 	p.Fill("#mail", "sent@b.co")
 	p.Click("#say").Wait()
 	p.Expect("#echo").Text("sent@b.co")
+
+	// Eq: an attribute's value, a field's value, Checked as "true"/"false";
+	// an attribute the element lacks never equals, even "".
+	p.Click("#press")
+	p.Expect("#press").Attr("aria-pressed", "true")
+	p.Click("#press")
+	p.Expect("#press").Attr("aria-pressed", "false")
+	p.Click("#size-check")
+	p.Expect("#size-check").Attr("data-s", "unticked")
+	p.Select("#size", "m")
+	p.Click("#size-check")
+	p.Expect("#size-check").Attr("data-s", "medium")
+	p.Select("#size", "s")
+	p.Check("#agree")
+	p.Click("#size-check")
+	p.Expect("#size-check").Attr("data-s", "other")
 
 	if c := p.Console(); len(c) > 0 {
 		t.Errorf("console: %v", c)

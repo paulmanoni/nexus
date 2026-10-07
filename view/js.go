@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"reflect"
+	"strings"
 	"time"
 
 	"github.com/a-h/templ"
@@ -136,9 +137,13 @@ func (o JSOp) Throttle(d time.Duration) JSOp                { return o.Then(Thro
 func (o JSOp) If(cond Condition, opts ...JSOption) JSOp     { return o.Then(If(cond, opts...)) }
 func (o JSOp) ElseIf(cond Condition, opts ...JSOption) JSOp { return o.Then(ElseIf(cond, opts...)) }
 func (o JSOp) Else() JSOp                                   { return o.Then(Else()) }
-func (o JSOp) ScrollTo(sel Element, opts ...JSOption) JSOp  { return o.Then(ScrollTo(sel, opts...)) }
-func (o JSOp) Confirm(message string) JSOp                  { return o.Then(Confirm(message)) }
-func (o JSOp) Push(method any, args ...any) JSOp            { return o.Then(Push(method, args...)) }
+func (o JSOp) SetCookie(name, value string, opts ...JSOption) JSOp {
+	return o.Then(SetCookie(name, value, opts...))
+}
+func (o JSOp) Reload() JSOp                                { return o.Then(Reload()) }
+func (o JSOp) ScrollTo(sel Element, opts ...JSOption) JSOp { return o.Then(ScrollTo(sel, opts...)) }
+func (o JSOp) Confirm(message string) JSOp                 { return o.Then(Confirm(message)) }
+func (o JSOp) Push(method any, args ...any) JSOp           { return o.Then(Push(method, args...)) }
 func (o JSOp) PushTo(recv any, name string, args ...any) JSOp {
 	return o.Then(PushTo(recv, name, args...))
 }
@@ -320,6 +325,36 @@ func condOp(name string, cond Condition, opts []JSOption) JSOp {
 	}
 	return JSOp{name: name, args: args}
 }
+
+// SetCookie sets a cookie in the browser — a preference the server reads on
+// the next request, such as a language or a theme: Path=/, SameSite=Lax,
+// Secure on an https page, and for the browser session unless MaxAge says
+// how long. value is sent percent-encoded (encodeURIComponent).
+//
+//	view.SetCookie("lang", "sw", view.MaxAge(365*24*time.Hour)).Reload()
+//
+// The page's scripts can read a cookie set here, so it never holds a
+// secret: a sign-in or a token is set by the server, HttpOnly.
+func SetCookie(name, value string, opts ...JSOption) JSOp {
+	if name == "" || strings.ContainsAny(name, "=;, \t\r\n\"()<>@:/[]?{}\\") {
+		panic(fmt.Sprintf("view.SetCookie: %q is not a cookie name", name))
+	}
+	args := map[string]any{"name": name, "value": value}
+	for _, o := range opts {
+		o(args)
+	}
+	return JSOp{name: "set_cookie", args: args}
+}
+
+// MaxAge is how long a cookie SetCookie sets is kept; zero or less deletes
+// it.
+func MaxAge(d time.Duration) JSOption {
+	return func(a map[string]any) { a["max_age"] = max(int64(d/time.Second), 0) }
+}
+
+// Reload loads the page again — after SetCookie, so the server renders it
+// with the new cookie.
+func Reload() JSOp { return JSOp{name: "reload", args: map[string]any{}} }
 
 // Debounce runs the steps after it once the event has stopped firing for d:
 // each new event restarts the wait, so a box typed into sends once the

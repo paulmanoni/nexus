@@ -33,6 +33,7 @@ import (
 	"github.com/a-h/templ"
 
 	"github.com/paulmanoni/nexus/v2"
+	"github.com/paulmanoni/nexus/v2/config"
 	"github.com/paulmanoni/nexus/v2/httpx"
 	"github.com/paulmanoni/nexus/v2/registry"
 )
@@ -46,6 +47,12 @@ func options() []nexus.Option {
 		nexus.AsRest("GET", "/_view/behaviors.js", serveJS(func() string { return behaviorsJS }), nexus.Public(), nexus.HideFromDashboard()),
 		nexus.AsRest("GET", "/_view/import.js", serveJS(func() string { return importJS }), nexus.Public(), nexus.HideFromDashboard()),
 		nexus.AsRest("GET", "/_view/twins.js", serveJS(twinsJS), nexus.Public(), nexus.HideFromDashboard()),
+		// [runtime.browser] config is checked at boot: a key that would show
+		// a secret, or names nothing, stops the app before any page renders.
+		nexus.Invoke(func() error {
+			_, err := config.BrowserValues()
+			return err
+		}),
 		nexus.Invoke(func(app *nexus.App, lc nexus.Lifecycle) {
 			lastApp.Store(app)
 			registerIslands(app)

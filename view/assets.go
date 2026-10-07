@@ -4,12 +4,15 @@ import (
 	"crypto/sha256"
 	_ "embed"
 	"encoding/hex"
+	"encoding/json"
 	"sort"
 	"strconv"
 	"strings"
 	"sync"
 
 	"github.com/a-h/templ"
+
+	"github.com/paulmanoni/nexus/v2/config"
 
 	"github.com/paulmanoni/nexus/v2/httpx"
 )
@@ -100,7 +103,7 @@ var runtimeVersions = sync.OnceValues(func() (string, string) { return version(i
 //	</head>
 func Script() templ.Component {
 	imp, rt := runtimeVersions()
-	return templ.Raw(`<style>nx-t,nx-if,nx-shard,nx-c{display:contents}nx-if[hidden]{display:none}nx-island{display:block}[data-nx-busy][aria-busy=true]{pointer-events:none}</style>` +
+	return templ.Raw(browserConfig() + `<style>nx-t,nx-if,nx-shard,nx-c{display:contents}nx-if[hidden]{display:none}nx-island{display:block}[data-nx-busy][aria-busy=true]{pointer-events:none}</style>` +
 		`<script type="module" src="/_view/import.js?v=` + imp + `"></script>` +
 		`<script src="/_view/twins.js?v=` + twinsVersion() + `" defer></script>` +
 		`<script src="/_view/runtime.js?v=` + rt + `" defer></script>`)
@@ -123,4 +126,19 @@ func serveJS(body func() string) httpx.HandlerFunc {
 		c.Header("Cache-Control", "no-cache")
 		c.Data(200, "text/javascript; charset=utf-8", []byte(body()))
 	}
+}
+
+// browserConfig is the configuration [runtime.browser] config sends to the
+// browser, as the JSON __nx.config reads; "" when it sends none. json.Marshal
+// escapes <, > and &, so a value can't end the script element.
+func browserConfig() string {
+	values, err := config.BrowserValues()
+	if err != nil || len(values) == 0 {
+		return ""
+	}
+	b, err := json.Marshal(values)
+	if err != nil {
+		return ""
+	}
+	return `<script type="application/json" id="nx-config">` + string(b) + `</script>`
 }

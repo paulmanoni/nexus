@@ -577,6 +577,41 @@ func (r *Room) Info(ctx context.Context, msg view.Message) error {
 | `stream(socket, :messages, items)` / `phx-update="stream"` | a `view.Stream[T]` field: `Insert`/`Prepend`/`Delete`/`Reset`, `{ c.Messages.Attrs()... }` |
 | `Phoenix.Presence.track` / `list` / `presence_diff` | `v.Track(topic, key, meta)` / `view.Presences(topic)` / `view.PresenceDiff` in `Info` |
 
+### Context processors
+
+Some values every page shows — the signed-in user's name, unread counts, the
+navigation — come from the server on each request. Rather than each page
+loading them and passing them down through every component, register a
+context processor once, and read its value from any template:
+
+```go
+type Layout struct {
+	User   string
+	Unread int
+}
+
+view.ContextProcessor(func(ctx context.Context, inbox *Inbox) (Layout, error) {
+	u := auth.Current(ctx)
+	return Layout{User: u.ID, Unread: inbox.Unread(ctx, u.ID)}, nil
+})
+```
+
+```templ
+templ topbar() {
+	{{ l := view.FromContext[Layout](ctx) }}
+	<span>{ l.User }</span> <span class="badge">{ strconv.Itoa(l.Unread) }</span>
+}
+```
+
+The processor takes `ctx` — the request's, or a live page's connection's,
+with the visitor's identity — then any dependencies from the app's DI
+container, and returns the value, with or without an error. Its result type
+names it: one processor per type. It runs only when a template reads it, and
+at most once per render however many components read it; on a live page,
+each event's render runs it again, and a part of the page that reads it is
+never skipped by change tracking. An error fails the render, as does reading
+a type no processor returns.
+
 ### JS commands
 
 Some of what a click does needs no server: opening a menu, showing a step,
@@ -618,6 +653,7 @@ spreads into `view.JS(ops...)`.
 | `SetValue(value, sel, …)` | sets a field's value as if typed: its `input` and `change` fire, so a `view.Change` or live form hears it — clearing a search box |
 | `Copy(sel, …)` / `CopyText(text)` | puts a field's value (else the element's text) or `text` on the clipboard; the clicked element carries `data-copied` for a moment |
 | `ScrollTo(sel, …)` | scrolls the element into view |
+| `SetCookie(name, value, view.MaxAge(d))` / `Reload()` | sets a cookie the server reads on the next request (`Path=/`, `SameSite=Lax`, `Secure` on https; a session cookie without `MaxAge`, deleted with `MaxAge(0)`), and loads the page again — a language or theme switch: `view.SetCookie("lang", "sw", view.MaxAge(365*24*time.Hour)).Reload()`. Page scripts can read such a cookie: never a secret |
 | `PushFocus(sel, …)` / `PopFocus()` | remembers an element (`view.This()`: the one the event is on) / focuses the last remembered |
 | `If(cond)` / `ElseIf(cond)` / `Else()` | run the steps after them only when the condition holds — see [Conditions](#conditions) |
 | `Debounce(d)` / `Throttle(d)` | time the steps after them — see [Debounce and throttle](#busy-buttons-behaviors-and-when-to-write-javascript) |
@@ -696,6 +732,7 @@ about an [element](#elements-view-el-and-view-this) — `view.El(sel)` or
 | `view.El("#agree").Checked()` | it is checked |
 | `view.El("#q").Value()` | its value isn't empty |
 | `view.El("#m").Attr("open")` | it has the attribute |
+| `view.This().Attr("aria-pressed").Eq("true")` | the read equals the text — an attribute's value (one it lacks never equals), a field's value, `Checked()` as `"true"`/`"false"` |
 | `view.This().Is(":invalid")` | it matches the CSS selector |
 | `view.El(".row.selected")` | the selector matches anything |
 
@@ -705,6 +742,14 @@ about an [element](#elements-view-el-and-view-this) — `view.El(sel)` or
 <button onclick={ view.JS(view.If(view.El("#email").Is(":placeholder-shown")).Focus("#email").
 	ElseIf(view.El("#email").Is(":invalid")).AddClass("error", "#email").
 	Else().Push(p.Invite)) }>Invite</button>
+```
+
+A toggle button flips its own state:
+
+```templ
+<button aria-pressed="false" onclick={ view.JS(view.If(view.This().Attr("aria-pressed").Eq("true")).
+	SetAttr("aria-pressed", "false", view.This()).
+	Else().SetAttr("aria-pressed", "true", view.This())) }>Bold</button>
 ```
 
 `Is` takes any CSS selector, so the rest needs nothing new: `:checked`,
@@ -720,6 +765,31 @@ about an [element](#elements-view-el-and-view-this) — `view.El(sel)` or
 - What the server knows (permissions, a dirty record) is a Go `if` choosing
   which chain to render; what only the browser knows (ticked, typed, open,
   focused) is a condition.
+
+### Configuration in the browser
+
+A page's own script sometimes needs a setting from nexus.toml — a currency, a
+support address, the environment. List the keys the browser may see; nothing
+else leaves the server:
+
+```toml
+[runtime.browser]
+config = ["shop.currency", "support.email", "runtime.environment"]
+```
+
+```js
+__nx.config("shop.currency")   // "TZS"
+__nx.config()                  // every listed key → its value
+```
+
+`view.Script()` puts the values in the page (as JSON in a script element of
+its own, escaped so a value can't end it), with environment overrides applied
+as `config.Get` applies them. A key is checked when the app boots, and boot
+fails on one under `[databases]`, `[secrets]` or `[extensions]`, one named
+like a password, secret, token, key or credential (`api_key`, `password_min`,
+`smtp.token`), one that names nothing, or a whole table — list its values one
+by one. Templates read configuration with `config.Get` as any Go code does;
+`__nx.config` is for script.
 
 ### Busy buttons, behaviors, and when to write JavaScript
 

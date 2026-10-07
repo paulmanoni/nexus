@@ -134,3 +134,32 @@ func TestElementReadsAndConditions(t *testing.T) {
 		t.Errorf("conditions: got %s\nwant %s", got, want)
 	}
 }
+
+func TestEqCondition(t *testing.T) {
+	got := JS(If(This().Attr("aria-pressed").Eq("true")).ElseIf(El("#q").Value().Eq("")).ElseIf(El("#c").Checked().Eq("false"))).Call
+	want := `__nx.js(this,event,[[&#34;if&#34;,{&#34;eq&#34;:&#34;true&#34;,&#34;name&#34;:&#34;aria-pressed&#34;,&#34;read&#34;:&#34;attr&#34;}],[&#34;elif&#34;,{&#34;eq&#34;:&#34;&#34;,&#34;read&#34;:&#34;value&#34;,&#34;to&#34;:&#34;#q&#34;}],[&#34;elif&#34;,{&#34;eq&#34;:&#34;false&#34;,&#34;read&#34;:&#34;checked&#34;,&#34;to&#34;:&#34;#c&#34;}]])`
+	if got != want {
+		t.Errorf("got  %s\nwant %s", got, want)
+	}
+}
+
+func TestSetCookieAndReload(t *testing.T) {
+	got := JS(SetCookie("lang", "sw", MaxAge(365*24*time.Hour)).Reload()).Call
+	want := `__nx.js(this,event,[[&#34;set_cookie&#34;,{&#34;max_age&#34;:31536000,&#34;name&#34;:&#34;lang&#34;,&#34;value&#34;:&#34;sw&#34;}],[&#34;reload&#34;,{}]])`
+	if got != want {
+		t.Errorf("got  %s\nwant %s", got, want)
+	}
+	if got := JS(SetCookie("lang", "", MaxAge(-time.Hour))).Call; !strings.Contains(got, `max_age&#34;:0`) {
+		t.Errorf("a negative MaxAge deletes: %s", got)
+	}
+	for _, bad := range []string{"", "a=b", "a b", "a;b"} {
+		func() {
+			defer func() {
+				if r := recover(); r == nil {
+					t.Errorf("SetCookie(%q) took a bad name", bad)
+				}
+			}()
+			SetCookie(bad, "v")
+		}()
+	}
+}
