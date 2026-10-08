@@ -70,6 +70,9 @@ func needs(t *testing.T, exts ...string) {
 			if !ok {
 				t.Skipf("the server has no %s extension to install", e)
 			}
+			if _, err := d.SQL().ExecContext(ctx, "CREATE EXTENSION IF NOT EXISTS "+e+" SCHEMA public"); err != nil {
+				t.Fatal(err)
+			}
 		}
 	}
 }
@@ -219,8 +222,8 @@ func TestVectorSearch(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	near, err := Chunks.Nearest("embedding", orm.Vector{1, 0, 0}, orm.Cosine).Limit(3).All(ctx)
-	if err != nil || !slices.Equal(chunkTitles(near), []string{"Go web servers", "Java streams", "Rust in practice"}) {
+	near, err := Chunks.Nearest("embedding", orm.Vector{1, 0.2, 0}, orm.Cosine).Limit(3).All(ctx)
+	if err != nil || !slices.Equal(chunkTitles(near), []string{"Java streams", "Go web servers", "Rust in practice"}) {
 		t.Fatalf("nearest %v, %v", chunkTitles(near), err)
 	}
 	for _, c := range []struct {

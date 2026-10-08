@@ -6,6 +6,17 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [2.29.1] - 2026-10-08
+
+The ORM entries ship as `orm/v0.5.1`.
+
+### Fixed
+
+- ORM: `ormtest` on Postgres searches `public` after each test's own schema, so an extension
+  (pgvector, pg_trgm) created once serves every test — before, it landed in the first test's
+  schema and other tests couldn't see its types. Vector search and vector migrations are now
+  tested against a real Postgres with pgvector.
+
 ## [2.29.0] - 2026-10-08
 
 The ORM entries ship as `orm/v0.5.0`.

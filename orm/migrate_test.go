@@ -224,3 +224,35 @@ func TestApplySearchMigration(t *testing.T) {
 		t.Fatal("pages outlived its migration")
 	}
 }
+
+// TestApplyVectorMigration applies, on Postgres with pgvector, the form
+// makemigrations writes for a vector model (TestSearchPlan checks the
+// planner writes it): the extension, a vector(3) column, an HNSW index.
+func TestApplyVectorMigration(t *testing.T) {
+	if ormtest.Driver() != "postgres" {
+		t.Skip("vector migrations run on Postgres")
+	}
+	needs(t, "vector")
+	ctx := ormtest.Open(t)
+	d, _ := orm.DBFrom(ctx)
+	migs := []m.Migration{{Name: "0001_vector", Operations: []m.Operation{m.CreateExtension{Name: "vector"}}}, {Name: "0002_items", Dependencies: []string{"0001_vector"}, Operations: []m.Operation{
+		m.CreateModel{Table: "items", Fields: []m.NamedField{m.F("id", m.BigAuto()), m.F("embedding", m.Vector(3))}},
+		m.AddIndex{Table: "items", Index: m.Index{Name: "items_embedding_hnsw", SQL: m.Dialects{Postgres: `CREATE INDEX "items_embedding_hnsw" ON "items" USING hnsw ("embedding" vector_cosine_ops)`}}},
+	}}}
+	if err := orm.ApplyMigrations(ctx, d, "", migs...); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := orm.Exec(ctx, orm.Schema{}, "INSERT INTO items (embedding) VALUES (?), (?)", "[0,1,0]", "[1,0,0]"); err != nil {
+		t.Fatal(err)
+	}
+	near, err := orm.Raw[int64](ctx, orm.Schema{}, "SELECT id FROM items ORDER BY embedding <=> ? LIMIT 1", "[0.9,0.1,0]")
+	if err != nil || !slices.Equal(near, []int64{2}) {
+		t.Fatalf("nearest %v, %v", near, err)
+	}
+	if err := orm.ApplyMigrations(ctx, d, "0001", migs...); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := orm.Exec(ctx, orm.Schema{}, "SELECT 1 FROM items"); err == nil {
+		t.Fatal("items outlived its migration")
+	}
+}

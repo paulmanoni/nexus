@@ -99,7 +99,8 @@ func name() string {
 }
 
 // openPostgres makes a schema of the test's own and a pool whose
-// connections search it.
+// connections search it, then public: an extension (a database-wide
+// object) lives there, seen by every test's schema.
 func openPostgres(t testing.TB, dsn string) *orm.DB {
 	admin, err := sql.Open("pgx", dsn)
 	if err != nil {
@@ -113,7 +114,7 @@ func openPostgres(t testing.TB, dsn string) *orm.DB {
 	if strings.Contains(dsn, "?") {
 		sep = "&"
 	}
-	s, err := sql.Open("pgx", dsn+sep+"search_path="+schema)
+	s, err := sql.Open("pgx", dsn+sep+"search_path="+schema+",public")
 	if err != nil {
 		t.Fatal(err)
 	}
