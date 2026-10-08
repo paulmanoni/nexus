@@ -10,6 +10,7 @@ import (
 	"sync/atomic"
 
 	"github.com/paulmanoni/nexus/v2/httpx"
+	"github.com/paulmanoni/nexus/v2/internal/staticfs"
 )
 
 type Router struct {
@@ -102,7 +103,7 @@ func (r *Router) Static(prefix, dir string) {
 	// "GET /" — ServeMux flags that as an ambiguous overlap and panics. A static
 	// server only needs GET/HEAD anyway, and "GET /media/" is a strict path
 	// refinement of "GET /", so the conflict disappears.
-	r.mux.Handle("GET "+p, http.StripPrefix(p, http.FileServer(http.Dir(dir))))
+	r.mux.Handle("GET "+p, http.StripPrefix(p, http.FileServer(staticfs.Dir(dir))))
 }
 
 func (r *Router) Routes() []httpx.RouteInfo { return r.routes }

@@ -11,6 +11,7 @@ import (
 	"github.com/go-chi/chi/v5"
 
 	"github.com/paulmanoni/nexus/v2/httpx"
+	"github.com/paulmanoni/nexus/v2/internal/staticfs"
 )
 
 type Router struct {
@@ -87,7 +88,7 @@ func (r *Router) NoRoute(chain ...httpx.HandlerFunc) {
 
 func (r *Router) Static(prefix, dir string) {
 	p := strings.TrimSuffix(prefix, "/") + "/"
-	r.mux.Handle(p+"*", http.StripPrefix(p, http.FileServer(http.Dir(dir))))
+	r.mux.Handle(p+"*", http.StripPrefix(p, http.FileServer(staticfs.Dir(dir))))
 }
 
 func (r *Router) Routes() []httpx.RouteInfo { return r.routes }

@@ -6,6 +6,15 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [2.27.3] - 2026-10-08
+
+### Security
+
+- `Static` on the default stdlib router and on chi listed the contents of any directory
+  without an `index.html`, so every folder under a served directory (uploads, media) could
+  be browsed. A directory is now served only through its `index.html`, and is a 404
+  otherwise — what gin's `Static` already did.
+
 ## [2.27.2] - 2026-10-08
 
 ### Fixed
