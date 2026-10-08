@@ -31,6 +31,9 @@ name     = "shop"
 sslmode  = "disable"
 default  = true
 # log    = "warn"   # SQL logging: on in dev, silent in prod unless forced
+
+[databases.main.session]   # optional: set on every connection the pool opens
+statement_timeout = 5000
 ```
 
 Handlers and services take `*DB` as a parameter. `db.GetDB()` returns the `*gorm.DB`.
@@ -39,6 +42,12 @@ Handlers and services take `*DB` as a parameter. `db.GetDB()` returns the `*gorm
   `db/mysql` or `db/sqlite` (pure Go). A config naming a driver that isn't linked fails
   at boot and names the import to add.
 - **File-backed SQLite** gets a small read pool. Add a `busy_timeout` pragma to the DSN.
+- **Session settings** (`[databases.<name>.session]`, `db.Config.Session`) apply to every
+  pooled connection, not just the first: MySQL system variables (`foreign_key_checks = 0`,
+  `sql_mode = "NO_ENGINE_SUBSTITUTION"`), Postgres run-time parameters (`search_path`,
+  `statement_timeout`), SQLite pragmas (`foreign_keys = true`). Write values plainly —
+  nexus quotes them for the driver; `true`/`false` become `on`/`off`. A name the driver
+  keeps as its own option (`parseTime`, `sslmode`, …) fails boot; the zone stays `timezone`.
 - **Inline config** with no TOML: `db.Bind[DB]("main", func() db.Config { ... })`.
 - **Options:** `db.WithDefault()`, `db.WithDescription(...)`, `db.WithDetails(...)`.
 

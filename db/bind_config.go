@@ -107,5 +107,22 @@ func configFor(spec config.DatabaseSpec, get func(string) string) Config {
 		SSLMode:  spec.SSLMode,
 		TimeZone: spec.TimeZone,
 		LogLevel: spec.Log,
+		Session:  sessionFor(spec.Session),
 	}
+}
+
+func sessionFor(in map[string]any) map[string]string {
+	if len(in) == 0 {
+		return nil
+	}
+	out := make(map[string]string, len(in))
+	for k, v := range in {
+		switch v := v.(type) {
+		case bool:
+			out[k] = map[bool]string{true: "on", false: "off"}[v]
+		default:
+			out[k] = fmt.Sprint(v)
+		}
+	}
+	return out
 }

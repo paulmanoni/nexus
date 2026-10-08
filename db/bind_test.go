@@ -3,6 +3,7 @@ package db
 import (
 	"os"
 	"path/filepath"
+	"reflect"
 	"testing"
 
 	"github.com/paulmanoni/nexus/v2"
@@ -77,7 +78,7 @@ func TestConfigFor_KeyMapping(t *testing.T) {
 	cfg := configFor(spec, func(k string) string { return seen[k] })
 	want := Config{Driver: Postgres, Host: "h", Port: "5432", User: "u",
 		Password: "p", Database: "uaadb", SSLMode: "disable", TimeZone: "TZ"}
-	if cfg != want {
+	if !reflect.DeepEqual(cfg, want) {
 		t.Errorf("config mismatch:\n got %+v\nwant %+v", cfg, want)
 	}
 }
@@ -94,7 +95,7 @@ func TestConfigFor_InlineNoConfigServer(t *testing.T) {
 	})
 	want := Config{Driver: Postgres, Host: "localhost", Port: "5432",
 		User: "postgres", Password: "secret", Database: "myapp", SSLMode: "disable"}
-	if cfg != want {
+	if !reflect.DeepEqual(cfg, want) {
 		t.Errorf("inline config mismatch:\n got %+v\nwant %+v", cfg, want)
 	}
 }
@@ -184,5 +185,15 @@ schema     = "main"
 	spec := resolveSpec("good")
 	if spec.Driver != "postgres" || !spec.Default || spec.Schema != "main" {
 		t.Errorf("resolved spec = %+v", spec)
+	}
+}
+
+func TestConfigFor_Session(t *testing.T) {
+	cfg := configFor(config.DatabaseSpec{Driver: "mysql", Session: map[string]any{
+		"foreign_key_checks": int64(0), "sql_mode": "ANSI", "autocommit": true, "long_query_time": 1.5,
+	}}, func(string) string { return "" })
+	want := map[string]string{"foreign_key_checks": "0", "sql_mode": "ANSI", "autocommit": "on", "long_query_time": "1.5"}
+	if !reflect.DeepEqual(cfg.Session, want) {
+		t.Errorf("Session = %v, want %v", cfg.Session, want)
 	}
 }

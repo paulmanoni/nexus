@@ -2,6 +2,7 @@ package db
 
 import (
 	"context"
+	"fmt"
 	"log/slog"
 	"reflect"
 	"sync"
@@ -68,7 +69,11 @@ func bindOption[T any](name string, build func() Config, optsFn func() []BindOpt
 	}
 
 	ctor := func(lc di.Lifecycle, logger *slog.Logger) (*T, error) {
-		m := NewManager(build(), WithLogger(logger), WithBindName(name))
+		cfg := build()
+		if err := cfg.Validate(); err != nil {
+			return nil, fmt.Errorf("db %q: %w", name, err)
+		}
+		m := NewManager(cfg, WithLogger(logger), WithBindName(name))
 		lc.Append(di.Hook{
 			OnStart: func(context.Context) error { m.Start(); return nil },
 			OnStop:  func(context.Context) error { m.Stop(); return nil },

@@ -579,6 +579,9 @@ default  = true
 # log    = "warn"                        # SQL logging: omit = auto (on in dev,
                                           # silent in prod). Force with silent/
                                           # false/off | error | warn/true/on | info/all
+# [databases.main.session]               # set on EVERY pooled connection: MySQL vars,
+# statement_timeout = 5000               # Postgres run-time params, SQLite pragmas;
+                                          # plain values (nexus quotes); db.Config.Session
 
 # Config server (optional) — decoded by MustLoadExtensions; values via config.Get.
 [extensions.config]

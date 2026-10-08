@@ -6,6 +6,23 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [2.27.0] - 2026-10-08
+
+### Added
+
+- **Database session settings.** `db.Config.Session` / `[databases.<name>.session]` set
+  server settings on every connection the pool opens — MySQL system variables
+  (`foreign_key_checks`, `sql_mode`), Postgres run-time parameters (`search_path`,
+  `statement_timeout`), SQLite pragmas — through the connection string, so no pooled
+  connection misses them. Values are written plainly and quoted per driver; a key the
+  driver would read as its own option fails boot. `db.Config` holds a map now, so it is
+  no longer comparable with `==`.
+
+### Fixed
+
+- ORM (`orm/v0.3.1`): `Save` on MySQL reported "not found" when the row it saved was
+  unchanged — MySQL counts changed rows, not matched ones. It now checks the row exists.
+
 ## [2.26.0] - 2026-10-07
 
 ### Added

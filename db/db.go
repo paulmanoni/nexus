@@ -62,6 +62,13 @@ type Config struct {
 	SSLMode  string // "disable" / "require" / ... — postgres only
 	TimeZone string // IANA TZ: Postgres's session zone, MySQL's loc ("" = the machine's)
 
+	// Session sets server settings on every connection the pool opens:
+	// MySQL system variables (foreign_key_checks, sql_mode), Postgres
+	// run-time parameters (search_path, statement_timeout), SQLite pragmas
+	// (foreign_keys). Values are plain — nexus quotes them for the driver.
+	// [databases.<name>.session] in nexus.toml.
+	Session map[string]string
+
 	// LogLevel controls SQL/GORM logging. Empty is auto — warn-level under
 	// `nexus dev` / a development environment, silent otherwise (a
 	// production binary stays quiet by default). Override with
@@ -84,7 +91,7 @@ func (c Config) DSN() string {
 		}
 		q := pgDSNValue
 		return fmt.Sprintf("host=%s user=%s password=%s dbname=%s port=%s sslmode=%s TimeZone=%s",
-			q(c.Host), q(c.User), q(c.Password), q(c.Database), q(c.Port), q(ssl), q(tz))
+			q(c.Host), q(c.User), q(c.Password), q(c.Database), q(c.Port), q(ssl), q(tz)) + c.postgresSession()
 	case MySQL:
 		// The driver unescapes the name, so a '?' in it can't add
 		// parameters (allowAllFiles=true and the like).
@@ -96,9 +103,9 @@ func (c Config) DSN() string {
 			loc = url.QueryEscape(c.TimeZone)
 		}
 		return fmt.Sprintf("%s:%s@tcp(%s:%s)/%s?charset=utf8mb4&parseTime=True&loc=%s",
-			c.User, c.Password, c.Host, c.Port, url.PathEscape(c.Database), loc)
+			c.User, c.Password, c.Host, c.Port, url.PathEscape(c.Database), loc) + c.mysqlSession()
 	case SQLite:
-		return c.Database
+		return c.sqliteDSN()
 	}
 	return ""
 }
@@ -402,6 +409,10 @@ func (m *Manager) Driver() Driver { return m.cfg.Driver }
 
 // connect runs the Open + pool-tune sequence through the failsafe executor.
 func (m *Manager) connect() error {
+	if err := m.cfg.Validate(); err != nil {
+		m.markDisconnected()
+		return err
+	}
 	db, err := m.executor.Get(func() (*gorm.DB, error) {
 		return gorm.Open(m.cfg.Dialector(), &gorm.Config{
 			Logger: resolveGormLogger(m.cfg.LogLevel, m.logger),

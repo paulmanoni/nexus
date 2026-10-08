@@ -53,6 +53,12 @@ type DatabaseSpec struct {
 	// statement). Case-insensitive.
 	Log string `toml:"log"`
 
+	// Session is the [databases.<name>.session] table: server settings
+	// applied to every connection (foreign_key_checks = 0, sql_mode =
+	// "NO_ENGINE_SUBSTITUTION", search_path = "app"). Values are strings,
+	// numbers or booleans (true/false become "on"/"off").
+	Session map[string]any `toml:"session"`
+
 	// Inline values (optional). Each, when set, takes precedence over
 	// the config-server lookup for that field. ${ENV} placeholders are
 	// expanded by Load.

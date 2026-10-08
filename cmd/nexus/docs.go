@@ -1849,6 +1849,10 @@ Inline values OR a config-server key_prefix:
                                     # silent in prod). silent/false/off | error
                                     # | warn/true/on | info/all
 
+    [databases.main.session]        # optional — applied to every pooled connection
+    statement_timeout = 5000        # MySQL system variables, Postgres run-time
+                                    # params, SQLite pragmas; plain values
+
     [databases.uaa]                 # config-server mode (secrets external)
     driver     = "postgres"
     key_prefix = "db.uaa"           # reads db.uaa.{host,port,username,password,name}
