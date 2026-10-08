@@ -27,3 +27,18 @@ func TestAssets(t *testing.T) {
 		t.Fatalf("GET = %d %q", rec.Code, rec.Body.String())
 	}
 }
+
+// A boot scoped to some annotated modules still serves the runtime its
+// pages load.
+func TestRuntimeServedUnderDecoratedModules(t *testing.T) {
+	app, stop, err := nexus.InProcess(config.Runtime{}, nexus.DecoratedModules())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = stop(context.Background()) }()
+	rec := httptest.NewRecorder()
+	app.ServeHTTP(rec, httptest.NewRequest("GET", "/_view/runtime.js", nil))
+	if rec.Code != 200 || rec.Body.Len() == 0 {
+		t.Fatalf("GET /_view/runtime.js = %d", rec.Code)
+	}
+}

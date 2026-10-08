@@ -256,4 +256,7 @@ app, stop, err := nexus.InProcess(config.Runtime{},
 
 Only drained modules named in the list participate (decorated modules are named
 after their package; `main` registers as `"app"`). `nexus.DecoratedModules()`
-with no names drops every decorated registration — a boot fully isolated from
+with no names drops every decorated registration — a boot fully isolated from annotations.
+A linked framework package's own plumbing — the view runtime's `/_view/*.js`, the
+component kit's assets — registers with `nexus.RegisterBuiltinOptions` and is never
+dropped, so live pages work in a scoped boot.

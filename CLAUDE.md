@@ -1072,6 +1072,8 @@ Annotation catalog (one PRIMARY per func, plus optional modifiers):
   boot with `nexus.DecoratedModules("<pkg>")` so one module's test is isolated
   from the others' registrations (the drain is a snapshot — repeated boots in
   one binary all see them; no names = drop all decorated registrations).
+  A linked framework package's own plumbing (the view runtime's `/_view/*.js`, the
+  kit's assets) registers with `nexus.RegisterBuiltinOptions` and is never dropped.
   (`nexus build` fails fast if codegen can't resolve a decorator; `nexus dev`
   warns and lets `go run` surface the underlying error.)
 - A qualified custom decorator (`//nexus:pkg.Func`, e.g. `//nexus:inertia.Page`) needs the

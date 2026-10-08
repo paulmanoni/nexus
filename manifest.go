@@ -950,7 +950,7 @@ func printManifestAndExitIfRequested(cfg config.Runtime, opts []Option) {
 	// fx.Populate doesn't fire lifecycle hooks), so the engine is
 	// just a registry-of-routes, never a server.
 	all := append([]di.Option{fxEarlyOptions(cfg)}, unwrap(opts)...)
-	all = append(all, unwrap(filterDeferredOptions(opts, collectDeferredOptions()))...)
+	all = append(all, unwrap(collectDeferredOptions(opts))...)
 	all = append(all, fxLateOptions())
 
 	// Drop the lifecycle invoke from fxEarlyOptions if it ever grows

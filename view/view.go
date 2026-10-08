@@ -38,7 +38,7 @@ import (
 	"github.com/paulmanoni/nexus/v2/registry"
 )
 
-func init() { nexus.RegisterDeferredOptions(options) }
+func init() { nexus.RegisterBuiltinOptions(options) }
 
 func options() []nexus.Option {
 	return []nexus.Option{

@@ -568,7 +568,7 @@ func Run(cfg config.Runtime, opts ...Option) {
 	// Deferred sources (e.g. nexus/decorate's //nexus:-annotation drain) contribute
 	// AFTER the app's own options and BEFORE autoMountGraphQL, so their
 	// endpoints take part in schema assembly like any hand-written module.
-	all = append(all, unwrap(filterDeferredOptions(opts, collectDeferredOptions()))...)
+	all = append(all, unwrap(collectDeferredOptions(opts))...)
 	all = append(all, fxLateOptions())
 	// Bound the whole stop chain, not just the HTTP drain. The listener
 	// hook already caps its own Shutdown; this covers everything after
@@ -655,7 +655,14 @@ func unwrap(opts []Option) []di.Option {
 // drain call: decorate registers its drain here from its own init(), and Run
 // folds the result into the option tree. nexus never imports decorate, so the
 // dependency points the safe way (decorate → nexus).
-var deferredOptionSources []func() []Option
+var deferredOptionSources []deferredSource
+
+// deferredSource is one registered source; builtin ones are a linked
+// framework package's own plumbing, which DecoratedModules never filters.
+type deferredSource struct {
+	fn      func() []Option
+	builtin bool
+}
 
 // RegisterDeferredOptions registers a source of Options collected at Boot/Run
 // time. Sources run in registration order, inserted after the app's own
@@ -665,16 +672,36 @@ var deferredOptionSources []func() []Option
 // Intended for framework integration (nexus/decorate); apps don't call it.
 func RegisterDeferredOptions(fn func() []Option) {
 	if fn != nil {
-		deferredOptionSources = append(deferredOptionSources, fn)
+		deferredOptionSources = append(deferredOptionSources, deferredSource{fn: fn})
 	}
 }
 
-// collectDeferredOptions invokes every registered source and concatenates the
-// results. Run/print-mode call it once while building the option tree.
-func collectDeferredOptions() []Option {
+// RegisterBuiltinOptions registers a source of Options a framework package
+// contributes whenever it is linked — the view runtime's scripts, a
+// component kit's assets. Unlike RegisterDeferredOptions, DecoratedModules
+// never drops them: a boot scoped to some annotated modules still serves the
+// runtime its pages load.
+//
+// Intended for framework packages; apps don't call it.
+func RegisterBuiltinOptions(fn func() []Option) {
+	if fn != nil {
+		deferredOptionSources = append(deferredOptionSources, deferredSource{fn: fn, builtin: true})
+	}
+}
+
+// collectDeferredOptions invokes every registered source, in registration
+// order, and concatenates the results — the annotated ones filtered by any
+// DecoratedModules among the boot's own options. Run/print-mode call it once
+// while building the option tree.
+func collectDeferredOptions(userOpts []Option) []Option {
+	keep := decoratedKeep(userOpts)
 	var out []Option
-	for _, fn := range deferredOptionSources {
-		out = append(out, fn()...)
+	for _, s := range deferredOptionSources {
+		opts := s.fn()
+		if !s.builtin && keep != nil {
+			opts = filterDecorated(keep, opts)
+		}
+		out = append(out, opts...)
 	}
 	return out
 }
@@ -706,10 +733,9 @@ type decoratedModulesOption struct{ names []string }
 
 func (d decoratedModulesOption) nexusOption() di.Option { return di.Options() }
 
-// filterDeferredOptions applies any DecoratedModules markers among the boot's
-// own options to the drained deferred registrations. No marker → drained
-// passes through untouched.
-func filterDeferredOptions(userOpts, drained []Option) []Option {
+// decoratedKeep is the set of module names the DecoratedModules markers
+// among the boot's own options accept; nil when there is no marker.
+func decoratedKeep(userOpts []Option) map[string]bool {
 	var keep map[string]bool
 	for _, o := range userOpts {
 		if d, ok := o.(decoratedModulesOption); ok {
@@ -721,9 +747,12 @@ func filterDeferredOptions(userOpts, drained []Option) []Option {
 			}
 		}
 	}
-	if keep == nil {
-		return drained
-	}
+	return keep
+}
+
+// filterDecorated keeps the drained registrations that are top-level
+// modules keep names.
+func filterDecorated(keep map[string]bool, drained []Option) []Option {
 	var out []Option
 	for _, o := range drained {
 		if m, ok := o.(moduleOption); ok && keep[m.name] {

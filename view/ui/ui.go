@@ -55,7 +55,7 @@ const Prefix = "/_view/ui/"
 
 // Importing the package serves ui.js and ui.css under Prefix.
 func init() {
-	nexus.RegisterDeferredOptions(func() []nexus.Option {
+	nexus.RegisterBuiltinOptions(func() []nexus.Option {
 		return []nexus.Option{view.Assets(Prefix, http.HandlerFunc(serve))}
 	})
 }

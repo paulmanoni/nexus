@@ -379,11 +379,14 @@ func TestDecoratedModulesFilter(t *testing.T) {
 	}
 	handlerA := func(p Params[aArgs]) (int, error) { return 1, nil }
 	handlerB := func(p Params[aArgs]) (int, error) { return 2, nil }
-	deferredOptionSources = append(deferredOptionSources, func() []Option {
+	RegisterDeferredOptions(func() []Option {
 		return []Option{
 			Module("alpha", AsRest("GET", "/alpha", handlerA)),
 			Module("beta", AsRest("GET", "/beta", handlerB)),
 		}
+	})
+	RegisterBuiltinOptions(func() []Option {
+		return []Option{AsRest("GET", "/builtin", handlerA)}
 	})
 
 	endpoints := func(opts ...Option) map[string]bool {
@@ -402,8 +405,8 @@ func TestDecoratedModulesFilter(t *testing.T) {
 	}
 
 	got := endpoints(DecoratedModules("alpha"))
-	if !got["/alpha"] || got["/beta"] {
-		t.Fatalf("DecoratedModules(alpha): got %v, want /alpha only", got)
+	if !got["/alpha"] || got["/beta"] || !got["/builtin"] {
+		t.Fatalf("DecoratedModules(alpha): got %v, want /alpha and /builtin only", got)
 	}
 
 	// The source is not consumed: a second boot in the same process still
@@ -415,8 +418,8 @@ func TestDecoratedModulesFilter(t *testing.T) {
 
 	// No names: fully isolated from every decorated registration.
 	got = endpoints(DecoratedModules())
-	if got["/alpha"] || got["/beta"] {
-		t.Fatalf("DecoratedModules(): got %v, want neither", got)
+	if got["/alpha"] || got["/beta"] || !got["/builtin"] {
+		t.Fatalf("DecoratedModules(): got %v, want only the builtin source", got)
 	}
 
 	// No marker: everything participates, unchanged.

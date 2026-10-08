@@ -6,6 +6,16 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [2.27.2] - 2026-10-08
+
+### Fixed
+
+- `nexus.DecoratedModules(...)` dropped the view runtime's own routes (`/_view/*.js`)
+  and the component kit's assets along with the filtered annotations, so a live page
+  in a scoped test boot never connected. Framework packages now register that plumbing
+  with `nexus.RegisterBuiltinOptions`, which the filter never touches.
+- The decorators guide ended mid-sentence.
+
 ## [2.27.1] - 2026-10-08
 
 ### Fixed
