@@ -720,6 +720,7 @@ type Agg struct {
 	fn, field string
 	key       string
 	expr      Expr
+	filter    Cond
 }
 
 // AggOf is an aggregate expression under a key of your own, for the
@@ -732,17 +733,50 @@ type Agg struct {
 //	r, _ := Users.Aggregate(ctx, orm.AggOf("names", Names.Of(orm.F("name"))))
 func AggOf(key string, e Expr) Agg { return Agg{key: key, expr: e} }
 
+// Filter aggregates only the rows where cond holds, Django's filter=:
+//
+//	orm.Count("id").Filter(orm.Q{"active": true}).As("active")
+//
+// It is FILTER (WHERE …) on Postgres and SQLite, and the aggregate of a
+// CASE on MySQL, NULL where cond doesn't hold.
+func (a Agg) Filter(cond Cond) Agg {
+	a.filter = cond
+	return a
+}
+
+// As names the aggregate's Key.
+func (a Agg) As(key string) Agg {
+	a.key = key
+	return a
+}
+
 // exprSQL makes an aggregate an Expr: Annotate takes one, and Values
 // listing it groups by the other names.
 func (a Agg) exprSQL(b *builder) (string, error) {
 	if a.expr != nil {
+		if a.filter != nil {
+			return "", fmt.Errorf("orm: AggOf(%q) takes no Filter: put the condition in its expression (orm.Case)", a.key)
+		}
 		return a.expr.exprSQL(b)
 	}
 	col, err := b.ref(a.field)
 	if err != nil {
 		return "", err
 	}
-	return a.fn + "(" + col + ")", nil
+	if a.filter == nil {
+		return a.fn + "(" + col + ")", nil
+	}
+	neg := b.neg
+	b.neg = false
+	defer func() { b.neg = neg }()
+	cond, err := a.filter.sql(b)
+	if err != nil || cond == "" {
+		return a.fn + "(" + col + ")", err
+	}
+	if b.d.Name() == "mysql" {
+		return a.fn + "(CASE WHEN " + cond + " THEN " + col + " END)", nil
+	}
+	return a.fn + "(" + col + ") FILTER (WHERE " + cond + ")", nil
 }
 
 func Count(field string) Agg { return Agg{fn: "COUNT", field: field} }

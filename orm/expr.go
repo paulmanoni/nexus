@@ -1,15 +1,19 @@
 package orm
 
 import (
+	"cmp"
 	"fmt"
+	"reflect"
+	"slices"
 	"strconv"
 	"strings"
 	"sync"
 )
 
 // Expr is a SQL expression a query computes: a field (F), a function call
-// (a Func's Of), or a template (SQL). Exprs go where values go — a Q's
-// value, Where, Annotate, Update's Set, Aggregate — and nest.
+// (a Func's Of), a template (SQL), a Case or a Switch. Exprs go where
+// values go — a Q's value, Where, Annotate, Update's Set, Aggregate — and
+// nest.
 type Expr interface {
 	exprSQL(b *builder) (string, error)
 }
@@ -225,4 +229,156 @@ func (c exprCond) sql(b *builder) (string, error) {
 		return "", err
 	}
 	return b.compare(col, c.lookup, c.value, c.lookup)
+}
+
+// Case is the first of its branches whose condition holds, Django's
+// Case: each When's result, else Else's, else NULL.
+//
+//	orm.Case(
+//		orm.When(orm.Q{"orders__total__gte": 1000}, "gold"),
+//		orm.When(orm.Q{"age__gte": 18}, "silver"),
+//	).Else("bronze")
+func Case(whens ...WhenClause) *CaseExpr { return &CaseExpr{whens: whens} }
+
+// When is a branch of a Case: then where cond, any Cond, holds. then is
+// an Expr (a field, arithmetic, another Case) or a value sent as an
+// argument.
+func When(cond Cond, then any) WhenClause { return WhenClause{cond, then} }
+
+// WhenClause is a branch of a Case.
+type WhenClause struct {
+	cond Cond
+	then any
+}
+
+// CaseExpr is a Case.
+type CaseExpr struct {
+	whens []WhenClause
+	els   any
+}
+
+// Else is the result when no branch's condition holds: an Expr or a
+// value.
+func (c *CaseExpr) Else(v any) *CaseExpr {
+	n := *c
+	n.els = v
+	return &n
+}
+
+func (c *CaseExpr) exprSQL(b *builder) (string, error) {
+	if len(c.whens) == 0 {
+		return "", fmt.Errorf("orm: a Case with no When")
+	}
+	// A branch's condition is its own: an Exclude the CASE stands in
+	// doesn't negate it.
+	neg := b.neg
+	b.neg = false
+	defer func() { b.neg = neg }()
+	s := "CASE"
+	for _, w := range c.whens {
+		cond, err := w.cond.sql(b)
+		if err != nil {
+			return "", err
+		}
+		then, err := b.result(w.then)
+		if err != nil {
+			return "", err
+		}
+		s += " WHEN " + cmp.Or(cond, "1 = 1") + " THEN " + then
+	}
+	return b.caseEnd(s, c.els)
+}
+
+// Switch is a Case comparing one expression with values: the result of
+// the first Case value it equals, else Else's, else NULL.
+//
+//	orm.Switch(orm.F("status")).Case("paid", 1).Case("refunded", -1).Else(0)
+func Switch(e Expr) *SwitchExpr { return &SwitchExpr{e: e} }
+
+// SwitchExpr is a Switch.
+type SwitchExpr struct {
+	e     Expr
+	cases [][2]any // value, result
+	els   any
+}
+
+// Case adds a branch: then where the expression equals value. Each is an
+// Expr or a value.
+func (s *SwitchExpr) Case(value, then any) *SwitchExpr {
+	n := *s
+	n.cases = append(slices.Clip(s.cases), [2]any{value, then})
+	return &n
+}
+
+// Else is the result when the expression equals no value.
+func (s *SwitchExpr) Else(v any) *SwitchExpr {
+	n := *s
+	n.els = v
+	return &n
+}
+
+func (s *SwitchExpr) exprSQL(b *builder) (string, error) {
+	if len(s.cases) == 0 {
+		return "", fmt.Errorf("orm: a Switch with no Case")
+	}
+	e, err := s.e.exprSQL(b)
+	if err != nil {
+		return "", err
+	}
+	out := "CASE " + e
+	for _, c := range s.cases {
+		v, err := b.operand(c[0])
+		if err != nil {
+			return "", err
+		}
+		then, err := b.result(c[1])
+		if err != nil {
+			return "", err
+		}
+		out += " WHEN " + v + " THEN " + then
+	}
+	return b.caseEnd(out, s.els)
+}
+
+// caseEnd closes a CASE: its ELSE, when there is one, and END.
+func (b *builder) caseEnd(s string, els any) (string, error) {
+	if els != nil {
+		e, err := b.result(els)
+		if err != nil {
+			return "", err
+		}
+		s += " ELSE " + e
+	}
+	return s + " END", nil
+}
+
+// result is a CASE's result: NULL for nil. Postgres types an argument
+// there as text when no branch says otherwise, so a value is cast to its
+// Go type's (a driver.Valuer's own Value says it): numbers stay numbers
+// to sum, compare and write.
+func (b *builder) result(v any) (string, error) {
+	if v == nil {
+		return "NULL", nil
+	}
+	if _, ok := v.(Expr); ok || b.d.Name() != "postgres" {
+		return b.operand(v)
+	}
+	var t string
+	switch rv := reflect.ValueOf(v); {
+	case rv.Type() == timeType:
+		t = "TIMESTAMP"
+	case rv.Type().Implements(valuerType):
+	case rv.Kind() == reflect.Bool:
+		t = "BOOLEAN"
+	case rv.CanInt() || rv.CanUint():
+		t = "BIGINT"
+	case rv.CanFloat():
+		t = "DOUBLE PRECISION"
+	case rv.Kind() == reflect.String:
+		t = "TEXT"
+	}
+	if t == "" {
+		return b.arg(v), nil
+	}
+	return "CAST(" + b.arg(v) + " AS " + t + ")", nil
 }

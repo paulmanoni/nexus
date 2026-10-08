@@ -20,6 +20,7 @@ func init() {
 	orm.RegisterScanner[Tag]([]string{"id", "name"}, func() orm.RowScanner[Tag] { return new(ormScanTag) })
 	orm.RegisterScanner[User]([]string{"id", "created_at", "updated_at", "name", "email", "age", "bio", "active"}, func() orm.RowScanner[User] { return new(ormScanUser) })
 	orm.RegisterScanner[UserStats]([]string{"id", "name"}, func() orm.RowScanner[UserStats] { return new(ormScanUserStats) })
+	orm.RegisterScanner[UserTier]([]string{"id", "name", "age", "active"}, func() orm.RowScanner[UserTier] { return new(ormScanUserTier) })
 	orm.RegisterScanner[benchUser]([]string{"id", "created_at", "name", "email", "age", "active"}, func() orm.RowScanner[benchUser] { return new(ormScanbenchUser) })
 }
 
@@ -603,6 +604,55 @@ func (s UserStatsFieldSet) Under(prefix string) UserStatsFieldSet {
 		p:    prefix,
 		ID:   orm.FieldAt[int64](prefix + "id"),
 		Name: orm.TextFieldAt[string](prefix + "name"),
+	}
+}
+
+type ormScanUserTier struct {
+	c0   orm.Cell[int64]
+	c1   orm.Cell[string]
+	c2   orm.Cell[int]
+	c3   orm.Cell[bool]
+	dest []any
+}
+
+func (s *ormScanUserTier) Dest() []any {
+	if s.dest == nil {
+		s.dest = []any{&s.c0, &s.c1, &s.c2, &s.c3}
+	}
+	return s.dest
+}
+
+func (s *ormScanUserTier) Bind(r *UserTier) {
+	s.c0.P = &r.ID
+	s.c1.P = &r.Name
+	s.c2.P = &r.Age
+	s.c3.P = &r.Active
+}
+
+func (s *ormScanUserTier) Values(r *UserTier, dst []any) []any {
+	return append(dst[:0], r.ID, r.Name, r.Age, r.Active)
+}
+
+// UserTierFields is UserTier's fields as typed lookups.
+var UserTierFields = UserTierFieldSet{}.Under("")
+
+// UserTierFieldSet is UserTier's fields as typed lookups: UserTierFields from the model itself, Under from a model related to it.
+type UserTierFieldSet struct {
+	p      string
+	ID     orm.Field[int64]
+	Name   orm.TextField[string]
+	Age    orm.Field[int]
+	Active orm.Field[bool]
+}
+
+// Under is the set through a relation path, such as "author__".
+func (s UserTierFieldSet) Under(prefix string) UserTierFieldSet {
+	return UserTierFieldSet{
+		p:      prefix,
+		ID:     orm.FieldAt[int64](prefix + "id"),
+		Name:   orm.TextFieldAt[string](prefix + "name"),
+		Age:    orm.FieldAt[int](prefix + "age"),
+		Active: orm.FieldAt[bool](prefix + "active"),
 	}
 }
 

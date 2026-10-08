@@ -6,6 +6,23 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [2.28.1] - 2026-10-08
+
+The ORM entries ship as `orm/v0.4.1`.
+
+### Added
+
+- ORM: **conditional expressions**, Django's `Case`/`When`: `orm.Case(orm.When(cond, then)…)
+  .Else(v)` (the first branch whose condition holds — any `Cond`, through relations and
+  under a schema's names; no `Else` is `NULL`) and `orm.Switch(expr).Case(value,
+  then)….Else(v)` (`CASE expr WHEN …`). Results are values (bound; cast to their type on
+  Postgres) or expressions, nested freely. They go in `Annotate` (filling `orm:"computed"`
+  fields), `Values`, `Filter`/`Exclude`/`OrderBy` by the annotation's name, and `Update`'s
+  `Set` in one statement.
+- ORM: **conditional aggregates:** `Count/Sum/Avg/Min/Max(…).Filter(cond)` aggregates only
+  the rows where `cond` holds (`FILTER (WHERE …)` on Postgres and SQLite, the aggregate of a
+  `CASE` on MySQL), in `Aggregate` and in grouped `Values`; `.As(key)` names an aggregate.
+
 ## [2.28.0] - 2026-10-08
 
 The ORM entries ship as `orm/v0.4.0`.

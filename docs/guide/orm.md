@@ -196,6 +196,59 @@ Users.Annotate("joined", orm.Year.Of(orm.F("created_at"))).
   ```
 - **Custom aggregates:** `orm.AggOf("names", GroupConcat.Of(orm.F("name"), ", "))`.
 
+## Conditional expressions
+
+`orm.Case` is SQL's `CASE`, Django's `Case`/`When`: the result of the first branch whose
+condition holds. `orm.Switch` compares one expression with values. Both are expressions,
+so they go wherever one does.
+
+```go
+tier := orm.Case(
+    orm.When(orm.Q{"orders__total__gte": 1000}, "gold"),               // through a relation
+    orm.When(orm.And(orm.Q{"active": true}, orm.Q{"age__gte": 30}), "silver"),
+    orm.When(orm.Q{"active": true}, "bronze"),
+).Else("none")
+
+Users.Annotate("tier", tier).Filter(orm.Q{"tier__in": []string{"gold", "silver"}}).OrderBy("-tier")
+Users.Annotate("tier", tier).Values[map[string]any]("email", "tier")
+
+points := orm.Switch(orm.F("status")).Case("paid", orm.F("amount")).Case("refunded", 0).Else(-1)
+Orders.Annotate("points", points).Aggregate(ctx, orm.Sum("points"))
+
+// One statement: SET age = CASE WHEN active THEN age + 1 ELSE age END
+Users.Filter(orm.Q{"age__gt": 0}).Update(ctx, orm.Set{
+    "age": orm.Case(orm.When(orm.Q{"active": true}, orm.SQL("{0} + {1}", orm.F("age"), 1))).Else(orm.F("age")),
+})
+```
+
+- **Conditions:** any condition a `Filter` takes: `Q`, `Or`, `And`, `Not`, `Where`,
+  `Exists`, paths through foreign keys (joined) and through rows held by many
+  (`EXISTS`), under any schema's names.
+- **Results:** a value (sent as a bound argument) or an expression: a field, a
+  function, `orm.SQL` arithmetic, another `Case` or `Switch`. With no `Else`, and for a
+  `nil` result, it is `NULL`. On Postgres a value is cast to its Go type's SQL type
+  (`CAST($1 AS BIGINT)`), since Postgres reads an untyped argument in a `CASE` as text.
+- **Where they go:** `Annotate` (a field tagged `orm:"computed"` receives it), every
+  `Values` target, `Filter`/`Exclude`/`OrderBy` by the annotation's name, and
+  `Update`'s `Set`. A condition in an `Update`'s `Case` may cross rows held by many,
+  not a foreign key: `UPDATE` can't join.
+
+**Conditional aggregates.** `Filter` on `Count`, `Sum`, `Avg`, `Min` or `Max`
+aggregates only the rows where its condition holds, Django's `filter=`; `As` names it.
+
+```go
+r, _ := Users.Aggregate(ctx,
+    orm.Count("id").Filter(orm.Q{"active": true}).As("active"),
+    orm.Sum("age").Filter(orm.Q{"age__gte": 18}))       // r.Int("active"), r.Int("age__sum")
+
+perTeam, _ := Users.Annotate("active", orm.Count("id").Filter(orm.Q{"active": true})).
+    Values[[]any]("team__name", "active")                // grouped by team
+```
+
+It is `COUNT(id) FILTER (WHERE …)` on Postgres and SQLite, and `COUNT(CASE WHEN … THEN
+id END)` on MySQL, which has no `FILTER`. `AggOf` takes no `Filter`: put the condition
+in its expression with a `Case`.
+
 ## Generated scanners
 
 Rows are read by reflection unless a generated scanner exists for the model, and with

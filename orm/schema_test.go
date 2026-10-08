@@ -261,6 +261,44 @@ func TestSchemaInverses(t *testing.T) {
 	}
 }
 
+func TestSchemaConditionals(t *testing.T) {
+	cases := schemas(t)
+	role := orm.Case(
+		orm.When(orm.Q{"team__name": "Core", "roles__name": "admin"}, "lead"),
+		orm.When(orm.Q{"first_name__startswith": "N"}, orm.F("team__name")),
+	).Else(orm.Switch(orm.F("active")).Case(false, "away"))
+	got := same(t, cases, "a Case through relations and a field read through one, a Switch", func(c schemaCase) (any, error) {
+		return orm.Of[Person](c.s).Annotate("role", role).Filter(orm.Q{"role__in": []string{"lead", "away", "Core"}}).OrderBy("id").Values[[]any]("email", "role").All(c.ctx)
+	})
+	if !reflect.DeepEqual(got, [][]any{{"ali@x", "lead"}, {"neema@x", "Core"}, {"juma@x", "away"}}) {
+		t.Fatalf("got %v", got)
+	}
+	got = same(t, cases, "conditional aggregates, grouped and not", func(c schemaCase) (any, error) {
+		per, err := orm.Of[Person](c.s).Annotate("editors", orm.Count("id").Filter(orm.Q{"active": true, "roles__name": "editor"})).
+			OrderBy("team__name").Values[[]any]("team__name", "editors").All(c.ctx)
+		if err != nil {
+			return nil, err
+		}
+		r, err := orm.Of[Person](c.s).Aggregate(c.ctx, orm.Count("id").Filter(orm.Q{"first_name__startswith": "J"}).As("j"))
+		return []any{per, r.Int("j")}, err
+	})
+	if !reflect.DeepEqual(got, []any{[][]any{{"Core", int64(2)}, {"Ops", int64(0)}}, int64(1)}) {
+		t.Fatalf("got %v", got)
+	}
+	got = same(t, cases, "a conditional update", func(c schemaCase) (any, error) {
+		_, err := orm.Of[Person](c.s).Filter(orm.Q{"id__gt": 0}).Update(c.ctx, orm.Set{
+			"name": orm.Case(orm.When(orm.Q{"roles__name": "editor"}, orm.Upper.Of(orm.F("name")))).Else(orm.F("name")),
+		})
+		if err != nil {
+			return nil, err
+		}
+		return orm.Of[Person](c.s).OrderBy("id").Values[string]("name").All(c.ctx)
+	})
+	if !slices.Equal(got.([]string), []string{"ALI MUSA", "NEEMA JUMA", "Juma Ali"}) {
+		t.Fatalf("got %v", got)
+	}
+}
+
 func TestSchemaWrites(t *testing.T) {
 	cases := schemas(t)
 	legacy := cases[1]

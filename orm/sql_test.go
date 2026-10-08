@@ -126,6 +126,39 @@ func TestFunctionSQL(t *testing.T) {
 	}
 }
 
+func TestCaseSQL(t *testing.T) {
+	m := For[sqlUser](Table("users"))
+	q := m.Annotate("tier", Case(When(Q{"age__gte": 65}, "senior"), When(Q{"age__lt": 18}, nil)).Else("adult")).
+		Annotate("points", Switch(F("name")).Case("ali", SQL("{0} * {1}", F("age"), 2)).Else(1)).
+		Annotate("adults", Count("id").Filter(Q{"age__gte": 18})).
+		Exclude(Q{"tier": "adult"}).OrderBy("-points").q
+	for _, c := range []struct {
+		d    Dialect
+		want string
+	}{
+		{postgres{}, `SELECT (CASE WHEN "users"."age" >= $1 THEN CAST($2 AS TEXT) WHEN "users"."age" < $3 THEN NULL ELSE CAST($4 AS TEXT) END), (CASE "users"."name" WHEN $5 THEN "users"."age" * $6 ELSE CAST($7 AS BIGINT) END), (COUNT("users"."id") FILTER (WHERE "users"."age" >= $8)) FROM "users" WHERE NOT ((CASE WHEN "users"."age" >= $9 THEN CAST($10 AS TEXT) WHEN "users"."age" < $11 THEN NULL ELSE CAST($12 AS TEXT) END) = $13) ORDER BY (CASE "users"."name" WHEN $14 THEN "users"."age" * $15 ELSE CAST($16 AS BIGINT) END) DESC`},
+		{mysql{}, "SELECT (CASE WHEN `users`.`age` >= ? THEN ? WHEN `users`.`age` < ? THEN NULL ELSE ? END), (CASE `users`.`name` WHEN ? THEN `users`.`age` * ? ELSE ? END), (COUNT(CASE WHEN `users`.`age` >= ? THEN `users`.`id` END)) FROM `users` WHERE NOT ((CASE WHEN `users`.`age` >= ? THEN ? WHEN `users`.`age` < ? THEN NULL ELSE ? END) = ?) ORDER BY (CASE `users`.`name` WHEN ? THEN `users`.`age` * ? ELSE ? END) DESC"},
+		{sqlite{}, `SELECT (CASE WHEN "users"."age" >= ? THEN ? WHEN "users"."age" < ? THEN NULL ELSE ? END), (CASE "users"."name" WHEN ? THEN "users"."age" * ? ELSE ? END), (COUNT("users"."id") FILTER (WHERE "users"."age" >= ?)) FROM "users" WHERE NOT ((CASE WHEN "users"."age" >= ? THEN ? WHEN "users"."age" < ? THEN NULL ELSE ? END) = ?) ORDER BY (CASE "users"."name" WHEN ? THEN "users"."age" * ? ELSE ? END) DESC`},
+	} {
+		b := q.builder(c.d)
+		var cols []string
+		for _, name := range []string{"tier", "points", "adults"} {
+			col, err := b.ref(name)
+			if err != nil {
+				t.Fatal(err)
+			}
+			cols = append(cols, col)
+		}
+		got, err := q.selectSQL(b, strings.Join(cols, ", "))
+		if err != nil || got != c.want {
+			t.Errorf("%s:\n got %s\nwant %s (%v)", c.d.Name(), got, c.want, err)
+		}
+		if want := []any{65, "senior", 18, "adult", "ali", 2, 1, 18, 65, "senior", 18, "adult", "adult", "ali", 2, 1}; !reflect.DeepEqual(b.args(), want) {
+			t.Errorf("%s args = %v, want %v", c.d.Name(), b.args(), want)
+		}
+	}
+}
+
 type sqlDoc struct {
 	ID        int64
 	Title     string
