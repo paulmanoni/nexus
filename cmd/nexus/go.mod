@@ -5,14 +5,14 @@ go 1.27.1
 require (
 	github.com/fsnotify/fsnotify v1.10.1
 	github.com/paulmanoni/deco v0.20.0
-	github.com/paulmanoni/nexus/orm v0.5.1
-	github.com/paulmanoni/nexus/v2 v2.29.1
+	github.com/paulmanoni/nexus/orm v0.5.2
+	github.com/paulmanoni/nexus/v2 v2.30.0
 	github.com/pelletier/go-toml/v2 v2.3.1
 	github.com/spf13/cobra v1.10.2
 	github.com/spf13/pflag v1.0.9
-	golang.org/x/mod v0.37.0
+	golang.org/x/mod v0.41.0
 	golang.org/x/term v0.46.0
-	golang.org/x/tools v0.47.0
+	golang.org/x/tools v0.49.0
 )
 
 require (
@@ -32,9 +32,9 @@ require (
 	github.com/jinzhu/now v1.1.5 // indirect
 	github.com/robfig/cron/v3 v3.0.1 // indirect
 	golang.org/x/crypto v0.51.0 // indirect
-	golang.org/x/sync v0.21.0 // indirect
+	golang.org/x/sync v0.23.0 // indirect
 	golang.org/x/sys v0.48.0 // indirect
-	golang.org/x/text v0.39.0 // indirect
+	golang.org/x/text v0.42.0 // indirect
 	gorm.io/gorm v1.31.1 // indirect
 )
 
