@@ -32,6 +32,13 @@ sslmode  = "disable"
 default  = true
 # log    = "warn"   # SQL logging: on in dev, silent in prod unless forced
 
+# pool (optional; a key left out keeps the default: 100 open, 10 idle,
+# recycled after 1h and after 30m idle; a negative value lifts the limit)
+max_open           = 50
+max_idle           = 10
+conn_max_lifetime  = "1h"
+conn_max_idle_time = "30m"
+
 [databases.main.session]   # optional: set on every connection the pool opens
 statement_timeout = 5000
 ```
@@ -42,6 +49,13 @@ Handlers and services take `*DB` as a parameter. `db.GetDB()` returns the `*gorm
   `db/mysql` or `db/sqlite` (pure Go). A config naming a driver that isn't linked fails
   at boot and names the import to add.
 - **File-backed SQLite** gets a small read pool. Add a `busy_timeout` pragma to the DSN.
+- **MySQL sends each query in one round trip:** the driver escapes the arguments into the
+  statement (`interpolateParams`), as Django's MySQL backend does, instead of preparing it on
+  the server first (two round trips). It's safe because nexus always connects with
+  `charset=utf8mb4`, never a charset whose escaping can be bypassed. `interpolate_params =
+  false` in `[databases.<name>]` (or `db.Config.InterpolateParams`) goes back to server-side
+  prepared statements. With MySQL's general or slow query log on, logged statements then
+  contain the values.
 - **Session settings** (`[databases.<name>.session]`, `db.Config.Session`) apply to every
   pooled connection, not just the first: MySQL system variables (`foreign_key_checks = 0`,
   `sql_mode = "NO_ENGINE_SUBSTITUTION"`), Postgres run-time parameters (`search_path`,

@@ -31,12 +31,15 @@ type annotation struct {
 	expr Expr
 }
 
+// clone is q to change apart: its lists clipped, so an append copies them
+// rather than writing past their end into what q shares (nothing writes
+// their items in place).
 func (q query) clone() query {
-	q.where = slices.Clone(q.where)
-	q.order = slices.Clone(q.order)
-	q.ann = slices.Clone(q.ann)
-	q.related = slices.Clone(q.related)
-	q.prefetch = slices.Clone(q.prefetch)
+	q.where = slices.Clip(q.where)
+	q.order = slices.Clip(q.order)
+	q.ann = slices.Clip(q.ann)
+	q.related = slices.Clip(q.related)
+	q.prefetch = slices.Clip(q.prefetch)
 	return q
 }
 
@@ -160,6 +163,9 @@ func (q query) relatedPlans(b *builder) ([]relPlan, error) {
 	var plans []relPlan
 	index := map[string]int{}
 	for _, path := range paths {
+		if err := checkPath(path); err != nil {
+			return nil, err
+		}
 		cur, parent, prefix := b, -1, ""
 		for part := range strings.SplitSeq(path, "__") {
 			r, ok := cur.m.relation(part)
@@ -191,6 +197,10 @@ func (q query) relatedPlans(b *builder) ([]relPlan, error) {
 func (q query) columns(b *builder, plans []relPlan) (string, error) {
 	var cols []string
 	read := func(b *builder) error {
+		if n := b.m.names(b.d); n != nil && n.list != "" && b.alias == b.m.Table {
+			cols = append(cols, n.list)
+			return nil
+		}
 		for _, f := range b.m.readFields() {
 			col := b.col(f)
 			if f.Via != "" {
@@ -244,9 +254,12 @@ func (q query) scan(ctx context.Context, c conn, s Schema, newRow func() reflect
 	}
 	defer rows.Close()
 	computed := q.computedFields()
-	n := len(q.m.readFields()) + len(computed)
-	for _, p := range plans {
-		n += len(p.b.m.readFields())
+	read := q.m.readFields()
+	planRead := make([][]*field, len(plans))
+	n := len(read) + len(computed)
+	for j, p := range plans {
+		planRead[j] = p.b.m.readFields()
+		n += len(planRead[j])
 	}
 	cells := make([]cell, n)
 	dest := make([]any, n)
@@ -257,8 +270,8 @@ func (q query) scan(ctx context.Context, c conn, s Schema, newRow func() reflect
 	for rows.Next() {
 		row := newRow()
 		i := 0
-		for _, f := range q.m.readFields() {
-			cells[i].dst = fieldOf(row, f.Index)
+		for _, f := range read {
+			cells[i].dst, cells[i].fast = fieldOf(row, f.Index), f.fast
 			i++
 		}
 		for _, f := range computed {
@@ -267,8 +280,8 @@ func (q query) scan(ctx context.Context, c conn, s Schema, newRow func() reflect
 		}
 		for j, p := range plans {
 			tmps[j] = reflect.New(p.b.m.Type)
-			for _, f := range p.b.m.readFields() {
-				cells[i].dst = fieldOf(tmps[j].Elem(), f.Index)
+			for _, f := range planRead[j] {
+				cells[i].dst, cells[i].fast = fieldOf(tmps[j].Elem(), f.Index), f.fast
 				i++
 			}
 		}

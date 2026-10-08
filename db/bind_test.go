@@ -6,6 +6,7 @@ import (
 	"reflect"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/paulmanoni/nexus/v2"
 	"github.com/paulmanoni/nexus/v2/config"
@@ -224,5 +225,27 @@ driver = "mongo"
 	}
 	if _, err := ConfigFor("absent"); err == nil || !strings.Contains(err.Error(), "[databases.absent]") {
 		t.Fatalf("a missing block: %v", err)
+	}
+}
+
+func TestConfigFor_Pool(t *testing.T) {
+	cfg := configFor(config.DatabaseSpec{Driver: "postgres", MaxOpen: 20, MaxIdle: -1, ConnMaxLifetime: "15m"}, func(string) string { return "" })
+	if want := (PoolConfig{MaxOpen: 20, MaxIdle: -1, ConnMaxLife: 15 * time.Minute}); cfg.Pool != want {
+		t.Fatalf("Pool = %+v, want %+v", cfg.Pool, want)
+	}
+	if _, err := poolOf(config.DatabaseSpec{ConnMaxIdleTime: "30 minutes"}); err == nil || !strings.Contains(err.Error(), `conn_max_idle_time = "30 minutes"`) {
+		t.Fatalf("a bad duration: %v", err)
+	}
+	// Unset keys keep the driver's defaults; a negative value lifts the limit.
+	got := poolFor(Config{Driver: Postgres, Pool: PoolConfig{MaxOpen: 20, MaxIdle: -1, ConnMaxLife: -1}})
+	if want := (PoolConfig{MaxOpen: 20, MaxIdle: 0, ConnMaxLife: 0, ConnMaxIdle: 30 * time.Minute}); got != want {
+		t.Fatalf("poolFor = %+v, want %+v", got, want)
+	}
+}
+
+func TestConfigFor_InterpolateParams(t *testing.T) {
+	off := false
+	if cfg := configFor(config.DatabaseSpec{Driver: "mysql", InterpolateParams: &off}, func(string) string { return "" }); cfg.InterpolateParams == nil || *cfg.InterpolateParams {
+		t.Fatalf("InterpolateParams = %v", cfg.InterpolateParams)
 	}
 }

@@ -41,9 +41,87 @@ func peek(v reflect.Value, index []int, t reflect.Type) reflect.Value {
 
 // cell receives one column of a row whatever the driver hands it, NULL
 // included, and converts it into the field.
-type cell struct{ dst reflect.Value }
+type cell struct {
+	dst  reflect.Value
+	fast scanKind // dst's kind when the driver's common values set it directly
+}
 
-func (c *cell) Scan(src any) error { return assign(c.dst, src) }
+func (c *cell) Scan(src any) error {
+	// What assign does for the driver's usual values, without its checks:
+	// fast is only set for a type that is no Scanner nor pointer.
+	switch c.fast {
+	case scanString:
+		switch s := src.(type) {
+		case string:
+			c.dst.SetString(s)
+			return nil
+		case []byte:
+			c.dst.SetString(string(s))
+			return nil
+		}
+	case scanInt:
+		if n, ok := src.(int64); ok {
+			c.dst.SetInt(n)
+			return nil
+		}
+	case scanBool:
+		switch s := src.(type) {
+		case bool:
+			c.dst.SetBool(s)
+			return nil
+		case int64:
+			c.dst.SetBool(s != 0)
+			return nil
+		}
+	case scanFloat:
+		switch s := src.(type) {
+		case float64:
+			c.dst.SetFloat(s)
+			return nil
+		case int64:
+			c.dst.SetFloat(float64(s))
+			return nil
+		}
+	case scanTime:
+		if t, ok := src.(time.Time); ok {
+			*(*time.Time)(c.dst.Addr().UnsafePointer()) = t
+			return nil
+		}
+	}
+	return assign(c.dst, src)
+}
+
+// scanKind is how a cell of a type may be set without assign's checks.
+type scanKind uint8
+
+const (
+	scanSlow scanKind = iota
+	scanString
+	scanInt
+	scanBool
+	scanFloat
+	scanTime
+)
+
+func scanKindOf(t reflect.Type) scanKind {
+	if reflect.PointerTo(t).Implements(scannerType) {
+		return scanSlow
+	}
+	if t == timeType {
+		return scanTime
+	}
+	switch t.Kind() {
+	case reflect.String:
+		return scanString
+	case reflect.Int, reflect.Int8, reflect.Int16, reflect.Int32, reflect.Int64:
+		return scanInt
+	case reflect.Bool:
+		return scanBool
+	case reflect.Float32, reflect.Float64:
+		return scanFloat
+	}
+	return scanSlow
+}
 
 // assign sets dst from a database value: a NULL zeroes it, a Scanner
 // scans itself, and the driver's int64, float64, bool, []byte, string
@@ -69,7 +147,11 @@ func assign(dst reflect.Value, src any) error {
 		if err != nil {
 			return err
 		}
-		dst.Set(reflect.ValueOf(t))
+		if dst.CanAddr() {
+			*dst.Addr().Interface().(*time.Time) = t // no boxing of t
+		} else {
+			dst.Set(reflect.ValueOf(t))
+		}
 		return nil
 	}
 	switch dst.Kind() {

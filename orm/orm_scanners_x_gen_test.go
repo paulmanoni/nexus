@@ -24,6 +24,8 @@ func init() {
 	orm.RegisterScanner[Order]([]string{"id", "customer_id", "total"}, func() orm.RowScanner[Order] { return new(ormScanOrder) })
 	orm.RegisterScanner[Post]([]string{"id", "headline", "author_id"}, func() orm.RowScanner[Post] { return new(ormScanPost) })
 	orm.RegisterScanner[Profile]([]string{"id", "bio"}, func() orm.RowScanner[Profile] { return new(ormScanProfile) })
+	orm.RegisterScanner[SecItem]([]string{"id", "name", "age", "parent_id"}, func() orm.RowScanner[SecItem] { return new(ormScanSecItem) })
+	orm.RegisterScanner[SecRef]([]string{"id", "ref"}, func() orm.RowScanner[SecRef] { return new(ormScanSecRef) })
 	orm.RegisterScanner[Settings]([]string{"id", "account_id", "theme"}, func() orm.RowScanner[Settings] { return new(ormScanSettings) })
 	orm.RegisterScanner[Tag]([]string{"id", "name"}, func() orm.RowScanner[Tag] { return new(ormScanTag) })
 	orm.RegisterScanner[User]([]string{"id", "created_at", "updated_at", "name", "email", "age", "bio", "active"}, func() orm.RowScanner[User] { return new(ormScanUser) })
@@ -31,7 +33,13 @@ func init() {
 	orm.RegisterScanner[UserTier]([]string{"id", "name", "age", "active"}, func() orm.RowScanner[UserTier] { return new(ormScanUserTier) })
 	orm.Register[Visit]()
 	orm.RegisterScanner[Visit]([]string{"id", "path"}, func() orm.RowScanner[Visit] { return new(ormScanVisit) })
+	orm.RegisterScanner[benchAuthor]([]string{"id", "name"}, func() orm.RowScanner[benchAuthor] { return new(ormScanbenchAuthor) })
+	orm.Register[benchItem]()
+	orm.RegisterScanner[benchItem]([]string{"id", "name", "qty"}, func() orm.RowScanner[benchItem] { return new(ormScanbenchItem) })
+	orm.RegisterScanner[benchPost]([]string{"id", "title", "author_id"}, func() orm.RowScanner[benchPost] { return new(ormScanbenchPost) })
+	orm.RegisterScanner[benchTag]([]string{"id", "name"}, func() orm.RowScanner[benchTag] { return new(ormScanbenchTag) })
 	orm.RegisterScanner[benchUser]([]string{"id", "created_at", "name", "email", "age", "active"}, func() orm.RowScanner[benchUser] { return new(ormScanbenchUser) })
+	orm.RegisterScanner[benchWide]([]string{"id", "created_at", "updated_at", "name", "email", "phone", "city", "country", "street", "zip", "age", "score", "visits", "balance", "rating", "active", "verified", "admin", "bio", "nick", "notes", "last_seen", "referrer"}, func() orm.RowScanner[benchWide] { return new(ormScanbenchWide) })
 }
 
 type ormScanAccount struct {
@@ -659,6 +667,101 @@ func (s ProfileFieldSet) Under(prefix string) ProfileFieldSet {
 	}
 }
 
+type ormScanSecItem struct {
+	c0   orm.Cell[int64]
+	c1   orm.Cell[string]
+	c2   orm.Cell[int]
+	c3   orm.PtrCell[int64]
+	dest []any
+}
+
+func (s *ormScanSecItem) Dest() []any {
+	if s.dest == nil {
+		s.dest = []any{&s.c0, &s.c1, &s.c2, &s.c3}
+	}
+	return s.dest
+}
+
+func (s *ormScanSecItem) Bind(r *SecItem) {
+	s.c0.P = &r.ID
+	s.c1.P = &r.Name
+	s.c2.P = &r.Age
+	s.c3.P = &r.ParentID
+}
+
+func (s *ormScanSecItem) Values(r *SecItem, dst []any) []any {
+	return append(dst[:0], r.ID, r.Name, r.Age, orm.PtrValue(r.ParentID))
+}
+
+// SecItemFields is SecItem's fields as typed lookups.
+var SecItemFields = SecItemFieldSet{}.Under("")
+
+// SecItemFieldSet is SecItem's fields as typed lookups: SecItemFields from the model itself, Under from a model related to it.
+type SecItemFieldSet struct {
+	p        string
+	ID       orm.Field[int64]
+	Name     orm.TextField[string]
+	Age      orm.Field[int]
+	ParentID orm.Field[int64]
+}
+
+// Under is the set through a relation path, such as "author__".
+func (s SecItemFieldSet) Under(prefix string) SecItemFieldSet {
+	return SecItemFieldSet{
+		p:        prefix,
+		ID:       orm.FieldAt[int64](prefix + "id"),
+		Name:     orm.TextFieldAt[string](prefix + "name"),
+		Age:      orm.FieldAt[int](prefix + "age"),
+		ParentID: orm.FieldAt[int64](prefix + "parent_id"),
+	}
+}
+
+// Parent is the fields of SecItem's Parent, for lookups across the relation.
+func (s SecItemFieldSet) Parent() SecItemFieldSet {
+	return SecItemFieldSet{}.Under(s.p + "parent__")
+}
+
+type ormScanSecRef struct {
+	c0   orm.Cell[int64]
+	c1   orm.Cell[string]
+	dest []any
+}
+
+func (s *ormScanSecRef) Dest() []any {
+	if s.dest == nil {
+		s.dest = []any{&s.c0, &s.c1}
+	}
+	return s.dest
+}
+
+func (s *ormScanSecRef) Bind(r *SecRef) {
+	s.c0.P = &r.ID
+	s.c1.P = &r.Ref
+}
+
+func (s *ormScanSecRef) Values(r *SecRef, dst []any) []any {
+	return append(dst[:0], r.ID, r.Ref)
+}
+
+// SecRefFields is SecRef's fields as typed lookups.
+var SecRefFields = SecRefFieldSet{}.Under("")
+
+// SecRefFieldSet is SecRef's fields as typed lookups: SecRefFields from the model itself, Under from a model related to it.
+type SecRefFieldSet struct {
+	p   string
+	ID  orm.Field[int64]
+	Ref orm.TextField[string]
+}
+
+// Under is the set through a relation path, such as "author__".
+func (s SecRefFieldSet) Under(prefix string) SecRefFieldSet {
+	return SecRefFieldSet{
+		p:   prefix,
+		ID:  orm.FieldAt[int64](prefix + "id"),
+		Ref: orm.TextFieldAt[string](prefix + "ref"),
+	}
+}
+
 type ormScanSettings struct {
 	c0   orm.Cell[int64]
 	c1   orm.Cell[int64]
@@ -951,6 +1054,193 @@ func (s VisitFieldSet) Under(prefix string) VisitFieldSet {
 	}
 }
 
+type ormScanbenchAuthor struct {
+	c0   orm.Cell[int64]
+	c1   orm.Cell[string]
+	dest []any
+}
+
+func (s *ormScanbenchAuthor) Dest() []any {
+	if s.dest == nil {
+		s.dest = []any{&s.c0, &s.c1}
+	}
+	return s.dest
+}
+
+func (s *ormScanbenchAuthor) Bind(r *benchAuthor) {
+	s.c0.P = &r.ID
+	s.c1.P = &r.Name
+}
+
+func (s *ormScanbenchAuthor) Values(r *benchAuthor, dst []any) []any {
+	return append(dst[:0], r.ID, r.Name)
+}
+
+// benchAuthorFields is benchAuthor's fields as typed lookups.
+var benchAuthorFields = benchAuthorFieldSet{}.Under("")
+
+// benchAuthorFieldSet is benchAuthor's fields as typed lookups: benchAuthorFields from the model itself, Under from a model related to it.
+type benchAuthorFieldSet struct {
+	p    string
+	ID   orm.Field[int64]
+	Name orm.TextField[string]
+}
+
+// Under is the set through a relation path, such as "author__".
+func (s benchAuthorFieldSet) Under(prefix string) benchAuthorFieldSet {
+	return benchAuthorFieldSet{
+		p:    prefix,
+		ID:   orm.FieldAt[int64](prefix + "id"),
+		Name: orm.TextFieldAt[string](prefix + "name"),
+	}
+}
+
+// Posts is the fields of benchAuthor's Posts, for lookups across the relation.
+func (s benchAuthorFieldSet) Posts() benchPostFieldSet {
+	return benchPostFieldSet{}.Under(s.p + "posts__")
+}
+
+type ormScanbenchItem struct {
+	c0   orm.Cell[int64]
+	c1   orm.Cell[string]
+	c2   orm.Cell[int]
+	dest []any
+}
+
+func (s *ormScanbenchItem) Dest() []any {
+	if s.dest == nil {
+		s.dest = []any{&s.c0, &s.c1, &s.c2}
+	}
+	return s.dest
+}
+
+func (s *ormScanbenchItem) Bind(r *benchItem) {
+	s.c0.P = &r.ID
+	s.c1.P = &r.Name
+	s.c2.P = &r.Qty
+}
+
+func (s *ormScanbenchItem) Values(r *benchItem, dst []any) []any {
+	return append(dst[:0], r.ID, r.Name, r.Qty)
+}
+
+// benchItemFields is benchItem's fields as typed lookups.
+var benchItemFields = benchItemFieldSet{}.Under("")
+
+// benchItemFieldSet is benchItem's fields as typed lookups: benchItemFields from the model itself, Under from a model related to it.
+type benchItemFieldSet struct {
+	p    string
+	ID   orm.Field[int64]
+	Name orm.TextField[string]
+	Qty  orm.Field[int]
+}
+
+// Under is the set through a relation path, such as "author__".
+func (s benchItemFieldSet) Under(prefix string) benchItemFieldSet {
+	return benchItemFieldSet{
+		p:    prefix,
+		ID:   orm.FieldAt[int64](prefix + "id"),
+		Name: orm.TextFieldAt[string](prefix + "name"),
+		Qty:  orm.FieldAt[int](prefix + "qty"),
+	}
+}
+
+type ormScanbenchPost struct {
+	c0   orm.Cell[int64]
+	c1   orm.Cell[string]
+	c2   orm.Cell[int64]
+	dest []any
+}
+
+func (s *ormScanbenchPost) Dest() []any {
+	if s.dest == nil {
+		s.dest = []any{&s.c0, &s.c1, &s.c2}
+	}
+	return s.dest
+}
+
+func (s *ormScanbenchPost) Bind(r *benchPost) {
+	s.c0.P = &r.ID
+	s.c1.P = &r.Title
+	s.c2.P = &r.AuthorID
+}
+
+func (s *ormScanbenchPost) Values(r *benchPost, dst []any) []any {
+	return append(dst[:0], r.ID, r.Title, r.AuthorID)
+}
+
+// benchPostFields is benchPost's fields as typed lookups.
+var benchPostFields = benchPostFieldSet{}.Under("")
+
+// benchPostFieldSet is benchPost's fields as typed lookups: benchPostFields from the model itself, Under from a model related to it.
+type benchPostFieldSet struct {
+	p        string
+	ID       orm.Field[int64]
+	Title    orm.TextField[string]
+	AuthorID orm.Field[int64]
+}
+
+// Under is the set through a relation path, such as "author__".
+func (s benchPostFieldSet) Under(prefix string) benchPostFieldSet {
+	return benchPostFieldSet{
+		p:        prefix,
+		ID:       orm.FieldAt[int64](prefix + "id"),
+		Title:    orm.TextFieldAt[string](prefix + "title"),
+		AuthorID: orm.FieldAt[int64](prefix + "author_id"),
+	}
+}
+
+// Author is the fields of benchPost's Author, for lookups across the relation.
+func (s benchPostFieldSet) Author() benchAuthorFieldSet {
+	return benchAuthorFieldSet{}.Under(s.p + "author__")
+}
+
+// Tags is the fields of benchPost's Tags, for lookups across the relation.
+func (s benchPostFieldSet) Tags() benchTagFieldSet {
+	return benchTagFieldSet{}.Under(s.p + "tags__")
+}
+
+type ormScanbenchTag struct {
+	c0   orm.Cell[int64]
+	c1   orm.Cell[string]
+	dest []any
+}
+
+func (s *ormScanbenchTag) Dest() []any {
+	if s.dest == nil {
+		s.dest = []any{&s.c0, &s.c1}
+	}
+	return s.dest
+}
+
+func (s *ormScanbenchTag) Bind(r *benchTag) {
+	s.c0.P = &r.ID
+	s.c1.P = &r.Name
+}
+
+func (s *ormScanbenchTag) Values(r *benchTag, dst []any) []any {
+	return append(dst[:0], r.ID, r.Name)
+}
+
+// benchTagFields is benchTag's fields as typed lookups.
+var benchTagFields = benchTagFieldSet{}.Under("")
+
+// benchTagFieldSet is benchTag's fields as typed lookups: benchTagFields from the model itself, Under from a model related to it.
+type benchTagFieldSet struct {
+	p    string
+	ID   orm.Field[int64]
+	Name orm.TextField[string]
+}
+
+// Under is the set through a relation path, such as "author__".
+func (s benchTagFieldSet) Under(prefix string) benchTagFieldSet {
+	return benchTagFieldSet{
+		p:    prefix,
+		ID:   orm.FieldAt[int64](prefix + "id"),
+		Name: orm.TextFieldAt[string](prefix + "name"),
+	}
+}
+
 type ormScanbenchUser struct {
 	c0   orm.Cell[int64]
 	c1   orm.Cell[time.Time]
@@ -1005,5 +1295,130 @@ func (s benchUserFieldSet) Under(prefix string) benchUserFieldSet {
 		Email:     orm.TextFieldAt[string](prefix + "email"),
 		Age:       orm.FieldAt[int](prefix + "age"),
 		Active:    orm.FieldAt[bool](prefix + "active"),
+	}
+}
+
+type ormScanbenchWide struct {
+	c0   orm.Cell[int64]
+	c1   orm.Cell[time.Time]
+	c2   orm.Cell[time.Time]
+	c3   orm.Cell[string]
+	c4   orm.Cell[string]
+	c5   orm.Cell[string]
+	c6   orm.Cell[string]
+	c7   orm.Cell[string]
+	c8   orm.Cell[string]
+	c9   orm.Cell[string]
+	c10  orm.Cell[int]
+	c11  orm.Cell[int]
+	c12  orm.Cell[int]
+	c13  orm.Cell[float64]
+	c14  orm.Cell[float64]
+	c15  orm.Cell[bool]
+	c16  orm.Cell[bool]
+	c17  orm.Cell[bool]
+	c18  orm.PtrCell[string]
+	c19  orm.PtrCell[string]
+	c20  orm.PtrCell[string]
+	c21  orm.PtrCell[time.Time]
+	c22  orm.PtrCell[int64]
+	dest []any
+}
+
+func (s *ormScanbenchWide) Dest() []any {
+	if s.dest == nil {
+		s.dest = []any{&s.c0, &s.c1, &s.c2, &s.c3, &s.c4, &s.c5, &s.c6, &s.c7, &s.c8, &s.c9, &s.c10, &s.c11, &s.c12, &s.c13, &s.c14, &s.c15, &s.c16, &s.c17, &s.c18, &s.c19, &s.c20, &s.c21, &s.c22}
+	}
+	return s.dest
+}
+
+func (s *ormScanbenchWide) Bind(r *benchWide) {
+	s.c0.P = &r.WideBase.ID
+	s.c1.P = &r.WideBase.CreatedAt
+	s.c2.P = &r.WideBase.UpdatedAt
+	s.c3.P = &r.Name
+	s.c4.P = &r.Email
+	s.c5.P = &r.Phone
+	s.c6.P = &r.City
+	s.c7.P = &r.Country
+	s.c8.P = &r.Street
+	s.c9.P = &r.Zip
+	s.c10.P = &r.Age
+	s.c11.P = &r.Score
+	s.c12.P = &r.Visits
+	s.c13.P = &r.Balance
+	s.c14.P = &r.Rating
+	s.c15.P = &r.Active
+	s.c16.P = &r.Verified
+	s.c17.P = &r.Admin
+	s.c18.P = &r.Bio
+	s.c19.P = &r.Nick
+	s.c20.P = &r.Notes
+	s.c21.P = &r.LastSeen
+	s.c22.P = &r.Referrer
+}
+
+func (s *ormScanbenchWide) Values(r *benchWide, dst []any) []any {
+	return append(dst[:0], r.WideBase.ID, r.WideBase.CreatedAt, r.WideBase.UpdatedAt, r.Name, r.Email, r.Phone, r.City, r.Country, r.Street, r.Zip, r.Age, r.Score, r.Visits, r.Balance, r.Rating, r.Active, r.Verified, r.Admin, orm.PtrValue(r.Bio), orm.PtrValue(r.Nick), orm.PtrValue(r.Notes), orm.PtrValue(r.LastSeen), orm.PtrValue(r.Referrer))
+}
+
+// benchWideFields is benchWide's fields as typed lookups.
+var benchWideFields = benchWideFieldSet{}.Under("")
+
+// benchWideFieldSet is benchWide's fields as typed lookups: benchWideFields from the model itself, Under from a model related to it.
+type benchWideFieldSet struct {
+	p         string
+	ID        orm.Field[int64]
+	CreatedAt orm.Field[time.Time]
+	UpdatedAt orm.Field[time.Time]
+	Name      orm.TextField[string]
+	Email     orm.TextField[string]
+	Phone     orm.TextField[string]
+	City      orm.TextField[string]
+	Country   orm.TextField[string]
+	Street    orm.TextField[string]
+	Zip       orm.TextField[string]
+	Age       orm.Field[int]
+	Score     orm.Field[int]
+	Visits    orm.Field[int]
+	Balance   orm.Field[float64]
+	Rating    orm.Field[float64]
+	Active    orm.Field[bool]
+	Verified  orm.Field[bool]
+	Admin     orm.Field[bool]
+	Bio       orm.TextField[string]
+	Nick      orm.TextField[string]
+	Notes     orm.TextField[string]
+	LastSeen  orm.Field[time.Time]
+	Referrer  orm.Field[int64]
+}
+
+// Under is the set through a relation path, such as "author__".
+func (s benchWideFieldSet) Under(prefix string) benchWideFieldSet {
+	return benchWideFieldSet{
+		p:         prefix,
+		ID:        orm.FieldAt[int64](prefix + "id"),
+		CreatedAt: orm.FieldAt[time.Time](prefix + "created_at"),
+		UpdatedAt: orm.FieldAt[time.Time](prefix + "updated_at"),
+		Name:      orm.TextFieldAt[string](prefix + "name"),
+		Email:     orm.TextFieldAt[string](prefix + "email"),
+		Phone:     orm.TextFieldAt[string](prefix + "phone"),
+		City:      orm.TextFieldAt[string](prefix + "city"),
+		Country:   orm.TextFieldAt[string](prefix + "country"),
+		Street:    orm.TextFieldAt[string](prefix + "street"),
+		Zip:       orm.TextFieldAt[string](prefix + "zip"),
+		Age:       orm.FieldAt[int](prefix + "age"),
+		Score:     orm.FieldAt[int](prefix + "score"),
+		Visits:    orm.FieldAt[int](prefix + "visits"),
+		Balance:   orm.FieldAt[float64](prefix + "balance"),
+		Rating:    orm.FieldAt[float64](prefix + "rating"),
+		Active:    orm.FieldAt[bool](prefix + "active"),
+		Verified:  orm.FieldAt[bool](prefix + "verified"),
+		Admin:     orm.FieldAt[bool](prefix + "admin"),
+		Bio:       orm.TextFieldAt[string](prefix + "bio"),
+		Nick:      orm.TextFieldAt[string](prefix + "nick"),
+		Notes:     orm.TextFieldAt[string](prefix + "notes"),
+		LastSeen:  orm.FieldAt[time.Time](prefix + "last_seen"),
+		Referrer:  orm.FieldAt[int64](prefix + "referrer"),
 	}
 }

@@ -59,6 +59,22 @@ type DatabaseSpec struct {
 	// numbers or booleans (true/false become "on"/"off").
 	Session map[string]any `toml:"session"`
 
+	// The connection pool. A key left out keeps the driver's default
+	// (Postgres/MySQL: 100 open, 10 idle, connections recycled after 1h
+	// and after 30m idle); a negative value lifts the limit: no cap on
+	// open connections, no idle ones kept, no recycling. Durations are
+	// Go's ("1h", "30m").
+	MaxOpen         int    `toml:"max_open"`
+	MaxIdle         int    `toml:"max_idle"`
+	ConnMaxLifetime string `toml:"conn_max_lifetime"`
+	ConnMaxIdleTime string `toml:"conn_max_idle_time"`
+
+	// InterpolateParams (MySQL only, default true) has the driver escape
+	// a query's arguments into its text and send it in one round trip, as
+	// Django's MySQL backend does; false prepares each statement on the
+	// server first (two round trips).
+	InterpolateParams *bool `toml:"interpolate_params"`
+
 	// Inline values (optional). Each, when set, takes precedence over
 	// the config-server lookup for that field. ${ENV} placeholders are
 	// expanded by Load.

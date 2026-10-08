@@ -377,3 +377,58 @@ func TestDriver(t *testing.T) {
 	_ = d.SQL().QueryRowContext(ctx, map[string]string{"sqlite": "SELECT sqlite_version()", "postgres": "SELECT version()", "mysql": "SELECT version()"}[ormtest.Driver()]).Scan(&v)
 	t.Logf("%s %s", ormtest.Driver(), v)
 }
+
+// TestRowsReadApart reads rows one after another into the same storage
+// (each path reuses it): a NULL after a value leaves no trace of it, and
+// rows already read keep their own pointers.
+func TestRowsReadApart(t *testing.T) {
+	ctx := relOpen(t)
+	seed(t, ctx)
+	if _, err := Users.Filter(orm.Q{"name": "Neema"}).Update(ctx, orm.Set{"bio": "reads"}); err != nil {
+		t.Fatal(err)
+	}
+	type userBio struct {
+		Name string
+		Bio  *string
+	}
+	bios := map[string]func() ([]*string, error){
+		"generated": func() ([]*string, error) {
+			us, err := Users.OrderBy("id").All(ctx)
+			return collectBios(us, func(u User) *string { return u.Bio }), err
+		},
+		"raw": func() ([]*string, error) {
+			us, err := Users.Raw("SELECT * FROM users ORDER BY id").All(ctx)
+			return collectBios(us, func(u User) *string { return u.Bio }), err
+		},
+		"values": func() ([]*string, error) {
+			us, err := Users.OrderBy("id").Values[userBio]().All(ctx)
+			return collectBios(us, func(u userBio) *string { return u.Bio }), err
+		},
+		"values scalar": func() ([]*string, error) {
+			return Users.OrderBy("id").Values[*string]("bio").All(ctx)
+		},
+	}
+	for name, read := range bios {
+		got, err := read()
+		if err != nil || len(got) != 4 || got[0] == nil || got[1] == nil || *got[0] != "writes Go" || *got[1] != "reads" || got[2] != nil || got[3] != nil {
+			t.Fatalf("%s: %v %v", name, got, err)
+		}
+	}
+	// SelectRelated reads by reflection.
+	books, err := Books.SelectRelated("author").OrderBy("id").All(ctx)
+	if err != nil || len(books) != 3 {
+		t.Fatal(books, err)
+	}
+	a0, a2 := books[0].Author, books[2].Author
+	if a0 == nil || a2 == nil || a0 == a2 || a0.ProfileID == nil || *a0.ProfileID != 1 || a2.ProfileID != nil || a2.Name != "Neema" {
+		t.Fatalf("authors read into each other: %+v %+v", a0, a2)
+	}
+}
+
+func collectBios[R any](rows []R, bio func(R) *string) []*string {
+	out := make([]*string, len(rows))
+	for i, r := range rows {
+		out[i] = bio(r)
+	}
+	return out
+}

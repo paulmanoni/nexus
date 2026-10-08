@@ -129,3 +129,19 @@ func TestSession_BadKeyFailsOpen(t *testing.T) {
 		t.Fatal("Open accepted an invalid session key")
 	}
 }
+
+func TestInterpolateParams(t *testing.T) {
+	my := db.Config{Driver: db.MySQL, Host: "h", Port: "3306", User: "u", Password: "p", Database: "app"}
+	if dsn := my.DSN(); !strings.Contains(dsn, "&interpolateParams=true") {
+		t.Fatalf("MySQL interpolates by default: %s", dsn)
+	}
+	off := false
+	my.InterpolateParams = &off
+	if dsn := my.DSN(); strings.Contains(dsn, "interpolateParams") {
+		t.Fatalf("interpolate_params = false prepares on the server: %s", dsn)
+	}
+	on := true
+	if err := (db.Config{Driver: db.Postgres, InterpolateParams: &on}).Validate(); err == nil {
+		t.Fatal("interpolate_params on Postgres passed Validate")
+	}
+}

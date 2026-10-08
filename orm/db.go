@@ -206,40 +206,70 @@ func WithObserver(ctx context.Context, fn Observer) context.Context {
 // exec and query run a statement, as a span of ctx's trace when there is
 // one, seen by ctx's observers and the dev-time repeat watch.
 func (c conn) exec(ctx context.Context, q string, args []any) (sql.Result, error) {
-	done := watch(ctx, q, len(args))
+	if err := argLimit(c.d, args); err != nil {
+		return nil, err
+	}
+	w := watch(ctx, q, len(args))
 	res, err := c.run.ExecContext(ctx, q, args...)
-	done(err)
+	w.done(err)
 	return res, err
 }
 
 func (c conn) query(ctx context.Context, q string, args []any) (*sql.Rows, error) {
-	done := watch(ctx, q, len(args))
+	if err := argLimit(c.d, args); err != nil {
+		return nil, err
+	}
+	w := watch(ctx, q, len(args))
 	rows, err := c.run.QueryContext(ctx, q, args...)
-	done(err)
+	w.done(err)
 	return rows, err
 }
 
-func watch(ctx context.Context, q string, args int) func(error) {
-	noteRepeat(ctx, q)
-	traced := span(ctx, q, args)
-	obs, _ := ctx.Value(observerKey{}).(Observer)
-	start := time.Now()
-	return func(err error) {
-		traced(err)
-		if obs != nil {
-			obs(ctx, QueryInfo{SQL: q, Args: args, Duration: time.Since(start), Err: err})
-		}
+// argLimit refuses a statement with more arguments than d's database
+// takes in one (an __in of a list from a request, say), before it is
+// sent: Postgres and MySQL take 65535, SQLite 32766.
+func argLimit(d Dialect, args []any) error {
+	limit := 65535
+	if d.Name() == "sqlite" {
+		limit = 32766
 	}
+	if len(args) > limit {
+		return fmt.Errorf("orm: a statement of %d arguments: %s takes at most %d (an __in list that long belongs in a subquery or a table)", len(args), d.Name(), limit)
+	}
+	return nil
 }
 
-func span(ctx context.Context, q string, args int) func(error) {
-	if _, ok := trace.SpanFromCtx(ctx); !ok {
-		return func(error) {}
+// watching is a statement being run, as watch started it: done ends it.
+// A value, not a closure, so an unwatched statement allocates nothing.
+type watching struct {
+	ctx   context.Context
+	q     string
+	args  int
+	start time.Time
+	span  *trace.Span
+	obs   Observer
+}
+
+func watch(ctx context.Context, q string, args int) watching {
+	noteRepeat(ctx, q)
+	w := watching{ctx: ctx, q: q, args: args}
+	w.obs, _ = ctx.Value(observerKey{}).(Observer)
+	_, traced := trace.SpanFromCtx(ctx)
+	if traced || w.obs != nil {
+		w.start = time.Now()
 	}
-	start := time.Now()
-	_, s := trace.StartSpan(ctx, "sql", trace.Str("sql", q), trace.Int("args", int64(args)))
-	return func(err error) {
-		s.Set("ms", fmt.Sprintf("%.2f", float64(time.Since(start).Microseconds())/1000))
-		s.End(err)
+	if traced {
+		_, w.span = trace.StartSpan(ctx, "sql", trace.Str("sql", q), trace.Int("args", int64(args)))
+	}
+	return w
+}
+
+func (w watching) done(err error) {
+	if w.span != nil {
+		w.span.Set("ms", fmt.Sprintf("%.2f", float64(time.Since(w.start).Microseconds())/1000))
+		w.span.End(err)
+	}
+	if w.obs != nil {
+		w.obs(w.ctx, QueryInfo{SQL: w.q, Args: w.args, Duration: time.Since(w.start), Err: err})
 	}
 }

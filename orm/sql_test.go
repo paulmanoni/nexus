@@ -55,7 +55,7 @@ func TestPointerEmbed(t *testing.T) {
 		t.Fatalf("model = %+v, %v", m, err)
 	}
 	var u sqlUser
-	if err := (&cell{fieldOf(reflect.ValueOf(&u).Elem(), m.PK.Index)}).Scan(int64(7)); err != nil || u.SQLBase == nil || u.ID != 7 {
+	if err := (&cell{dst: fieldOf(reflect.ValueOf(&u).Elem(), m.PK.Index)}).Scan(int64(7)); err != nil || u.SQLBase == nil || u.ID != 7 {
 		t.Fatalf("scan into a nil *Base: %+v, %v", u, err)
 	}
 	var none sqlUser

@@ -45,6 +45,9 @@ func prefetch(ctx context.Context, c conn, m *model, s Schema, parents []reflect
 	var order []string
 	steps := map[string]*step{}
 	for _, sp := range specs {
+		if err := checkPath(sp.path); err != nil {
+			return err
+		}
 		first, rest, _ := strings.Cut(sp.path, "__")
 		s := steps[first]
 		if s == nil {
@@ -260,12 +263,12 @@ func setOne(dst reflect.Value, r *relation, row reflect.Value) {
 // setMany puts related rows (pointers) into a slice field, empty rather
 // than nil when there are none.
 func setMany(dst reflect.Value, r *relation, rows []reflect.Value) {
-	s := reflect.MakeSlice(dst.Type(), 0, len(rows))
-	for _, row := range rows {
+	s := reflect.MakeSlice(dst.Type(), len(rows), len(rows)) // set by index: Append allocates per row
+	for i, row := range rows {
 		if r.Ptr {
-			s = reflect.Append(s, row)
+			s.Index(i).Set(row)
 		} else {
-			s = reflect.Append(s, row.Elem())
+			s.Index(i).Set(row.Elem())
 		}
 	}
 	dst.Set(s)

@@ -1849,6 +1849,13 @@ Inline values OR a config-server key_prefix:
                                     # silent in prod). silent/false/off | error
                                     # | warn/true/on | info/all
 
+    # interpolate_params = false    # MySQL only; default true: args escaped into the
+                                    # query text, one round trip (utf8mb4 forced, safe)
+    max_open           = 50         # pool: omitted keys keep the default (100 open,
+    max_idle           = 10         # 10 idle, recycled after 1h / 30m idle); a
+    conn_max_lifetime  = "1h"       # negative value lifts the limit
+    conn_max_idle_time = "30m"
+
     [databases.main.session]        # optional — applied to every pooled connection
     statement_timeout = 5000        # MySQL system variables, Postgres run-time
                                     # params, SQLite pragmas; plain values

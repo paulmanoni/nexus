@@ -137,7 +137,17 @@ type builder struct {
 
 // newBuilder is a builder of a statement on m, aliased by its table.
 func newBuilder(d Dialect, m *model) *builder {
-	return &builder{d: d, m: m, alias: m.Table, st: &stmt{}, joins: &[]joinClause{}}
+	// One allocation for the builder, its statement and its joins, with
+	// room for a few arguments: most statements need no other.
+	nb := &struct {
+		b     builder
+		st    stmt
+		joins []joinClause
+		args  [4]any
+	}{}
+	nb.st.args = nb.args[:0]
+	nb.b = builder{d: d, m: m, alias: m.Table, st: &nb.st, joins: &nb.joins}
+	return &nb.b
 }
 
 func (b *builder) arg(v any) string {
@@ -163,18 +173,35 @@ func (b *builder) args() []any { return b.st.args }
 // col is a column of b's model, qualified by its alias.
 func (b *builder) col(f *field) string {
 	if b.ddl {
-		return b.d.Quote(f.Column)
+		return b.bare(f)
+	}
+	if n := b.m.names(b.d); n != nil && b.alias == b.m.Table {
+		if s, ok := n.col[f]; ok {
+			return s
+		}
 	}
 	return b.d.Quote(b.alias) + "." + b.d.Quote(f.Column)
 }
 
 // bare is a column unqualified, as UPDATE's SET names it.
-func (b *builder) bare(f *field) string { return b.d.Quote(f.Column) }
+func (b *builder) bare(f *field) string {
+	if n := b.m.names(b.d); n != nil {
+		if s, ok := n.bare[f]; ok {
+			return s
+		}
+	}
+	return b.d.Quote(f.Column)
+}
 
 // from is the FROM of b's statement: its table and the joins its
 // conditions, orders and columns follow.
 func (b *builder) from() string {
-	s := b.d.Quote(b.m.Table)
+	var s string
+	if n := b.m.names(b.d); n != nil {
+		s = n.table
+	} else {
+		s = b.d.Quote(b.m.Table)
+	}
 	if b.alias != b.m.Table {
 		s += " AS " + b.d.Quote(b.alias)
 	}
@@ -229,8 +256,28 @@ func (b *builder) ref(name string) (string, error) {
 	return s, err
 }
 
+// maxPath is the most parts a name may have: its fields, relations,
+// transforms and lookup, joined by __. A name read from a request can't
+// make a statement of thousands of joins or nested subqueries, whose SQL
+// takes time quadratic in its length to write.
+const maxPath = 32
+
+// checkPath refuses a name of more than maxPath parts.
+func checkPath(name string) error {
+	if strings.Count(name, "__") < maxPath {
+		return nil
+	}
+	if len(name) > 64 {
+		name = name[:64] + "…"
+	}
+	return fmt.Errorf("orm: %q has more than %d parts", name, maxPath)
+}
+
 // refField is ref and the field it reads, nil for an annotation.
 func (b *builder) refField(name string) (string, *field, error) {
+	if err := checkPath(name); err != nil {
+		return "", nil, err
+	}
 	if e, ok := b.ann[name]; ok {
 		if b.depth > 16 {
 			return "", nil, fmt.Errorf("orm: annotation %q refers to itself", name)
@@ -279,6 +326,9 @@ func (b *builder) refField(name string) (string, *field, error) {
 // its transforms and lookup, or an EXISTS over a relation that holds many
 // rows (posts__title__icontains).
 func (b *builder) lookup(key string, v any) (string, error) {
+	if err := checkPath(key); err != nil {
+		return "", err
+	}
 	parts := strings.Split(key, "__")
 	lookup := "exact"
 	if len(parts) > 1 && lookups[parts[len(parts)-1]] {

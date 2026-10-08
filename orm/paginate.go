@@ -81,7 +81,7 @@ func Paginate[T any](ctx context.Context, qs QuerySet[T], r PageRequest, opts ..
 	if size <= 0 {
 		size = c.size
 	}
-	size = min(size, c.maxSize)
+	size = max(min(size, c.maxSize), 1)
 	page := max(r.Page, 1)
 	search := strings.TrimSpace(r.Search)
 	if len(search) > maxSearch {
@@ -95,9 +95,14 @@ func Paginate[T any](ctx context.Context, qs QuerySet[T], r PageRequest, opts ..
 		qs = qs.Filter(Or(any...))
 	}
 	var order []string
+	sorted := map[string]bool{}
 	for part := range strings.SplitSeq(r.Sort, ",") {
 		part = strings.TrimSpace(part)
-		if slices.Contains(c.sortable, strings.TrimPrefix(part, "-")) && part != "" && part != "-" {
+		f := strings.TrimPrefix(part, "-")
+		// Each field once: a query string repeating one can't make an
+		// ORDER BY of thousands of terms.
+		if slices.Contains(c.sortable, f) && f != "" && !sorted[f] {
+			sorted[f] = true
 			order = append(order, part)
 		}
 	}

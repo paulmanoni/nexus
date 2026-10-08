@@ -252,6 +252,7 @@ func (s *Model[T]) link(ctx context.Context, name string, related []any, do func
 		return err
 	}
 	var keys []any
+	seen := make(map[any]bool, len(related))
 	for _, x := range related {
 		v := reflect.ValueOf(x)
 		for v.Kind() == reflect.Pointer && v.Type().Elem() == r.Target {
@@ -261,7 +262,14 @@ func (s *Model[T]) link(ctx context.Context, name string, related []any, do func
 		if v.Type() == r.Target {
 			k = key(v, rf)
 		}
-		if !slices.Contains(keys, k) {
+		// By a set, not a scan of the keys so far: a list of ids from a
+		// request costs its length, not its square.
+		if k != nil && !reflect.TypeOf(k).Comparable() {
+			if !slices.Contains(keys, k) {
+				keys = append(keys, k)
+			}
+		} else if !seen[k] {
+			seen[k] = true
 			keys = append(keys, k)
 		}
 	}
@@ -452,6 +460,7 @@ var registry struct {
 	mu    sync.Mutex
 	types map[reflect.Type]bool
 	homes []func() AnyManager
+	done  sync.Map // reflect.Type → true: types, read without the lock
 }
 
 // Register adds the model T to the program's models: nexus.Boot binds its
@@ -463,6 +472,10 @@ var registry struct {
 // too.
 func Register[T any]() {
 	t := reflect.TypeFor[T]()
+	// Objects registers on every call: a registered model takes no lock.
+	if _, ok := registry.done.Load(t); ok {
+		return
+	}
 	registry.mu.Lock()
 	defer registry.mu.Unlock()
 	if registry.types[t] {
@@ -473,6 +486,7 @@ func Register[T any]() {
 	}
 	registry.types[t] = true
 	registry.homes = append(registry.homes, func() AnyManager { return home[T]() })
+	registry.done.Store(t, true)
 }
 
 func registered() []AnyManager {

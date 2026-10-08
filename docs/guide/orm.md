@@ -176,6 +176,31 @@ r, err := Users.Aggregate(ctx, orm.Count("id"), orm.Avg("age"))  // r.Float("age
 - **A misspelt field** is an error on the first call, never SQL that silently
   matches nothing.
 
+### Input from requests
+
+Values are always sent as bound arguments: a filter value, a search term, a list
+for `__in`, a vector, a `Case` result. `contains` and the other `LIKE` lookups match
+`%`, `_` and backslashes literally on every database. Names are another matter:
+
+- **Allowlist names a request picks.** A key, `OrderBy` field, `Values` name or
+  relation path built from input is checked against the model, so it can't inject
+  SQL, but it can name any field, through any relation: `?filter=author__password__startswith`
+  probes a hash one character at a time, and `Values` of a path through rows held by
+  many multiplies the rows. Map the request's names onto the few you allow, as
+  `Paginate`'s `Sortable` and `Searchable` do.
+- **Limits:** a name has at most 32 parts (fields, relations, transforms and the
+  lookup), and a statement at most 65,535 arguments (32,766 on SQLite): a longer
+  `__in` list fails before it is sent. Cap what a request may send below that.
+- **Text is SQL:** `orm.SQL` templates, `orm.Function` names and `Template`s, `Raw`
+  and `Exec` SQL and migrations' `RunSQL` are written into the statement as they are.
+  Never build them from input; pass input as their arguments.
+- **Errors:** the ORM's own and the violations it maps (`Conflict`, `InvalidInput`)
+  name models and fields, never values. Any other database error, which may quote a
+  value, is `nexus.Internal`, its message shown only under `nexus dev`; traces and the
+  N+1 warning carry the SQL and the number of arguments, never their values.
+- **Search text** is bound too, but its cost grows with its length: cap a `__search`
+  or `Match` term from a request (`Paginate` reads 200 bytes).
+
 ### Values
 
 `Values[R](names…)` reads some fields instead of whole rows, as Django's `values()` and
@@ -238,6 +263,17 @@ the write.
 `nexus.NotFound`, several rows from `Get` are `nexus.Conflict`, a duplicate key is
 `nexus.Conflict` with the column as the field, and a missing foreign-key row is
 `nexus.InvalidInput`. Handlers return them as they are.
+
+**Write what the request may change.** `Save` and `Create` write every field of the
+row, `Update` every field of its `Set`, and `GetOrCreate` every field of its
+`Defaults`: a row decoded straight from a request body lets the client set any of them
+(`IsAdmin`, `OwnerID`, the key). Decode into a type of the fields you allow, copy them
+onto the row, and use `SaveFields` or a `Set` you build. Hooks run for `Create`,
+`BulkCreate`, `Save` and `Remove` only: a QuerySet's `Update` and `Delete` and raw SQL
+skip them, so a check that must hold for every write belongs in the database (a
+constraint) or in each path. A `contains` of an empty string matches every row: guard
+an `Update` or `Delete` filtered by input against empty input as `ErrUnfiltered` guards
+against no filter.
 
 ## Transactions
 
@@ -568,7 +604,12 @@ changed, err := orm.Exec(ctx, Legacy, "UPDATE auth_user SET is_active = ? WHERE 
 ```
 
 - **Placeholders:** `?` marks each argument on every database (written `$1, $2…` for
-  Postgres); `??` is a literal `?`. Marks inside quotes and comments are left alone.
+  Postgres); `??` is a literal `?`. Marks inside quotes and comments are left alone,
+  read as the database reads them: MySQL's backslash escapes and `#` comments (its
+  `--` only before a space), Postgres's `E'…'` strings, nested `/* */` comments and
+  `$tag$` quotes.
+- **Never put input in the SQL text,** only in the arguments: the text is sent as it
+  is.
 - **Like the ORM's own queries,** raw SQL runs inside the context's transaction, is
   traced, and counts toward the N+1 warning.
 - **The SQL is the schema's:** written for the tables and columns of the schema you
@@ -745,7 +786,10 @@ func ListUsers(ctx context.Context, c *httpx.Ctx) (orm.PageResult[User], error) 
 - **Query parameters:** `PageFrom` reads `page`, `size`, `sort` (`-name` for
   descending) and `q`.
 - **Sorting:** a sort not listed in `Sortable` falls back to the default, so a query
-  string can't order by arbitrary columns.
+  string can't order by arbitrary columns; each field sorts once however often it is
+  named.
+- **Size:** at most `MaxSize` (100), at least 1; a page past the end is empty, its rows
+  never read. Search reads the first 200 bytes of `q`.
 - **Search** is a case-insensitive `contains` across the `Searchable` fields.
 - **The result:** `PageResult` carries `Items`, `Total`, `Page`, `Size` and `Pages`.
 

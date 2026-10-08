@@ -2,6 +2,7 @@ package db_test
 
 import (
 	"context"
+	"path/filepath"
 	"testing"
 	"time"
 
@@ -65,15 +66,15 @@ func TestDSN_AllDrivers(t *testing.T) {
 
 		{"mysql", db.Config{
 			Driver: db.MySQL, User: "u", Password: "p", Host: "h", Port: "3306", Database: "d",
-		}, "u:p@tcp(h:3306)/d?charset=utf8mb4&parseTime=True&loc=Local"},
+		}, "u:p@tcp(h:3306)/d?charset=utf8mb4&parseTime=True&loc=Local&interpolateParams=true"},
 
 		{"mysql name can't add parameters", db.Config{
 			Driver: db.MySQL, User: "u", Password: "p", Host: "h", Port: "3306", Database: "d?allowAllFiles=true",
-		}, "u:p@tcp(h:3306)/d%3FallowAllFiles=true?charset=utf8mb4&parseTime=True&loc=Local"},
+		}, "u:p@tcp(h:3306)/d%3FallowAllFiles=true?charset=utf8mb4&parseTime=True&loc=Local&interpolateParams=true"},
 
 		{"mysql time zone", db.Config{
 			Driver: db.MySQL, User: "u", Password: "p", Host: "h", Port: "3306", Database: "d", TimeZone: "UTC",
-		}, "u:p@tcp(h:3306)/d?charset=utf8mb4&parseTime=True&loc=UTC"},
+		}, "u:p@tcp(h:3306)/d?charset=utf8mb4&parseTime=True&loc=UTC&interpolateParams=true"},
 
 		{"sqlite path", db.Config{Driver: db.SQLite, Database: "/tmp/app.db"}, "/tmp/app.db"},
 		{"sqlite memory", db.Config{Driver: db.SQLite, Database: ":memory:"}, ":memory:"},
@@ -116,4 +117,16 @@ func TestStart_InitialConnectViaBackgroundLoop(t *testing.T) {
 		time.Sleep(20 * time.Millisecond)
 	}
 	t.Fatal("Start() did not establish connection within 2s")
+}
+
+func TestOpen_PoolFromConfig(t *testing.T) {
+	m, err := db.Open(db.Config{Driver: db.SQLite, Database: filepath.Join(t.TempDir(), "p.db"), Pool: db.PoolConfig{MaxOpen: 2}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer m.Stop()
+	sqlDB, _ := m.GetDB().DB()
+	if n := sqlDB.Stats().MaxOpenConnections; n != 2 {
+		t.Fatalf("MaxOpenConnections = %d, want 2", n)
+	}
 }

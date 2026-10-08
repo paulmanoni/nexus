@@ -43,9 +43,13 @@ var reservedSessionKeys = map[Driver][]string{
 	SQLite: {},
 }
 
-// Validate reports a Session key that the driver would not pass to the
-// server as a session setting.
+// Validate reports a setting the driver can't take: interpolate_params on a
+// driver other than MySQL, or a Session key the driver would not pass to
+// the server as a session setting.
 func (c Config) Validate() error {
+	if c.InterpolateParams != nil && c.Driver != MySQL {
+		return fmt.Errorf("db: interpolate_params is MySQL's, not %s's", c.Driver)
+	}
 	reserved := reservedSessionKeys[c.Driver]
 	for _, k := range sessionKeys(c.Session) {
 		if !sessionKey.MatchString(k) {
@@ -101,7 +105,10 @@ func (c Config) sqliteDSN() string {
 	for _, k := range sessionKeys(c.Session) {
 		v := c.Session[k]
 		if !bareWord.MatchString(v) {
-			v = sqlLiteral(v)
+			// SQLite's string: a quote doubled. A backslash escapes
+			// nothing there, so MySQL's \' would end the string and
+			// run the rest as statements on every connection.
+			v = "'" + strings.ReplaceAll(v, "'", "''") + "'"
 		}
 		b.WriteString(sep + "_pragma=" + url.QueryEscape(k+"("+v+")"))
 		sep = "&"

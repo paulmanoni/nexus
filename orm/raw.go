@@ -62,6 +62,7 @@ func (r RawQuerySet[T]) Iter(ctx context.Context) iter.Seq2[T, error] {
 		}
 		m := r.m.meta
 		index := make([][]int, len(cols))
+		cells := make([]cell, len(cols))
 		for i, col := range cols {
 			k := strings.ToLower(col)
 			f, ok := m.byCol[k]
@@ -72,19 +73,23 @@ func (r RawQuerySet[T]) Iter(ctx context.Context) iter.Seq2[T, error] {
 				f, ok = m.computed[k]
 			}
 			if ok {
-				index[i] = f.Index
+				index[i], cells[i].fast = f.Index, f.fast
 			}
 		}
-		cells := make([]cell, len(cols))
 		dest := make([]any, len(cols))
+		for i := range cols {
+			dest[i] = new(any) // a column no field takes, dropped
+			if index[i] != nil {
+				dest[i] = &cells[i]
+			}
+		}
+		var row, blank T // read into again and again, yielded by value
+		v := reflect.ValueOf(&row).Elem()
 		for rows.Next() {
-			var row T
-			v := reflect.ValueOf(&row).Elem()
+			row = blank
 			for i := range cols {
-				dest[i] = new(any)
 				if index[i] != nil {
 					cells[i].dst = fieldOf(v, index[i])
-					dest[i] = &cells[i]
 				}
 			}
 			if err := rows.Scan(dest...); err != nil {
@@ -203,14 +208,24 @@ func placeholders(d Dialect, src string, args []any) (string, []any, error) {
 	b := &builder{d: d, st: &stmt{}}
 	var out strings.Builder
 	n := 0
-	lexSQL(src, d.Name() == "mysql", &out, func(i int) int {
+	lexSQL(src, d.Name(), &out, func(i int) int {
 		switch {
 		case strings.HasPrefix(src[i:], "??"):
 			out.WriteByte('?')
 			return i + 2
 		case src[i] == '?':
 			if n < len(args) {
-				out.WriteString(b.arg(args[n]))
+				mark := b.arg(args[n])
+				// $1 against a name, a number or a $ would be read with
+				// it: as a dollar quote ($$1), an identifier (OFFSET$1)
+				// or another mark (?0 as $10).
+				if o := out.String(); mark[0] == '$' && o != "" && identByte(o[len(o)-1]) {
+					out.WriteByte(' ')
+				}
+				out.WriteString(mark)
+				if mark[0] == '$' && i+1 < len(src) && identByte(src[i+1]) {
+					out.WriteByte(' ')
+				}
 			}
 			n++
 		default:

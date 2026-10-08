@@ -113,11 +113,20 @@ func newManager[T any](c forConfig, by madeBy) *Manager[T] {
 		if m.err != nil {
 			return m.err
 		}
-		m.route()
 		b := bindApp(app, lc)
+		// nexus.toml's route is this app's: kept on its binding, never on
+		// the manager, which outlives the app and may serve others.
+		if r, ok := m.route(); ok {
+			b.routes.Store(m, r)
+		}
 		m.bound.Store(b)
 		lastBinding.Store(b)
-		describe(app, m.dbName, m.meta, func() bool { _, ok := rowScanner[T](m.meta); return ok })
+		lc.Append(nexus.Hook{OnStop: func(context.Context) error {
+			m.bound.CompareAndSwap(b, nil)
+			lastBinding.CompareAndSwap(b, nil)
+			return nil
+		}})
+		describe(app, m.routeOn(b).DB, m.meta, func() bool { _, ok := rowScanner[T](m.meta); return ok })
 		return nil
 	})
 	return m
@@ -129,9 +138,21 @@ func (m *Manager[T]) declaration() declaredModel {
 	return declaredModel{t: reflect.TypeFor[T](), db: m.dbName, unmanaged: m.unmanaged, tables: m.tables, madeOn: m.madeOn}
 }
 
-// schema is the schema the manager queries.
+// schema is the schema the manager queries, on the app it was last bound
+// to.
 func (m *Manager[T]) schema() Schema {
-	return Schema{DB: m.dbName, Names: m.names, Unmanaged: m.unmanaged}
+	return Schema{DB: m.routeOn(m.bound.Load()).DB, Names: m.names, Unmanaged: m.unmanaged}
+}
+
+// routeOn is the model's databases on the app b binds: nexus.toml's route
+// there, else its own (For's or Meta's).
+func (m *Manager[T]) routeOn(b *binding) Route {
+	if b != nil {
+		if r, ok := b.routes.Load(m); ok {
+			return r.(Route)
+		}
+	}
+	return Route{DB: m.dbName, Mirror: m.mirror}
 }
 
 // Schema is a database the models are queried on and the names they have
@@ -287,25 +308,36 @@ func (m *Manager[T]) conn(ctx context.Context) (conn, error) {
 	if t, ok := ctx.Value(inMirrorKey{}).(mirrorTarget); ok {
 		return m.mirrorConn(ctx, t)
 	}
-	return dbConn(ctx, m.dbName, m.bound.Load())
+	b := pickBinding(ctx, m.bound.Load())
+	return dbConnOn(ctx, m.routeOn(b).DB, b)
 }
 
 // dbConn is the database name (bound, else on the app a manager was last
 // bound to) as ctx sees it: WithDB's, Using's, or the one of the app
 // serving the request.
 func dbConn(ctx context.Context, name string, bound *binding) (conn, error) {
+	return dbConnOn(ctx, name, pickBinding(ctx, bound))
+}
+
+// pickBinding is the app ctx's queries go to: the one serving its
+// request, else bound, else the one a manager was last bound to.
+func pickBinding(ctx context.Context, bound *binding) *binding {
+	if b := ctxBinding(ctx); b != nil {
+		return b
+	}
+	if bound != nil {
+		return bound
+	}
+	return lastBinding.Load()
+}
+
+// dbConnOn is database name on the app b binds, as ctx sees it.
+func dbConnOn(ctx context.Context, name string, b *binding) (conn, error) {
 	if d, ok := ctx.Value(dbKey{}).(*DB); ok {
 		return on(ctx, d), nil
 	}
 	if n, ok := ctx.Value(usingKey{}).(string); ok {
 		name = n
-	}
-	b := ctxBinding(ctx)
-	if b == nil {
-		b = bound
-	}
-	if b == nil {
-		b = lastBinding.Load()
 	}
 	if b == nil {
 		return conn{}, errNoDB
@@ -319,8 +351,9 @@ func dbConn(ctx context.Context, name string, bound *binding) (conn, error) {
 
 // binding is a model bound to an app: its databases are found by name.
 type binding struct {
-	app *nexus.App
-	dbs sync.Map // *sql.DB → *DB
+	app    *nexus.App
+	dbs    sync.Map // *sql.DB → *DB
+	routes sync.Map // *Manager[T] → Route: nexus.toml's for the app
 }
 
 // appBindings is the binding of each app, made once: SetRequestValue

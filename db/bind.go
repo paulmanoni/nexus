@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"log/slog"
 	"reflect"
+	"slices"
 	"sync"
 
 	"github.com/paulmanoni/nexus/v2/di"
@@ -116,6 +117,12 @@ func bindOption[T any](name string, build func() Config, optsFn func() []BindOpt
 		if bc.AsDefault {
 			app.SetValue(boundKey{}, m)
 		}
+		boundMu.Lock()
+		v, _ := app.Value(boundNamesKey{})
+		if names, _ := v.([]string); !slices.Contains(names, name) {
+			app.SetValue(boundNamesKey{}, append(slices.Clip(names), name))
+		}
+		boundMu.Unlock()
 	}
 
 	return nexus.Options(nexus.Provide(ctor), nexus.Invoke(register))
@@ -124,6 +131,13 @@ func bindOption[T any](name string, build func() Config, optsFn func() []BindOpt
 // boundKey is where Bind records a Manager in its app: by name, and with
 // no name for the default.
 type boundKey struct{ name string }
+
+// boundNamesKey is where Bind lists the names it bound in an app, for
+// Lookup to find the only one without walking the app's resources on
+// every query.
+type boundNamesKey struct{}
+
+var boundMu sync.Mutex
 
 // Lookup is the Manager db.Bind registered in app under name; with an
 // empty name, the one bound WithDefault, else the only one bound. It lets
@@ -139,19 +153,13 @@ func Lookup(app *nexus.App, name string) (*Manager, bool) {
 	if name != "" {
 		return nil, false
 	}
-	var only *Manager
-	for _, r := range app.Registry().Resources() {
-		if r.Kind != resource.KindDatabase {
-			continue
-		}
-		if v, ok := app.Value(boundKey{r.Name}); ok {
-			if only != nil {
-				return nil, false
-			}
-			only = v.(*Manager)
+	v, _ := app.Value(boundNamesKey{})
+	if names, _ := v.([]string); len(names) == 1 {
+		if v, ok := app.Value(boundKey{names[0]}); ok {
+			return v.(*Manager), true
 		}
 	}
-	return only, only != nil
+	return nil, false
 }
 
 // describeKey is where Describe keeps a database's added details.

@@ -22,6 +22,7 @@ import (
 	"slices"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/paulmanoni/nexus/orm/internal/tags"
@@ -50,6 +51,7 @@ type field struct {
 	Gen  Expr
 	gen  bool // tagged orm:"generated"
 	Dims int  // a vector's dimensions
+	fast scanKind
 }
 
 // model is what a Go struct means to the database under a names set,
@@ -79,12 +81,13 @@ type model struct {
 	state    []int
 	stateOff uintptr
 
-	// The inverses other models' relations imply on this one, as of
-	// declarers' version invVer; see inverses.
-	invMu  sync.Mutex
-	invVer int
-	inv    map[string]*relation
-	clash  map[string][]string
+	// The inverses other models' relations imply on this one, as of a
+	// version of declarers; see inverses.
+	invMu sync.Mutex
+	inv   atomic.Pointer[inverseSet]
+
+	quoted  [3]atomic.Pointer[quotedNames] // by dialectIndex
+	scanner atomic.Pointer[scannerHit]
 }
 
 // field is the field a lookup names: by Go name (any case) or default
@@ -96,6 +99,52 @@ func (m *model) field(name string) (*field, bool) {
 	}
 	f, ok := m.byCol[k]
 	return f, ok
+}
+
+// quotedNames is a model's table and columns as one dialect quotes them,
+// written once: what nearly every statement on the model is made of.
+type quotedNames struct {
+	table string
+	col   map[*field]string // qualified by the table, as builder.col writes it
+	bare  map[*field]string
+	list  string // the columns of readFields, qualified; "" with fields read through relations
+}
+
+// dialectIndex is d's slot in a model's quoted names, -1 for none.
+func dialectIndex(d Dialect) int {
+	switch d.(type) {
+	case postgres:
+		return 0
+	case mysql:
+		return 1
+	case sqlite:
+		return 2
+	}
+	return -1
+}
+
+// names is m's table and columns quoted for d, nil for a dialect it keeps
+// none for.
+func (m *model) names(d Dialect) *quotedNames {
+	i := dialectIndex(d)
+	if m == nil || i < 0 {
+		return nil
+	}
+	if n := m.quoted[i].Load(); n != nil {
+		return n
+	}
+	n := &quotedNames{table: d.Quote(m.Table), col: make(map[*field]string, len(m.Fields)), bare: make(map[*field]string, len(m.Fields))}
+	cols := make([]string, len(m.Fields))
+	for j, f := range m.Fields {
+		n.bare[f] = d.Quote(f.Column)
+		n.col[f] = n.table + "." + n.bare[f]
+		cols[j] = n.col[f]
+	}
+	if len(m.via) == 0 {
+		n.list = strings.Join(cols, ", ")
+	}
+	m.quoted[i].Store(n)
+	return n
 }
 
 func (m *model) columns() []string {
@@ -287,7 +336,7 @@ func collect(m *model, t reflect.Type, index []int, prefix string) error {
 		}
 		f := &field{Name: sf.Name, Column: column(tag, sf.Name, prefix), Index: path, Type: ft, PK: tag.PK,
 			AutoNowAdd: tag.AutoNowAdd, AutoNow: tag.AutoNow, Unique: tag.Unique, UniqueIdx: tag.UniqueIndex, Indexed: tag.Index, Size: tag.Size, SQLType: tag.Type, Via: tag.Path,
-			gen: tag.Generated, Dims: tag.Vector}
+			gen: tag.Generated, Dims: tag.Vector, fast: scanKindOf(ft)}
 		key := strings.ToLower(sf.Name)
 		if old, ok := m.byName[key]; ok {
 			if len(old.Index) <= len(path) {

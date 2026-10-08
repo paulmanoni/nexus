@@ -7,6 +7,7 @@ import (
 	"slices"
 	"strings"
 	"sync"
+	"sync/atomic"
 
 	"github.com/paulmanoni/nexus/orm/internal/tags"
 )
@@ -230,7 +231,7 @@ func (r *relation) held(m *model) error {
 var declarers struct {
 	sync.Mutex
 	by  map[reflect.Type][]reflect.Type
-	ver int
+	ver atomic.Int64 // changed under the lock, read without it
 }
 
 func declareRelation(target, from reflect.Type) {
@@ -241,7 +242,7 @@ func declareRelation(target, from reflect.Type) {
 	}
 	if !slices.Contains(declarers.by[target], from) {
 		declarers.by[target] = append(declarers.by[target], from)
-		declarers.ver++
+		declarers.ver.Add(1)
 	}
 }
 
@@ -251,13 +252,18 @@ func declareRelation(target, from reflect.Type) {
 // than one claims, with what claims them. An inverse m declares itself
 // is m's own relation, not a second one.
 func (m *model) inverses() (map[string]*relation, map[string][]string) {
+	// Every lookup step naming no relation of m's own asks: read without a
+	// lock while no relation was declared since.
+	if s := m.inv.Load(); s != nil && s.ver == declarers.ver.Load() {
+		return s.inv, s.clash
+	}
 	declarers.Lock()
-	from, ver := slices.Clone(declarers.by[m.Type]), declarers.ver
+	from, ver := slices.Clone(declarers.by[m.Type]), declarers.ver.Load()
 	declarers.Unlock()
 	m.invMu.Lock()
 	defer m.invMu.Unlock()
-	if m.inv != nil && m.invVer == ver {
-		return m.inv, m.clash
+	if s := m.inv.Load(); s != nil && s.ver == ver {
+		return s.inv, s.clash
 	}
 	found := map[string][]*relation{}
 	for _, d := range from {
@@ -292,8 +298,15 @@ func (m *model) inverses() (map[string]*relation, map[string][]string) {
 		}
 		clash[k] = claims
 	}
-	m.inv, m.clash, m.invVer = inv, clash, ver
+	m.inv.Store(&inverseSet{ver: ver, inv: inv, clash: clash})
 	return inv, clash
+}
+
+// inverseSet is a model's inverses as of declarers' version ver.
+type inverseSet struct {
+	ver   int64
+	inv   map[string]*relation
+	clash map[string][]string
 }
 
 // inverseName is the name of a foreign key's or many-to-many's inverse:

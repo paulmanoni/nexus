@@ -492,7 +492,7 @@ func (s *session) run(ctx context.Context, mg migration.Migration, steps []migra
 				}
 				continue
 			}
-			for _, q := range splitSQL(st.SQL, dl.Name() == "mysql") {
+			for _, q := range splitSQL(st.SQL, dl.Name()) {
 				if _, err := tx.ExecContext(ctx, q); err != nil {
 					return fmt.Errorf("orm: migration %s: %w\n%s", label(mg), err, q)
 				}
@@ -547,10 +547,10 @@ func lockMigrations(ctx context.Context, c *sql.Conn, d Dialect) (func(), error)
 	return func() {}, nil
 }
 
-// splitSQL is a migration's statements: split at semicolons outside
-// quotes, comments and Postgres dollar quotes; comments and blank
+// splitSQL is a migration's statements on a dialect: split at semicolons
+// outside quotes, comments and Postgres dollar quotes; comments and blank
 // statements dropped.
-func splitSQL(src string, backslash bool) []string {
+func splitSQL(src, dialect string) []string {
 	var out []string
 	var b strings.Builder
 	flush := func() {
@@ -559,7 +559,7 @@ func splitSQL(src string, backslash bool) []string {
 		}
 		b.Reset()
 	}
-	lexSQL(src, backslash, &b, func(i int) int {
+	lexSQL(src, dialect, &b, func(i int) int {
 		if src[i] == ';' {
 			flush()
 		} else {
@@ -574,31 +574,44 @@ func splitSQL(src string, backslash bool) []string {
 // lexSQL writes src to b: quoted strings and identifiers and Postgres
 // dollar-quoted bodies whole, comments dropped (a block comment as a
 // space), and each other byte through code, which writes it or what it
-// stands for and returns where to go on. backslash says a backslash
-// escapes a quote inside a string (MySQL); elsewhere it is an ordinary
-// character.
-func lexSQL(src string, backslash bool, b *strings.Builder, code func(i int) int) {
+// stands for and returns where to go on. It reads them as dialect's
+// database does, so a ? is a mark exactly where the database sees code:
+// a backslash escapes a quote in MySQL's strings and Postgres's E'…',
+// and is an ordinary character elsewhere; MySQL's comments are # and --
+// before a space (5--1 is arithmetic); Postgres's block comments nest.
+func lexSQL(src, dialect string, b *strings.Builder, code func(i int) int) {
+	mysql, postgres := dialect == "mysql", dialect == "postgres"
+	toEOL := func(i int) int {
+		if end := strings.IndexByte(src[i:], '\n'); end >= 0 {
+			return i + end
+		}
+		return len(src)
+	}
 	for i := 0; i < len(src); {
 		ch := src[i]
 		switch {
-		case ch == '-' && strings.HasPrefix(src[i:], "--"):
-			end := strings.IndexByte(src[i:], '\n')
-			if end < 0 {
-				i = len(src)
-			} else {
-				i += end
-			}
+		case ch == '-' && strings.HasPrefix(src[i:], "--") && (!mysql || i+2 == len(src) || src[i+2] <= ' '),
+			ch == '#' && mysql:
+			i = toEOL(i)
 			continue
 		case ch == '/' && strings.HasPrefix(src[i:], "/*"):
-			end := strings.Index(src[i+2:], "*/")
-			if end < 0 {
-				i = len(src)
-			} else {
-				i += end + 4
+			depth, j := 1, i+2
+			for j < len(src) && depth > 0 {
+				switch {
+				case strings.HasPrefix(src[j:], "*/"):
+					depth, j = depth-1, j+2
+				case postgres && strings.HasPrefix(src[j:], "/*"):
+					depth, j = depth+1, j+2
+				default:
+					j++
+				}
 			}
+			i = j
 			b.WriteByte(' ')
 			continue
 		case ch == '\'' || ch == '"' || ch == '`':
+			backslash := mysql && ch != '`' ||
+				postgres && ch == '\'' && i > 0 && (src[i-1] == 'E' || src[i-1] == 'e') && (i < 2 || !identByte(src[i-2]))
 			j := i + 1
 			for j < len(src) {
 				if src[j] == ch {
@@ -608,7 +621,7 @@ func lexSQL(src string, backslash bool, b *strings.Builder, code func(i int) int
 					}
 					break
 				}
-				if backslash && ch != '`' && src[j] == '\\' && j+1 < len(src) {
+				if backslash && src[j] == '\\' && j+1 < len(src) {
 					j++
 				}
 				j++
@@ -617,7 +630,7 @@ func lexSQL(src string, backslash bool, b *strings.Builder, code func(i int) int
 			b.WriteString(src[i:end])
 			i = end
 			continue
-		case ch == '$':
+		case ch == '$' && postgres && !inIdent(src, i):
 			if tag := dollarTag(src[i:]); tag != "" {
 				end := strings.Index(src[i+len(tag):], tag)
 				stop := len(src)
@@ -633,9 +646,35 @@ func lexSQL(src string, backslash bool, b *strings.Builder, code func(i int) int
 	}
 }
 
-var dollarRE = regexp.MustCompile(`^\$[A-Za-z_]*\$`)
+// dollarTag is the dollar quote opening s: an identifier without a $
+// between two, or none: $$, $body$, $fn_1$; "" when s opens none.
+func dollarTag(s string) string {
+	j := 1
+	if j < len(s) && identByte(s[j]) && s[j] != '$' && !('0' <= s[j] && s[j] <= '9') {
+		for j < len(s) && identByte(s[j]) && s[j] != '$' {
+			j++
+		}
+	}
+	if j < len(s) && s[j] == '$' {
+		return s[:j+1]
+	}
+	return ""
+}
 
-func dollarTag(s string) string { return dollarRE.FindString(s) }
+// inIdent is whether src[i] continues an identifier: the bytes before it
+// up to a space or symbol start with a letter (a$b$ is one name), not a
+// digit or a $ (after 1 or $1, $$ opens a dollar quote).
+func inIdent(src string, i int) bool {
+	j := i
+	for j > 0 && identByte(src[j-1]) {
+		j--
+	}
+	return j < i && src[j] != '$' && !('0' <= src[j] && src[j] <= '9')
+}
+
+func identByte(c byte) bool {
+	return c == '_' || c == '$' || c >= 0x80 || '0' <= c && c <= '9' || 'a' <= c && c <= 'z' || 'A' <= c && c <= 'Z'
+}
 
 // CLIEnv is the variable the nexus CLI sets to run an app as its
 // migration tool (makemigrations, migrate, showmigrations, sqlmigrate),

@@ -579,6 +579,11 @@ default  = true
 # log    = "warn"                        # SQL logging: omit = auto (on in dev,
                                           # silent in prod). Force with silent/
                                           # false/off | error | warn/true/on | info/all
+# interpolate_params = false            # MySQL: default true = args escaped into the text,
+                                          # one round trip (Django's way; safe: utf8mb4 forced)
+# max_open = 50                          # pool: max_open / max_idle / conn_max_lifetime /
+# conn_max_lifetime = "1h"               # conn_max_idle_time; omit = default (100/10/1h/30m),
+                                          # negative = no limit; db.Config.Pool in Go
 # [databases.main.session]               # set on EVERY pooled connection: MySQL vars,
 # statement_timeout = 5000               # Postgres run-time params, SQLite pragmas;
                                           # plain values (nexus quotes); db.Config.Session

@@ -40,16 +40,13 @@ type Settings struct {
 
 var settings = config.Section("orm", Settings{})
 
-// route applies nexus.toml's route for the model's table, when it has one.
-func (m *Manager[T]) route() {
+// route is nexus.toml's route for the model's table, when it has one.
+func (m *Manager[T]) route() (Route, bool) {
 	if m.meta == nil {
-		return
+		return Route{}, false
 	}
 	r, ok := settings.Get().Models[m.meta.Table]
-	if !ok {
-		return
-	}
-	m.dbName, m.mirror = r.DB, r.Mirror
+	return r, ok
 }
 
 // MirrorError is a mirrored write that failed: the primary has the change,
@@ -129,8 +126,8 @@ func (m *Manager[T]) mirrorOf(ctx context.Context) (mirrorTarget, bool) {
 	if d, ok := ctx.Value(mirrorDBKey{}).(*DB); ok {
 		return mirrorTarget{db: d}, true
 	}
-	if m.mirror != "" {
-		return mirrorTarget{name: m.mirror}, true
+	if name := m.routeOn(pickBinding(ctx, m.bound.Load())).Mirror; name != "" {
+		return mirrorTarget{name: name}, true
 	}
 	return mirrorTarget{}, false
 }
@@ -155,13 +152,7 @@ func (m *Manager[T]) mirrorConn(ctx context.Context, t mirrorTarget) (conn, erro
 	if t.db != nil {
 		return on(ctx, t.db), nil
 	}
-	b := ctxBinding(ctx)
-	if b == nil {
-		b = m.bound.Load()
-	}
-	if b == nil {
-		b = lastBinding.Load()
-	}
+	b := pickBinding(ctx, m.bound.Load())
 	if b == nil {
 		return conn{}, errNoDB
 	}

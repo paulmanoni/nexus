@@ -286,3 +286,24 @@ func TestNearestName_BudgetScalesWithLength(t *testing.T) {
 		}
 	}
 }
+
+func TestLoad_DatabasePool(t *testing.T) {
+	p := filepath.Join(t.TempDir(), "nexus.toml")
+	body := `[databases.pooled]
+driver = "postgres"
+max_open = 50
+max_idle = 5
+conn_max_lifetime = "1h"
+conn_max_idle_time = "10m"
+`
+	if err := os.WriteFile(p, []byte(body), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := Load(p); err != nil {
+		t.Fatal(err)
+	}
+	s, ok := DatabaseSpecFor("pooled")
+	if !ok || s.MaxOpen != 50 || s.MaxIdle != 5 || s.ConnMaxLifetime != "1h" || s.ConnMaxIdleTime != "10m" {
+		t.Fatalf("spec = %+v", s)
+	}
+}

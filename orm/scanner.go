@@ -5,6 +5,7 @@ import (
 	"reflect"
 	"slices"
 	"sync"
+	"sync/atomic"
 	"time"
 )
 
@@ -45,7 +46,10 @@ type scannerEntry struct {
 	make any // func() RowScanner[T]
 }
 
-var scanners sync.Map // reflect.Type → scannerEntry
+var (
+	scanners   sync.Map // reflect.Type → scannerEntry
+	scannerVer atomic.Int64
+)
 
 // RegisterScanner installs a generated scanner for T, reading cols in
 // order. A scanner whose columns aren't the model's (the model changed
@@ -53,19 +57,31 @@ var scanners sync.Map // reflect.Type → scannerEntry
 // reflection.
 func RegisterScanner[T any](cols []string, make func() RowScanner[T]) {
 	scanners.Store(reflect.TypeFor[T](), scannerEntry{cols, make})
+	scannerVer.Add(1)
 }
 
-// rowScanner is T's generated scanner, when it reads the model's columns.
+// scannerHit is what rowScanner found for a model, as of scannerVer ver.
+type scannerHit struct {
+	ver  int64
+	make any // func() RowScanner[T], nil for none
+}
+
+// rowScanner is T's generated scanner, when it reads the model's columns;
+// found once per model while no scanner is registered since.
 func rowScanner[T any](m *model) (func() RowScanner[T], bool) {
-	v, ok := scanners.Load(reflect.TypeFor[T]())
-	if !ok {
-		return nil, false
+	ver := scannerVer.Load()
+	h := m.scanner.Load()
+	if h == nil || h.ver != ver {
+		h = &scannerHit{ver: ver}
+		if v, ok := scanners.Load(reflect.TypeFor[T]()); ok {
+			if e := v.(scannerEntry); len(m.via) == 0 && slices.Equal(e.cols, m.columns()) {
+				h.make = e.make
+			}
+		}
+		m.scanner.Store(h)
 	}
-	e := v.(scannerEntry)
-	if len(m.via) > 0 || !slices.Equal(e.cols, m.columns()) {
-		return nil, false
-	}
-	return e.make.(func() RowScanner[T]), true
+	mk, ok := h.make.(func() RowScanner[T])
+	return mk, ok
 }
 
 // Cell is a scan destination for a field of type V, for generated

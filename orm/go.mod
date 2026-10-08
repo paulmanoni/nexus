@@ -3,8 +3,12 @@ module github.com/paulmanoni/nexus/orm
 go 1.27
 
 require (
+	github.com/glebarez/sqlite v1.11.0
+	github.com/go-sql-driver/mysql v1.8.1
 	github.com/paulmanoni/nexus/v2 v2.29.1
 	golang.org/x/tools v0.47.0
+	gorm.io/driver/mysql v1.6.0
+	gorm.io/driver/postgres v1.6.0
 	gorm.io/gorm v1.31.1
 )
 
@@ -18,8 +22,6 @@ require (
 	github.com/failsafe-go/failsafe-go v0.9.6 // indirect
 	github.com/fsnotify/fsnotify v1.10.1 // indirect
 	github.com/glebarez/go-sqlite v1.21.2 // indirect
-	github.com/glebarez/sqlite v1.11.0 // indirect
-	github.com/go-sql-driver/mysql v1.8.1 // indirect
 	github.com/go-viper/mapstructure/v2 v2.5.0 // indirect
 	github.com/google/uuid v1.6.0 // indirect
 	github.com/gorilla/websocket v1.5.3 // indirect
@@ -39,8 +41,6 @@ require (
 	golang.org/x/sync v0.21.0 // indirect
 	golang.org/x/sys v0.46.0 // indirect
 	golang.org/x/text v0.39.0 // indirect
-	gorm.io/driver/mysql v1.6.0 // indirect
-	gorm.io/driver/postgres v1.6.0 // indirect
 	modernc.org/libc v1.22.5 // indirect
 	modernc.org/mathutil v1.5.0 // indirect
 	modernc.org/memory v1.5.0 // indirect

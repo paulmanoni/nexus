@@ -372,6 +372,12 @@
       "additionalProperties": {
         "additionalProperties": false,
         "properties": {
+          "conn_max_idle_time": {
+            "type": "string"
+          },
+          "conn_max_lifetime": {
+            "type": "string"
+          },
           "default": {
             "type": "boolean"
           },
@@ -381,11 +387,20 @@
           "host": {
             "type": "string"
           },
+          "interpolate_params": {
+            "type": "boolean"
+          },
           "key_prefix": {
             "type": "string"
           },
           "log": {
             "type": "string"
+          },
+          "max_idle": {
+            "type": "integer"
+          },
+          "max_open": {
+            "type": "integer"
           },
           "name": {
             "type": "string"

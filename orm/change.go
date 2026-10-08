@@ -4,6 +4,7 @@ import (
 	"context"
 	"slices"
 	"sync"
+	"sync/atomic"
 )
 
 // ChangeKind is what a write did.
@@ -30,16 +31,13 @@ type Change[T any] struct {
 }
 
 // listening is whether anything hears the model's changes.
-func (m *Manager[T]) listening() bool {
-	m.ls.mu.Lock()
-	defer m.ls.mu.Unlock()
-	return len(m.ls.fns) > 0
-}
+func (m *Manager[T]) listening() bool { return m.ls.n.Load() > 0 }
 
 type listeners[T any] struct {
 	mu   sync.Mutex
 	next int
 	fns  map[int]func(context.Context, Change[T])
+	n    atomic.Int64 // len(fns), read without the lock by every write
 }
 
 // OnChange calls fn after each write of T's rows, once its transaction
@@ -58,15 +56,20 @@ func (m *Manager[T]) OnChange(fn func(ctx context.Context, c Change[T])) (stop f
 	id := m.ls.next
 	m.ls.next++
 	m.ls.fns[id] = fn
+	m.ls.n.Store(int64(len(m.ls.fns)))
 	return func() {
 		m.ls.mu.Lock()
 		defer m.ls.mu.Unlock()
 		delete(m.ls.fns, id)
+		m.ls.n.Store(int64(len(m.ls.fns)))
 	}
 }
 
 // changed tells the listeners of a write on c's database, after commit.
 func (m *Manager[T]) changed(ctx context.Context, c conn, ch Change[T]) {
+	if !m.listening() {
+		return
+	}
 	m.ls.mu.Lock()
 	ids := make([]int, 0, len(m.ls.fns))
 	for id := range m.ls.fns {

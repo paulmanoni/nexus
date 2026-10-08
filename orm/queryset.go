@@ -134,8 +134,11 @@ func (qs QuerySet[T]) Iter(ctx context.Context) iter.Seq2[T, error] {
 			defer rows.Close()
 			sc := mk()
 			dest := sc.Dest()
+			// One row read into again and again, yielded by value: zeroed
+			// first, so nothing of the one before shows through.
+			var row, blank T
 			for rows.Next() {
-				var row T
+				row = blank
 				sc.Bind(&row)
 				if err := rows.Scan(dest...); err != nil {
 					yield(zero, err)
@@ -152,7 +155,8 @@ func (qs QuerySet[T]) Iter(ctx context.Context) iter.Seq2[T, error] {
 			return
 		}
 		stopped := false
-		err = q.scan(ctx, c, qs.m.schema(), func() reflect.Value { return reflect.New(q.m.Type).Elem() }, func(v reflect.Value) bool {
+		reuse := reflect.New(q.m.Type).Elem() // yielded by value, as above
+		err = q.scan(ctx, c, qs.m.schema(), func() reflect.Value { reuse.SetZero(); return reuse }, func(v reflect.Value) bool {
 			row := v.Addr().Interface().(*T)
 			qs.m.adopt(row)
 			if !yield(*row, nil) {
@@ -220,7 +224,7 @@ func (qs QuerySet[T]) First(ctx context.Context) (T, error) {
 // nexus.Conflict when there are several.
 func (qs QuerySet[T]) Get(ctx context.Context, conds ...Cond) (T, error) {
 	var zero T
-	rows, err := qs.Filter(conds...).Limit(2).All(ctx)
+	rows, err := qs.with(func(q *query) { q.where, q.limit = append(q.where, conds...), 2 }).All(ctx)
 	switch {
 	case err != nil:
 		return zero, err
@@ -254,10 +258,12 @@ func (qs QuerySet[T]) Count(ctx context.Context) (int64, error) {
 	b := q.builder(c.d)
 	var s string
 	if q.limit > 0 || q.offset > 0 || q.distinct {
-		sub, err := q.selectSQL(b, b.col(q.m.Fields[0]))
+		col := q.m.Fields[0]
 		if q.m.PK != nil {
-			sub, err = q.selectSQL(b, b.col(q.m.PK))
+			col = q.m.PK
 		}
+		// Written once: each writing adds the conditions' arguments.
+		sub, err := q.selectSQL(b, b.col(col))
 		if err != nil {
 			return 0, err
 		}
@@ -302,7 +308,7 @@ func scanOne(ctx context.Context, c conn, s string, args []any, dst any) error {
 	if !rows.Next() {
 		return rows.Err()
 	}
-	if err := rows.Scan(&cell{reflect.ValueOf(dst).Elem()}); err != nil {
+	if err := rows.Scan(&cell{dst: reflect.ValueOf(dst).Elem()}); err != nil {
 		return err
 	}
 	return rows.Err()
@@ -588,9 +594,11 @@ func collectRows[R any](rows iter.Seq2[R, error]) ([]R, error) {
 // readRows yields rows as rd reads them, then closes them.
 func readRows[R any](rows *sql.Rows, rd *reader, yield func(R, error) bool) {
 	defer rows.Close()
+	var row, blank R // read into again and again, yielded by value
+	v := reflect.ValueOf(&row).Elem()
 	for rows.Next() {
-		var row R
-		if err := rd.scan(rows, reflect.ValueOf(&row).Elem()); err != nil {
+		row = blank
+		if err := rd.scan(rows, v); err != nil {
 			yield(row, err)
 			return
 		}
@@ -611,7 +619,12 @@ type reader struct {
 	names []string
 	types []reflect.Type // a map's or list's value types, nil as the driver gives them
 	index [][]int        // a struct's field per name
+	fast  []scanKind     // and how it scans
 	shape int
+	// The scan destinations, made on the first row and used for every
+	// one: a map's or list's cells hold values of their own, copied out.
+	cells []cell
+	dest  []any
 }
 
 const (
@@ -673,27 +686,42 @@ func newReader(rt reflect.Type, names []string, fields []*field) (*reader, error
 			return nil, fmt.Errorf("orm: %v has no field for %q", rt, name)
 		}
 		rd.index = append(rd.index, rf.Index)
+		rd.fast = append(rd.fast, rf.fast)
 	}
 	return rd, nil
 }
 
 // scan reads the current row into v.
 func (rd *reader) scan(rows *sql.Rows, v reflect.Value) error {
-	if rd.shape == scalarShape {
-		return rows.Scan(&cell{v})
-	}
-	cells := make([]cell, len(rd.names))
-	dest := make([]any, len(cells))
-	for i := range cells {
-		if rd.shape == structShape {
-			cells[i].dst = fieldOf(v, rd.index[i])
-		} else {
-			cells[i].dst = reflect.New(cmp.Or(rd.types[i], anyType)).Elem()
+	if rd.cells == nil {
+		n := len(rd.names)
+		if rd.shape == scalarShape {
+			n = 1
 		}
-		dest[i] = &cells[i]
+		rd.cells, rd.dest = make([]cell, n), make([]any, n)
+		for i := range rd.cells {
+			rd.dest[i] = &rd.cells[i]
+			if rd.shape == mapShape || rd.shape == listShape {
+				rd.cells[i].dst = reflect.New(cmp.Or(rd.types[i], anyType)).Elem()
+			}
+		}
 	}
-	if err := rows.Scan(dest...); err != nil {
+	cells := rd.cells
+	for i := range cells {
+		switch rd.shape {
+		case scalarShape:
+			cells[i].dst = v
+		case structShape:
+			cells[i].dst, cells[i].fast = fieldOf(v, rd.index[i]), rd.fast[i]
+		default:
+			cells[i].dst.SetZero()
+		}
+	}
+	if err := rows.Scan(rd.dest...); err != nil {
 		return err
+	}
+	if rd.shape == scalarShape {
+		return nil
 	}
 	plain := func(i int) any {
 		x := value(cells[i].dst)

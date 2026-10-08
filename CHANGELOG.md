@@ -6,6 +6,64 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [2.30.0] - 2026-10-08
+
+The ORM entries ship as `orm/v0.5.2`.
+
+### Added
+
+- **Connection pool settings.** `[databases.<name>]` takes `max_open`, `max_idle`,
+  `conn_max_lifetime` and `conn_max_idle_time` (Go durations), and `db.Config.Pool` sets the
+  same in code — so a database bound with `db.Bind`/`db.BindFromConfig` can be tuned; before,
+  only `db.WithPool` on a manager opened directly could. A key left out keeps the driver's
+  default; a negative value lifts the limit; a duration Go can't read fails boot.
+
+### Changed
+
+- **MySQL queries take one round trip.** The MySQL DSN now sets `interpolateParams=true`: the
+  driver escapes a query's arguments into its text, as Django's MySQL backend does, instead of
+  preparing each statement on the server first — about half the time of a simple query, and no
+  server-side statements to run out of under load. Safe because nexus always connects with
+  `charset=utf8mb4`. `interpolate_params = false` in `[databases.<name>]` (or
+  `db.Config.InterpolateParams`) restores server-side prepared statements; setting it on another
+  driver fails boot. With MySQL's general or slow query log on, logged statements now contain
+  the values.
+
+### Security
+
+- **db: a Postgres password or database name can't add connection keywords.** A value
+  holding `\r`, `\v` or `\f` was written unquoted, and pgx ends a bare value there, so
+  `secret\rhost=elsewhere` sent the password to another host (or set `options`,
+  `sslrootcert`, …). Every value with whitespace is quoted now.
+- **db: SQLite session values can't run SQL.** A `[databases.<name>.session]` value was
+  quoted MySQL's way (`\'`), which SQLite doesn't read as an escape, so a value with a
+  quote ran the rest as statements on every connection. It is quoted as SQLite's string.
+- ORM: **a name has at most 32 parts.** A key, order, `Values`, `F`, `SelectRelated` or
+  `PrefetchRelated` path of thousands of relations (a request naming one) took seconds
+  of CPU to write and exhausted the database's memory; it now fails at once.
+- ORM: **a statement has at most 65,535 arguments** (32,766 on SQLite): a longer `__in`
+  list fails with the reason before it is sent, instead of in the driver or the server.
+- ORM: **`Add`, `Remove` and `Set` of many keys cost their number,** not its square: a
+  list of 100,000 ids from a request took minutes to deduplicate.
+- ORM: **a violation is read from the driver's code.** A database error quoting a value
+  from the request (`invalid input syntax for type uuid: "…duplicate key…"`, MySQL's
+  `Incorrect datetime value: '1062'`) passed for a unique violation (`nexus.Conflict`),
+  and MySQL's duplicate-key message could name a field the value spelled; the field is
+  the key's own now.
+- ORM: **raw SQL's `?` marks and migrations' statements are read as each database reads
+  SQL:** MySQL's `#` comments and `--` only before a space (`5--1` is arithmetic, which
+  was dropped as a comment), Postgres's `E'…'` strings, nested block comments and `$tag$`
+  quotes with digits, and no dollar quote inside an identifier (`a$b$`). On Postgres a
+  mark is written apart from a name or number beside it: `?0` was `$10`, binding the
+  tenth argument, and `OFFSET?` the identifier `OFFSET$1`.
+- ORM: `Paginate` orders by each field once however often `sort` names it, and a
+  `MaxSize` or `DefaultSize` under 1 no longer divides by zero.
+
+### Fixed
+
+- ORM: `Count` of a filtered `Distinct`, `Limit` or `Offset` query sent its arguments
+  twice and failed on Postgres and MySQL.
+
 ## [2.29.1] - 2026-10-08
 
 The ORM entries ship as `orm/v0.5.1`.

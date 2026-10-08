@@ -184,26 +184,42 @@ func (m *Manager[T]) insert(ctx context.Context, c conn, rows []*T) error {
 	for i, f := range m.meta.Fields {
 		written[i] = slices.Contains(fields, f)
 	}
+	// The statement written in one buffer, its arguments in one slice:
+	// a batch of 500 rows is one allocation each, not a few per row.
+	b.st.args = make([]any, 0, len(rows)*len(fields))
+	var sb strings.Builder
+	sb.Grow(64 + len(cols)*16 + len(rows)*len(fields)*7)
+	sb.WriteString("INSERT INTO " + b.from() + " (" + strings.Join(cols, ", ") + ") VALUES ")
 	var vals []any
-	tuples := make([]string, len(rows))
 	for r, row := range rows {
-		marks := make([]string, 0, len(fields))
+		if r > 0 {
+			sb.WriteString(", ")
+		}
+		sb.WriteByte('(')
+		n := 0
+		mark := func(v any) {
+			if n > 0 {
+				sb.WriteString(", ")
+			}
+			sb.WriteString(b.arg(v))
+			n++
+		}
 		if w != nil {
 			vals = w.Values(row, vals)
 			for i := range m.meta.Fields {
 				if written[i] {
-					marks = append(marks, b.arg(vals[i]))
+					mark(vals[i])
 				}
 			}
 		} else {
 			v := reflect.ValueOf(row).Elem()
 			for _, f := range fields {
-				marks = append(marks, b.arg(value(peek(v, f.Index, f.Type))))
+				mark(value(peek(v, f.Index, f.Type)))
 			}
 		}
-		tuples[r] = "(" + strings.Join(marks, ", ") + ")"
+		sb.WriteByte(')')
 	}
-	s := "INSERT INTO " + b.d.Quote(m.meta.Table) + " (" + strings.Join(cols, ", ") + ") VALUES " + strings.Join(tuples, ", ")
+	s := sb.String()
 	pk := m.meta.PK
 	needKey := pk != nil && !slices.Contains(fields, pk)
 	if needKey && c.d.Name() == "postgres" {
@@ -215,8 +231,10 @@ func (m *Manager[T]) insert(ctx context.Context, c conn, rows []*T) error {
 			return m.mapErr(c, err)
 		}
 		defer rs.Close()
+		var key cell
 		for i := 0; rs.Next() && i < len(rows); i++ {
-			if err := rs.Scan(&cell{fieldOf(reflect.ValueOf(rows[i]).Elem(), pk.Index)}); err != nil {
+			key.dst = fieldOf(reflect.ValueOf(rows[i]).Elem(), pk.Index)
+			if err := rs.Scan(&key); err != nil {
 				return m.mapErr(c, err)
 			}
 		}

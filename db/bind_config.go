@@ -2,6 +2,7 @@ package db
 
 import (
 	"fmt"
+	"time"
 
 	"github.com/paulmanoni/nexus/v2"
 	"github.com/paulmanoni/nexus/v2/config"
@@ -91,6 +92,9 @@ func resolveSpec(name string) config.DatabaseSpec {
 	default:
 		panic(fmt.Sprintf("db.BindFromConfig[%q]: [databases.%s].driver = %q is not one of postgres/mysql/sqlite", name, name, spec.Driver))
 	}
+	if _, err := poolOf(spec); err != nil {
+		panic(fmt.Sprintf("db.BindFromConfig[%q]: [databases.%s]: %v", name, name, err))
+	}
 	// No key_prefix requirement: a block may supply its values inline
 	// (works without a config server). A block with neither inline values
 	// nor key_prefix yields empty connection fields, surfaced through the
@@ -113,6 +117,7 @@ func configFor(spec config.DatabaseSpec, get func(string) string) Config {
 		}
 		return ""
 	}
+	pool, _ := poolOf(spec) // resolveSpec has failed boot on a bad duration
 	return Config{
 		Driver:   Driver(spec.Driver),
 		Host:     field(spec.Host, keyHostname),
@@ -123,7 +128,10 @@ func configFor(spec config.DatabaseSpec, get func(string) string) Config {
 		SSLMode:  spec.SSLMode,
 		TimeZone: spec.TimeZone,
 		LogLevel: spec.Log,
-		Session:  sessionFor(spec.Session),
+		Pool:     pool,
+
+		InterpolateParams: spec.InterpolateParams,
+		Session:           sessionFor(spec.Session),
 	}
 }
 
@@ -141,4 +149,23 @@ func sessionFor(in map[string]any) map[string]string {
 		}
 	}
 	return out
+}
+
+// poolOf is the spec's pool keys.
+func poolOf(spec config.DatabaseSpec) (PoolConfig, error) {
+	p := PoolConfig{MaxOpen: spec.MaxOpen, MaxIdle: spec.MaxIdle}
+	for _, d := range []struct {
+		key, val string
+		to       *time.Duration
+	}{{"conn_max_lifetime", spec.ConnMaxLifetime, &p.ConnMaxLife}, {"conn_max_idle_time", spec.ConnMaxIdleTime, &p.ConnMaxIdle}} {
+		if d.val == "" {
+			continue
+		}
+		v, err := time.ParseDuration(d.val)
+		if err != nil {
+			return p, fmt.Errorf("%s = %q: a Go duration such as \"30m\" or \"1h\"", d.key, d.val)
+		}
+		*d.to = v
+	}
+	return p, nil
 }

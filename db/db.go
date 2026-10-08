@@ -69,6 +69,20 @@ type Config struct {
 	// [databases.<name>.session] in nexus.toml.
 	Session map[string]string
 
+	// InterpolateParams is MySQL's: nil or true has the driver escape a
+	// query's arguments into its text and send it in one round trip (as
+	// Django's MySQL backend does); false prepares each statement on the
+	// server first, two round trips. Safe because the DSN forces utf8mb4,
+	// never a charset whose escaping can be bypassed. Set on another
+	// driver it fails Validate. [databases.<name>] interpolate_params.
+	InterpolateParams *bool
+
+	// Pool overrides the driver's default pool field by field: a zero
+	// field keeps the default, a negative one lifts the limit.
+	// [databases.<name>] max_open / max_idle / conn_max_lifetime /
+	// conn_max_idle_time in nexus.toml.
+	Pool PoolConfig
+
 	// LogLevel controls SQL/GORM logging. Empty is auto — warn-level under
 	// `nexus dev` / a development environment, silent otherwise (a
 	// production binary stays quiet by default). Override with
@@ -102,8 +116,12 @@ func (c Config) DSN() string {
 		if c.TimeZone != "" {
 			loc = url.QueryEscape(c.TimeZone)
 		}
-		return fmt.Sprintf("%s:%s@tcp(%s:%s)/%s?charset=utf8mb4&parseTime=True&loc=%s",
-			c.User, c.Password, c.Host, c.Port, url.PathEscape(c.Database), loc) + c.mysqlSession()
+		interpolate := ""
+		if c.InterpolateParams == nil || *c.InterpolateParams {
+			interpolate = "&interpolateParams=true"
+		}
+		return fmt.Sprintf("%s:%s@tcp(%s:%s)/%s?charset=utf8mb4&parseTime=True&loc=%s%s",
+			c.User, c.Password, c.Host, c.Port, url.PathEscape(c.Database), loc, interpolate) + c.mysqlSession()
 	case SQLite:
 		return c.sqliteDSN()
 	}
@@ -111,10 +129,11 @@ func (c Config) DSN() string {
 }
 
 // pgDSNValue is a keyword/value connection string value: quoted when it
-// is empty or holds a space, a quote or a backslash, so an empty password
-// can't swallow the next keyword and a password can't add keywords.
+// is empty or holds whitespace (each byte pgx ends a bare value at: \r,
+// \v and \f too), a quote or a backslash, so an empty password can't
+// swallow the next keyword and a password can't add keywords.
 func pgDSNValue(v string) string {
-	if v != "" && !strings.ContainsAny(v, " \t\n'\\") {
+	if v != "" && !strings.ContainsAny(v, " \t\n\r\v\f'\\") {
 		return v
 	}
 	return "'" + strings.NewReplacer(`\`, `\\`, `'`, `\'`).Replace(v) + "'"
@@ -193,6 +212,26 @@ type PoolConfig struct {
 	MaxOpen     int
 	ConnMaxLife time.Duration
 	ConnMaxIdle time.Duration
+}
+
+// poolFor is the driver's default pool with cfg.Pool's set fields over
+// it; database/sql reads a value <= 0 as "no limit" (no idle kept, for
+// MaxIdle).
+func poolFor(cfg Config) PoolConfig {
+	p, o := defaultPool(cfg), cfg.Pool
+	if o.MaxOpen != 0 {
+		p.MaxOpen = max(o.MaxOpen, 0)
+	}
+	if o.MaxIdle != 0 {
+		p.MaxIdle = max(o.MaxIdle, 0)
+	}
+	if o.ConnMaxLife != 0 {
+		p.ConnMaxLife = max(o.ConnMaxLife, 0)
+	}
+	if o.ConnMaxIdle != 0 {
+		p.ConnMaxIdle = max(o.ConnMaxIdle, 0)
+	}
+	return p
 }
 
 func defaultPool(cfg Config) PoolConfig {
@@ -288,7 +327,7 @@ func NewManager(cfg Config, opts ...Option) *Manager {
 	ctx, cancel := context.WithCancel(context.Background())
 	m := &Manager{
 		cfg:    cfg,
-		pool:   defaultPool(cfg),
+		pool:   poolFor(cfg),
 		logger: slog.New(slog.DiscardHandler),
 		ctx:    ctx,
 		cancel: cancel,
