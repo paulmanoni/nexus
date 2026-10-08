@@ -294,7 +294,15 @@ func (m *Manager[T]) Save(ctx context.Context, row *T) error {
 		return err
 	}
 	if n == 0 {
-		return m.notFound()
+		// MySQL counts rows changed, not rows matched: a save that
+		// changes nothing still found its row.
+		ok, err := m.Filter(Q{pk.Name: key}).Exists(ctx)
+		if err != nil {
+			return err
+		}
+		if !ok {
+			return m.notFound()
+		}
 	}
 	if h, ok := any(row).(AfterSaver); ok {
 		if err := h.AfterSave(ctx); err != nil {
