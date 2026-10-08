@@ -5,8 +5,8 @@ go 1.27.1
 require (
 	github.com/fsnotify/fsnotify v1.10.1
 	github.com/paulmanoni/deco v0.20.0
-	github.com/paulmanoni/nexus/orm v0.6.0
-	github.com/paulmanoni/nexus/v2 v2.31.0
+	github.com/paulmanoni/nexus/orm v0.6.1
+	github.com/paulmanoni/nexus/v2 v2.31.1
 	github.com/pelletier/go-toml/v2 v2.3.1
 	github.com/spf13/cobra v1.10.2
 	github.com/spf13/pflag v1.0.9
