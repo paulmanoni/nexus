@@ -16,6 +16,7 @@ func init() {
 	orm.Register[Customer]()
 	orm.RegisterScanner[Customer]([]string{"id", "email", "visits", "updated_at"}, func() orm.RowScanner[Customer] { return new(ormScanCustomer) })
 	orm.RegisterScanner[Doc]([]string{"id", "title", "body", "search"}, func() orm.RowScanner[Doc] { return new(ormScanDoc) })
+	orm.RegisterScanner[ElemNote]([]string{"id", "refs"}, func() orm.RowScanner[ElemNote] { return new(ormScanElemNote) })
 	orm.Register[Group]()
 	orm.RegisterScanner[Group]([]string{"id", "name"}, func() orm.RowScanner[Group] { return new(ormScanGroup) })
 	orm.RegisterScanner[Letter]([]string{"id", "ref", "placings", "settings"}, func() orm.RowScanner[Letter] { return new(ormScanLetter) })
@@ -401,6 +402,52 @@ func (s DocFieldSet) Under(prefix string) DocFieldSet {
 		Body:   orm.TextFieldAt[string](prefix + "body"),
 		Search: orm.TextFieldAt[orm.TSVector](prefix + "search"),
 	}
+}
+
+type ormScanElemNote struct {
+	c0   orm.Cell[int64]
+	c1   orm.Cell[RefList]
+	dest []any
+}
+
+func (s *ormScanElemNote) Dest() []any {
+	if s.dest == nil {
+		s.dest = []any{&s.c0, &s.c1}
+	}
+	return s.dest
+}
+
+func (s *ormScanElemNote) Bind(r *ElemNote) {
+	s.c0.P = &r.ID
+	s.c1.P = &r.Refs
+}
+
+func (s *ormScanElemNote) Values(r *ElemNote, dst []any) []any {
+	return append(dst[:0], r.ID, r.Refs)
+}
+
+// ElemNoteFields is ElemNote's fields as typed lookups.
+var ElemNoteFields = ElemNoteFieldSet{}.Under("")
+
+// ElemNoteFieldSet is ElemNote's fields as typed lookups: ElemNoteFields from the model itself, Under from a model related to it.
+type ElemNoteFieldSet struct {
+	p    string
+	ID   orm.Field[int64]
+	Refs orm.Field[RefList]
+}
+
+// Under is the set through a relation path, such as "author__".
+func (s ElemNoteFieldSet) Under(prefix string) ElemNoteFieldSet {
+	return ElemNoteFieldSet{
+		p:    prefix,
+		ID:   orm.FieldAt[int64](prefix + "id"),
+		Refs: orm.FieldAt[RefList](prefix + "refs"),
+	}
+}
+
+// Spots is the fields of ElemNote's Spots, for lookups across the relation.
+func (s ElemNoteFieldSet) Spots() SpotFieldSet {
+	return SpotFieldSet{}.Under(s.p + "spots__")
 }
 
 type ormScanGroup struct {

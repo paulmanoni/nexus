@@ -54,6 +54,28 @@ func (qs QuerySet[T]) Exclude(conds ...Cond) QuerySet[T] {
 	return qs.with(func(q *query) { q.where = append(q.where, Not(And(conds...))) })
 }
 
+// GroupBy groups the rows by names (fields, paths through relations,
+// annotations): the GROUP BY of a Values listing aggregates, over the
+// implicit rule (every other name Values lists). Grouping by a primary
+// key lets Values read the columns depending on it without grouping by
+// them, as Postgres and MySQL allow:
+//
+//	Letters.Annotate("n", orm.Count("placements__id")).GroupBy("id").
+//		Values[[]any]("id", "reference_number", "status", "n")
+func (qs QuerySet[T]) GroupBy(names ...string) QuerySet[T] {
+	return qs.with(func(q *query) { q.groupBy = append(q.groupBy, names...) })
+}
+
+// Having keeps the groups matching every condition: HAVING, run after
+// grouping, where the aggregates exist. A grouped query only (Values
+// listing an aggregate, or GroupBy); Filter on an aggregate annotation
+// routes to HAVING too, as Django's does.
+//
+//	Letters.Annotate("n", orm.Count("placements__id")).Having(orm.Q{"n__gt": 0}).Values[…]
+func (qs QuerySet[T]) Having(conds ...Cond) QuerySet[T] {
+	return qs.with(func(q *query) { q.having = append(q.having, conds...) })
+}
+
 // OrderBy sorts by fields, a leading - for descending: OrderBy("-age",
 // "author__name"). A query that sets no order reads rows in the model's
 // Meta Ordering; OrderBy() sets none, that one included.
@@ -560,10 +582,12 @@ func (vq Values[T, R]) Iter(ctx context.Context) iter.Seq2[R, error] {
 				group = append(group, strconv.Itoa(i+1))
 			}
 		}
+		q.values = names
+		q.grouped = grouped || q.groupBy != nil
 		if grouped && len(group) > 0 {
 			q.group = " GROUP BY " + strings.Join(group, ", ")
 		}
-		if !grouped {
+		if !q.grouped {
 			q = q.ordered()
 		}
 		rd, err := newReader(rt, names, fields)
@@ -821,9 +845,9 @@ func (a Agg) exprSQL(b *builder) (string, error) {
 	if a.filter == nil {
 		return fn + col + ")", nil
 	}
-	neg := b.neg
-	b.neg = false
-	defer func() { b.neg = neg }()
+	neg, agg := b.neg, b.agg
+	b.neg, b.agg = false, true
+	defer func() { b.neg, b.agg = neg, agg }()
 	cond, err := a.filter.sql(b)
 	if err != nil || cond == "" {
 		return fn + col + ")", err

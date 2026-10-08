@@ -2,9 +2,12 @@ package orm_test
 
 import (
 	"context"
+	"database/sql/driver"
+	"encoding/json"
 	"reflect"
 	"slices"
 	"strconv"
+	"strings"
 	"testing"
 
 	"github.com/paulmanoni/nexus/orm"
@@ -66,7 +69,7 @@ func TestElementsJSON(t *testing.T) {
 	web, err := Letters.Annotate("web", orm.FilteredRelation("spots", orm.Q{"kind": "web"})).
 		Annotate("n", orm.Count("web__id").Distinct()).
 		Annotate("category", orm.Value("PLACEMENT")).
-		Filter(orm.Q{"n__gte": 1}).
+		Filter(orm.Q{"n__gte": 1, "ref__in": []string{"A", "B", "C"}}). // one Q, split WHERE/HAVING
 		OrderBy("ref").Values[[]any]("ref", "category", "n").All(ctx)
 	if err != nil || !reflect.DeepEqual(web, [][]any{{"A", "PLACEMENT", int64(1)}, {"B", "PLACEMENT", int64(1)}}) {
 		t.Fatalf("filtered relation over elements = %v, %v", web, err)
@@ -114,10 +117,79 @@ func TestElementsCSV(t *testing.T) {
 		t.Fatalf("CSV prefetch %v, %v", memos, err)
 	}
 
+	// A row's related rows, Django's memo.spots.all().
+	sp, err := orm.Related[Spot](&memos[0], "spots").OrderBy("id").All(ctx)
+	if err != nil || !slices.Equal(spotIDs(sp), []int64{web2.ID, garden.ID}) {
+		t.Fatalf("Related = %v, %v", spotIDs(sp), err)
+	}
+
 	// elements over a JSON array of strings, joined on a text column.
 	coded, err := Memos.Annotate("n", orm.Count("coded__id")).OrderBy("id").Values[[]any]("id", "n").All(ctx)
 	if err != nil || coded[0][1] != int64(2) || coded[1][1] != int64(1) {
 		t.Fatalf("string elements = %v, %v", coded, err)
+	}
+}
+
+// RefList is an app's own list type: JSON out, JSON or CSV in.
+type RefList []int64
+
+func (l RefList) Value() (driver.Value, error) {
+	b, err := json.Marshal([]int64(l))
+	return string(b), err
+}
+
+func (l *RefList) Scan(src any) error {
+	*l = RefList{}
+	var raw string
+	switch v := src.(type) {
+	case []byte:
+		raw = string(v)
+	case string:
+		raw = v
+	default:
+		return nil
+	}
+	for part := range strings.SplitSeq(strings.Trim(raw, "[]"), ",") {
+		if n, err := strconv.ParseInt(strings.TrimSpace(part), 10, 64); err == nil {
+			*l = append(*l, n)
+		}
+	}
+	return nil
+}
+
+// Note's refs column is JSON on the default schema and comma-separated
+// text under the old names set, as a half-migrated table is.
+type ElemNote struct {
+	ID    int64
+	Refs  RefList `orm:"type:json" old:"type:varchar(100)"`
+	Spots []Spot  `orm:"elements:refs"`
+}
+
+var (
+	ElemNotes = orm.For[ElemNote]()
+	OldNotes  = orm.For[ElemNote](orm.Names("old"), orm.Table("elem_notes_old"))
+)
+
+func TestElementsDeclaredType(t *testing.T) {
+	ctx := ormtest.Open(t, Spots, ElemNotes, OldNotes)
+	web1, garden := &Spot{Kind: "web"}, &Spot{Kind: "garden"}
+	ormtest.Seed(t, ctx, Spots, web1, garden)
+	ormtest.Seed(t, ctx, ElemNotes, &ElemNote{Refs: RefList{web1.ID, garden.ID}})
+	ormtest.Exec(t, ctx, "INSERT INTO elem_notes_old (id, refs) VALUES (1, '"+itoa(web1.ID)+", "+itoa(garden.ID)+"')")
+
+	for _, m := range []*orm.Manager[ElemNote]{ElemNotes, OldNotes} {
+		got, err := m.Filter(orm.Q{"spots__kind": "garden"}).Values[int64]("id").All(ctx)
+		if err != nil || len(got) != 1 {
+			t.Errorf("%v: %v, %v", m, got, err)
+		}
+		n, err := m.Annotate("n", orm.Count("spots__id")).Values[int64]("n").All(ctx)
+		if err != nil || !slices.Equal(n, []int64{2}) {
+			t.Errorf("count %v, %v", n, err)
+		}
+		notes, err := m.PrefetchRelated("spots").All(ctx)
+		if err != nil || len(notes) != 1 || !slices.Equal(spotIDs(notes[0].Spots), []int64{web1.ID, garden.ID}) {
+			t.Errorf("prefetch %v, %v", notes, err)
+		}
 	}
 }
 

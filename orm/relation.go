@@ -227,13 +227,15 @@ func (r *relation) resolve() (*model, *field, error) {
 }
 
 // jsonLocal is whether an elements relation's column holds a JSON array
-// (orm.JSON) rather than comma-separated text.
+// rather than comma-separated text: an orm.JSON field, or a column whose
+// declared type says JSON — per names set, so one field can be jsonb on
+// one schema (type:jsonb) and text on another (legacy:"type:varchar(…)").
 func (r *relation) jsonLocal() bool {
 	t := r.local.Type
 	if t.Kind() == reflect.Pointer {
 		t = t.Elem()
 	}
-	return t.Implements(jsonColType)
+	return t.Implements(jsonColType) || strings.Contains(strings.ToLower(r.local.SQLType), "json")
 }
 
 // one is whether the relation holds one row: a foreign key, or a has-one.

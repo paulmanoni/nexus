@@ -22,8 +22,15 @@ type query struct {
 	ann      []annotation
 	related  []string
 	prefetch []PrefetchSpec
-	every    bool   // Unfiltered: an Update or Delete may touch every row
-	group    string // Values' GROUP BY
+	every    bool // Unfiltered: an Update or Delete may touch every row
+	groupBy  []string
+	having   []Cond
+	// Values' grouping, decided as it builds: grouped (an aggregate is
+	// listed, or GroupBy), the names it reads, and the GROUP BY of
+	// positions the implicit rule groups by.
+	grouped bool
+	values  []string
+	group   string
 }
 
 type annotation struct {
@@ -40,6 +47,8 @@ func (q query) clone() query {
 	q.ann = slices.Clip(q.ann)
 	q.related = slices.Clip(q.related)
 	q.prefetch = slices.Clip(q.prefetch)
+	q.groupBy = slices.Clip(q.groupBy)
+	q.having = slices.Clip(q.having)
 	return q
 }
 
@@ -59,26 +68,58 @@ func (q query) builder(d Dialect) *builder {
 // an aggregate is HAVING's, which only a SELECT of rows has.
 func (q query) whereSQL(b *builder) (string, error) {
 	where, having := q.split(b)
-	if len(having) > 0 {
-		return "", fmt.Errorf("orm: a condition on an aggregate filters the rows Values reads, grouped")
+	if len(having) > 0 || len(q.having) > 0 {
+		return "", fmt.Errorf("orm: a condition on an aggregate filters groups, and this reads rows: read the groups with Values(…).All, or Having on a grouped query")
 	}
 	return clause(b, " WHERE ", where)
 }
 
 // split is q's conditions: those of the rows (WHERE), and those naming an
-// aggregate annotation (HAVING).
+// aggregate annotation (HAVING). A Q's keys and an And's members split
+// apart, as Django splits them; an Or or a Not naming an aggregate can't,
+// and goes to HAVING whole.
 func (q query) split(b *builder) (where, having []Cond) {
 	if len(b.ann) == 0 {
 		return q.where, nil
 	}
 	for _, c := range q.where {
-		if b.aggregated(c) {
-			having = append(having, c)
-		} else {
-			where = append(where, c)
-		}
+		w, h := b.partition(c)
+		where, having = append(where, w...), append(having, h...)
 	}
 	return where, having
+}
+
+func (b *builder) partition(c Cond) (where, having []Cond) {
+	switch c := c.(type) {
+	case Q:
+		wq, hq := Q{}, Q{}
+		for k, v := range c {
+			if _, ok := b.ann[strings.SplitN(k, "__", 2)[0]].(Agg); ok {
+				hq[k] = v
+			} else {
+				wq[k] = v
+			}
+		}
+		if len(wq) > 0 {
+			where = append(where, wq)
+		}
+		if len(hq) > 0 {
+			having = append(having, hq)
+		}
+		return where, having
+	case group:
+		if c.op == "AND" {
+			for _, m := range c.conds {
+				w, h := b.partition(m)
+				where, having = append(where, w...), append(having, h...)
+			}
+			return where, having
+		}
+	}
+	if b.aggregated(c) {
+		return nil, []Cond{c}
+	}
+	return []Cond{c}, nil
 }
 
 func clause(b *builder, kw string, conds []Cond) (string, error) {
@@ -141,7 +182,18 @@ func (q query) pageSQL(b *builder) string {
 func (q query) selectSQL(b *builder, cols string) (string, error) {
 	at := len(b.st.args)
 	where, having := q.split(b)
+	having = append(having, q.having...)
+	if len(having) > 0 && !q.grouped {
+		return "", fmt.Errorf("orm: Having filters groups, and this query has none: list an aggregate in Values, or GroupBy")
+	}
+	if err := q.checkGrouped(b, having); err != nil {
+		return "", err
+	}
 	w, err := clause(b, " WHERE ", where)
+	if err != nil {
+		return "", err
+	}
+	g, err := q.groupSQL(b)
 	if err != nil {
 		return "", err
 	}
@@ -161,7 +213,84 @@ func (q query) selectSQL(b *builder, cols string) (string, error) {
 	if q.distinct {
 		d = "DISTINCT "
 	}
-	return "SELECT " + d + cols + " FROM " + from + w + q.group + h + o + q.pageSQL(b), nil
+	return "SELECT " + d + cols + " FROM " + from + w + g + h + o + q.pageSQL(b), nil
+}
+
+// groupSQL is the GROUP BY: GroupBy's names (a name Values reads by its
+// position), else the positions the implicit rule groups by.
+func (q query) groupSQL(b *builder) (string, error) {
+	if q.groupBy == nil {
+		return q.group, nil
+	}
+	parts := make([]string, len(q.groupBy))
+	for i, name := range q.groupBy {
+		if at := slices.Index(q.values, name); at >= 0 {
+			parts[i] = strconv.Itoa(at + 1)
+			continue
+		}
+		s, err := b.ref(name)
+		if err != nil {
+			return "", fmt.Errorf("orm: GroupBy(%q): %w", name, err)
+		}
+		parts[i] = s
+	}
+	return " GROUP BY " + strings.Join(parts, ", "), nil
+}
+
+// checkGrouped refuses, under the implicit grouping, what the grouping
+// folds away: an order or a HAVING condition naming a column neither
+// grouped nor aggregated — with the rule, instead of the database's
+// error. GroupBy is the developer's own: the database judges it (a
+// primary key carries the columns depending on it).
+func (q query) checkGrouped(b *builder, having []Cond) error {
+	if !q.grouped || q.groupBy != nil {
+		return nil
+	}
+	var by []string
+	for _, n := range q.values {
+		if _, agg := b.ann[n].(Agg); !agg {
+			by = append(by, n)
+		}
+	}
+	ok := func(name string) bool {
+		_, agg := b.ann[name].(Agg)
+		return agg || slices.Contains(by, name)
+	}
+	why := "this query groups by (" + strings.Join(by, ", ") + ") because Values lists an aggregate"
+	if len(by) == 0 {
+		why = "this query is one group because Values lists only aggregates"
+	}
+	for _, o := range q.order {
+		if name := strings.TrimPrefix(o, "-"); !ok(name) {
+			return fmt.Errorf("orm: ordered by %q, which the grouping folds away — %s: order by a grouped name or an aggregate, add %q to Values, or GroupBy", name, why, name)
+		}
+	}
+	for _, c := range having {
+		for _, name := range condNames(c) {
+			if !ok(name) {
+				return fmt.Errorf("orm: the HAVING condition on %q runs after grouping, where %q no longer exists — %s: filter it in its own Filter (it runs before grouping), or add it to Values", name, name, why)
+			}
+		}
+	}
+	return nil
+}
+
+// condNames is the first step of each name a condition reads.
+func condNames(c Cond) []string {
+	var out []string
+	switch c := c.(type) {
+	case Q:
+		for k := range c {
+			out = append(out, strings.SplitN(k, "__", 2)[0])
+		}
+	case group:
+		for _, m := range c.conds {
+			out = append(out, condNames(m)...)
+		}
+	case not:
+		out = condNames(c.c)
+	}
+	return out
 }
 
 type computedField struct {

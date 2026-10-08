@@ -231,6 +231,8 @@ func (t Tags) Under(v string) Tags {
 				t.JoinReferences = val
 			case "related":
 				t.Related = val
+			case "type":
+				t.Type = val
 			}
 		}
 	case strings.Contains(v, "__"):

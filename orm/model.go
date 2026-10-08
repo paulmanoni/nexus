@@ -390,6 +390,13 @@ func Related[R any](inst any, relation string) QuerySet[R] {
 	if err != nil {
 		return qs.Filter(errCond{err})
 	}
+	if r.Kind == relElements {
+		elems, err := r.elementKeys(v)
+		if err != nil {
+			return qs.Filter(errCond{err})
+		}
+		return qs.Filter(Q{rf.Name + "__in": elems})
+	}
 	k := key(v, r.local)
 	if r.Kind == relM2M {
 		return qs.Filter(throughCond{r, rf, k})

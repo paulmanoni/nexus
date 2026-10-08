@@ -6,6 +6,44 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [2.32.0] - 2026-10-09
+
+### Added
+
+- **`GroupBy(names…)` and `Having(conds…)`**: the GROUP BY and HAVING of a grouped
+  `Values`, stated. `GroupBy` overrides the implicit rule (every non-aggregate name
+  `Values` lists); grouping by a primary key reads the columns depending on it
+  ungrouped. `Having` always filters groups, and is refused on a query that isn't
+  grouped.
+- **Grouping errors before the database's:** under the implicit rule, ordering by a
+  name the grouping folds away, or a HAVING condition on an ungrouped column, fails
+  with what the query groups by and the fix; `Count`/`Exists`/writes say why they
+  refuse an aggregate condition; a name missing an annotation by its spelling
+  (`totalPlaced` for `total_placed`) names the annotation.
+
+### Changed
+
+- **Elements relations read the column's declared type.** JSON expansion is chosen by
+  the Go type (`orm.JSON`) or the column's `type:` saying JSON — per names set, so one
+  field serves a half-migrated table: `orm:"type:jsonb"` with `legacy:"type:varchar(1000)"`
+  expands JSON on the new schema and splits commas on the old. A names-set tag may now
+  override `type:`, and Postgres casts the column, so `json` columns expand like `jsonb`.
+  `orm.Related` follows an elements relation too (the row's keys, an `__in`).
+  A `Q` mixing an aggregate condition with plain ones splits per key — the aggregate
+  to HAVING, the rest to WHERE — as Django splits them.
+
+### Fixed
+
+- **A filtered aggregate checks the row it aggregates.** `orm.Count("books__id").Filter(orm.Q{"books__published": true})`
+  asked whether the author had *any* published book (an EXISTS), counting every book of
+  such an author; a relation the aggregate already joins is now the same joined row in its
+  filter, as Django's `filter=` is. A filter on a relation the query doesn't join still asks
+  EXISTS.
+- **A grouped `Values` works as a subquery:** `Filter(orm.Q{"id__in": qs.GroupBy("id").Having(…).Values[int64]("id")})`
+  keeps the groups `Having` keeps, instead of refusing the `Having`.
+
+The ORM entries ship as `orm/v0.7.0`.
+
 ## [2.31.1] - 2026-10-08
 
 ### Added

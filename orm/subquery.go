@@ -98,9 +98,12 @@ func (vq Values[T, R]) subquerySQL(b *builder, exists bool) (string, error) {
 	if len(vq.fields) != 1 {
 		return "", fmt.Errorf("orm: a subquery reads one column; Values has %d", len(vq.fields))
 	}
+	s.many = true
 	col, err := s.ref(vq.fields[0])
 	if err != nil {
 		return "", err
 	}
+	_, agg := s.ann[vq.fields[0]].(Agg)
+	q.values, q.grouped = vq.fields, agg || q.groupBy != nil
 	return q.selectSQL(s, col)
 }

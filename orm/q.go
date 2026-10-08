@@ -135,6 +135,11 @@ type builder struct {
 	neg   bool     // under an odd number of Nots
 	many  bool     // names may follow relations holding many rows (Values)
 	ddl   bool     // columns bare, for an index's or a generated column's expression
+	// agg: an aggregate's Filter is being written: a relation holding many
+	// rows that the statement already joins is the same joined row there
+	// (Count("books__id").Filter(books__published) counts published
+	// books), not an EXISTS over any of them.
+	agg bool
 }
 
 // newBuilder is a builder of a statement on m, aliased by its table.
@@ -258,7 +263,7 @@ func (b *builder) joinTo(r *relation, path string, cond Cond) (*builder, error) 
 	if alias == b.joinRoot() {
 		alias += "_"
 	}
-	nb := &builder{d: b.d, m: t, alias: alias, path: path, st: b.st, joins: b.joins, outer: b.outer, neg: b.neg, many: b.many}
+	nb := &builder{d: b.d, m: t, alias: alias, path: path, st: b.st, joins: b.joins, outer: b.outer, neg: b.neg, many: b.many, agg: b.agg}
 	for _, j := range *b.joins {
 		if j.path == path {
 			return nb, nil
@@ -320,6 +325,20 @@ type hop struct {
 	cond Cond
 }
 
+// noField is the error of a name b's model lacks, pointing at the
+// annotation it may have meant: annotations match as they are written
+// (totalPlaced is not total_placed).
+func (b *builder) noField(name string) error {
+	first := strings.SplitN(name, "__", 2)[0]
+	norm := func(s string) string { return strings.ToLower(strings.ReplaceAll(s, "_", "")) }
+	for a := range b.ann {
+		if a != first && norm(a) == norm(first) {
+			return fmt.Errorf("orm: %s has no field %q — the query annotates %q: annotation names match as written", b.m.Name, first, a)
+		}
+	}
+	return fmt.Errorf("orm: %s has no field %q", b.m.Name, name)
+}
+
 // aggregated is whether c names an aggregate annotation, a condition
 // HAVING holds.
 func (b *builder) aggregated(c Cond) bool {
@@ -347,6 +366,16 @@ func (b *builder) expand(parts []string) ([]string, hop) {
 	}
 	rel := strings.Split(f.relation, "__")
 	return append(rel, parts[1:]...), hop{len(rel) - 1, parts[0], f.cond}
+}
+
+// joined is whether the statement already joins the relation r, step i
+// of a name read through hop h.
+func (b *builder) joined(r *relation, i int, h hop) bool {
+	path := strings.TrimPrefix(b.path+"__"+tags.Snake(r.Name), "__")
+	if i == h.at {
+		path = h.name
+	}
+	return slices.ContainsFunc(*b.joins, func(j joinClause) bool { return j.path == path })
 }
 
 // via is the builder of the model r leads to: through h's join when r is
@@ -436,7 +465,7 @@ func (b *builder) refField(name string) (string, *field, error) {
 		}
 		cur = next
 	}
-	return "", nil, fmt.Errorf("orm: %s has no field %q", b.m.Name, name)
+	return "", nil, b.noField(name)
 }
 
 // lookup is the SQL of one Q entry: a field (after any foreign keys) and
@@ -481,7 +510,7 @@ func (b *builder) lookupParts(parts []string, lookup string, v any, key string, 
 		}
 		r, ok := cur.m.relation(part)
 		if !ok {
-			return "", fmt.Errorf("orm: %s has no field %q", cur.m.Name, part)
+			return "", cur.noField(part)
 		}
 		rest := parts[i+1:]
 		if r.one() {
@@ -500,10 +529,22 @@ func (b *builder) lookupParts(parts []string, lookup string, v any, key string, 
 			}
 			continue
 		}
+		if cur.agg && cur.joined(r, i, h) {
+			next, err := cur.via(r, i, h)
+			if err != nil {
+				return "", err
+			}
+			cur = next
+			if len(rest) == 0 {
+				s, err := cur.compare(cur.col(cur.m.PK), lookup, v, key)
+				return cur.nullSafe(s, cur.m.PK, lookup, v), err
+			}
+			continue
+		}
 		h.at -= i + 1
 		return cur.exists(r, rest, lookup, v, key, h)
 	}
-	return "", fmt.Errorf("orm: %s has no field %q", b.m.Name, key)
+	return "", b.noField(key)
 }
 
 // nullSafe keeps a negated lookup true of a NULL column, as Django's
@@ -613,7 +654,7 @@ func elementsFrom(d Dialect, arr, alias string, json, numeric bool) (from, val s
 	switch d.Name() {
 	case "postgres":
 		if json {
-			from, val = "jsonb_array_elements_text("+arr+") AS "+q+"(v)", q+".v"
+			from, val = "jsonb_array_elements_text(("+arr+")::jsonb) AS "+q+"(v)", q+".v"
 		} else {
 			from, val = "unnest(string_to_array("+arr+", ',')) AS "+q+"(v)", "NULLIF(btrim("+q+".v), '')"
 		}

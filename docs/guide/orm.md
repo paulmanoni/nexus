@@ -246,14 +246,38 @@ perTeam, _ := Users.Annotate("n", orm.Count("id")).Values[[]any]("team__name", "
   their order. A NULL is `nil` in a map or a list.
 - **Through rows held by many** (`roles__name`), there is a row per related row, and
   one with `nil` when there is none, as in Django.
-- **Grouping:** listing an annotation that is an aggregate (`orm.Count`, `orm.Sum`, …,
-  `orm.AggOf`) groups the rows by the other names. Order by a grouped name: Postgres
-  and MySQL refuse to order by one that isn't.
-- **HAVING:** a `Filter` naming an aggregate annotation filters the groups, Django's
-  way: `Annotate("n", orm.Count("books__id")).Filter(orm.Q{"n__gt": 0})`. Only a
-  query reading rows takes it; `Count`, `Exists` and writes refuse it.
 - **Distinct:** `orm.Count("books__id").Distinct()` is `COUNT(DISTINCT …)`, for a
   row reached more than once through joins.
+
+### Grouping
+
+Listing an aggregate (`orm.Count`, `orm.Sum`, …, `orm.AggOf`) in `Values` groups the
+rows. Conditions before grouping filter rows (WHERE); conditions on aggregates filter
+the groups (HAVING); only grouped names and aggregates can be ordered by.
+
+```go
+rows, err := Letters.
+    Annotate("placed", orm.FilteredRelation("placements__placed_candidates", orm.Q{"is_placed": 1})).
+    Annotate("total_placed", orm.Count("placed__id").Distinct()).
+    Exclude(orm.Q{"status__in": []int{6}}). // rows: WHERE
+    GroupBy("id").                          // the groups
+    Having(orm.Q{"total_placed__gt": 0}).   // groups: HAVING
+    OrderBy("-total_placed").
+    Values[TaskRow]().All(ctx)
+```
+
+| | |
+| --- | --- |
+| `GroupBy(names…)` | the GROUP BY, as written: fields, relation paths, annotations. Grouping by the primary key lets `Values` read the columns depending on it ungrouped (Postgres and MySQL allow it) — fewer, smaller group keys |
+| no `GroupBy` | the implicit rule, Django's: the groups are every name `Values` lists besides the aggregates |
+| `Having(conds…)` | HAVING, always — refused on a query that isn't grouped |
+| `Filter` on an aggregate | routed to HAVING, Django's way; a `Q` mixing kinds splits per key |
+
+The ORM checks the implicit grouping before the database does, and says what it
+groups by: ordering by a name the grouping folds away, or a HAVING condition on a
+column that isn't grouped, fails with the rule and the fix. `Count`, `Exists` and
+writes read rows, so they refuse aggregate conditions. A name that misses an
+annotation by its spelling (`totalPlaced` for `total_placed`) names the annotation.
 
 ## Writes
 
@@ -519,6 +543,10 @@ letters, _ := Letters.PrefetchRelated("placements").All(ctx)   // slices in the 
   not a membership test per pair.
 - `elements:col,other` joins a related column other than the primary key; a string
   column may hold string keys.
+- **JSON or text** is read from the column: an `orm.JSON` field or a `type:` saying
+  JSON expands as JSON, anything else splits on the commas — decided per names set
+  (a names-set tag may override `type:`), so `orm:"type:jsonb" legacy:"type:varchar(1000)"`
+  serves a table that is text on the old schema and jsonb on the new.
 - **No constraint, no inverse, no `Add`/`Remove`** — the column is the truth: write it.
   A NULL or empty column holds no rows. For new tables prefer a real relation (a link
   table): only it gives the database a foreign key and an indexable join both ways.
