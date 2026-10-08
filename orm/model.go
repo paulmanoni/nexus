@@ -441,7 +441,7 @@ func home[T any]() *Manager[T] {
 	if v, ok := homes.Load(t); ok {
 		return v.(homeEntry).m.(*Manager[T])
 	}
-	v, _ := homes.LoadOrStore(t, homeEntry{m: newManager[T](forConfig{}, madeByObjects), made: true})
+	v, _ := homes.LoadOrStore(t, homeEntry{m: newManager[T](forConfig{}), made: true})
 	return v.(homeEntry).m.(*Manager[T])
 }
 

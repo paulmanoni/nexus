@@ -133,18 +133,30 @@ func (r RawQuerySet[T]) First(ctx context.Context) (T, error) {
 	return zero, nexus.Errf(nexus.NotFound, "%s matching query does not exist", r.m.meta.Name)
 }
 
-// Raw is the rows sql reads on schema s's database, read into R as Values
+// Raw is the rows sql reads on the default database, read into R as Values
 // reads them: a scalar for one column, a struct (a field per column, by
 // orm path tag, name or column), map[string]any keyed by column, or
 // []any. ? marks each argument, ?? is a literal ?.
 //
-//	n, err := orm.Raw[int64](ctx, Legacy, "SELECT COUNT(*) FROM auth_user WHERE is_active = ?", true)
-func Raw[R any](ctx context.Context, s Schema, sql string, args ...any) ([]R, error) {
-	return collectRows(RawIter[R](ctx, s, sql, args...))
+//	n, err := orm.Raw[int64](ctx, "SELECT COUNT(*) FROM users WHERE is_active = ?", true)
+func Raw[R any](ctx context.Context, sql string, args ...any) ([]R, error) {
+	return RawOn[R](ctx, Schema{}, sql, args...)
+}
+
+// RawOn is Raw on schema s's database.
+//
+//	n, err := orm.RawOn[int64](ctx, Legacy, "SELECT COUNT(*) FROM auth_user WHERE is_active = ?", true)
+func RawOn[R any](ctx context.Context, s Schema, sql string, args ...any) ([]R, error) {
+	return collectRows(RawIterOn[R](ctx, s, sql, args...))
 }
 
 // RawIter is Raw one row at a time.
-func RawIter[R any](ctx context.Context, s Schema, sql string, args ...any) iter.Seq2[R, error] {
+func RawIter[R any](ctx context.Context, sql string, args ...any) iter.Seq2[R, error] {
+	return RawIterOn[R](ctx, Schema{}, sql, args...)
+}
+
+// RawIterOn is RawOn one row at a time.
+func RawIterOn[R any](ctx context.Context, s Schema, sql string, args ...any) iter.Seq2[R, error] {
 	return func(yield func(R, error) bool) {
 		var zero R
 		c, err := dbConn(ctx, s.DB, nil)
@@ -173,11 +185,16 @@ func RawIter[R any](ctx context.Context, s Schema, sql string, args ...any) iter
 	}
 }
 
-// Exec runs sql, a write or DDL, on schema s's database, inside ctx's
+// Exec runs sql, a write or DDL, on the default database, inside ctx's
 // transaction when there is one, and says how many rows it changed. A raw
 // write is the database's alone: OnChange hears nothing of it and no
 // mirror repeats it.
-func Exec(ctx context.Context, s Schema, sql string, args ...any) (int64, error) {
+func Exec(ctx context.Context, sql string, args ...any) (int64, error) {
+	return ExecOn(ctx, Schema{}, sql, args...)
+}
+
+// ExecOn is Exec on schema s's database.
+func ExecOn(ctx context.Context, s Schema, sql string, args ...any) (int64, error) {
 	c, err := dbConn(ctx, s.DB, nil)
 	if err != nil {
 		return 0, err

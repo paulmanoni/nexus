@@ -73,7 +73,7 @@ func For[T any](opts ...ForOption) *Manager[T] {
 	for _, o := range opts {
 		o(&c)
 	}
-	m := newManager[T](c, madeByFor)
+	m := newManager[T](c)
 	if c.names == "" {
 		t := reflect.TypeFor[T]()
 		// A For replaces the manager Objects made before it ran (Objects
@@ -85,17 +85,7 @@ func For[T any](opts ...ForOption) *Manager[T] {
 	return m
 }
 
-// madeBy is what made a manager: For, Of, or Objects for a model with no
-// For of its own.
-type madeBy int
-
-const (
-	madeByFor madeBy = iota
-	madeByOf
-	madeByObjects
-)
-
-func newManager[T any](c forConfig, by madeBy) *Manager[T] {
+func newManager[T any](c forConfig) *Manager[T] {
 	m := &Manager[T]{mirror: c.mirror, names: c.names}
 	m.meta, m.err = modelOf(reflect.TypeFor[T](), c.names, c.table)
 	var meta Meta
@@ -104,11 +94,6 @@ func newManager[T any](c forConfig, by madeBy) *Manager[T] {
 	}
 	m.dbName, m.unmanaged = cmp.Or(c.db, meta.DB), c.unmanaged || meta.Unmanaged
 	m.QuerySet = QuerySet[T]{m: m, q: query{m: m.meta}}
-	if by != madeByObjects {
-		d := m.declaration()
-		d.own = by == madeByFor && c.names == ""
-		declare(d)
-	}
 	m.Option = nexus.Invoke(func(app *nexus.App, lc nexus.Lifecycle) error {
 		if m.err != nil {
 			return m.err
@@ -135,7 +120,7 @@ func newManager[T any](c forConfig, by madeBy) *Manager[T] {
 func (m *Manager[T]) option() nexus.Option { return m.Option }
 
 func (m *Manager[T]) declaration() declaredModel {
-	return declaredModel{t: reflect.TypeFor[T](), db: m.dbName, unmanaged: m.unmanaged, tables: m.tables, madeOn: m.madeOn}
+	return declaredModel{model: m.meta == nil || m.meta.state != nil, db: m.dbName, unmanaged: m.unmanaged, tables: m.tables, madeOn: m.madeOn}
 }
 
 // schema is the schema the manager queries, on the app it was last bound
@@ -200,7 +185,7 @@ func Of[T any](s Schema) *Manager[T] {
 		return v.(*Manager[T])
 	}
 	c := forConfig{db: s.DB, names: s.Names, unmanaged: s.Unmanaged}
-	v, _ := schemaManagers.LoadOrStore(k, newManager[T](c, madeByOf))
+	v, _ := schemaManagers.LoadOrStore(k, newManager[T](c))
 	return v.(*Manager[T])
 }
 

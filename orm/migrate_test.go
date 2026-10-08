@@ -46,7 +46,7 @@ func TestMigrateAtBoot(t *testing.T) {
 	if err := (&Visit{Path: "/"}).Save(ctx); err != nil {
 		t.Fatalf("the migrated table: %v", err)
 	}
-	names, err := orm.Raw[string](ctx, orm.Schema{DB: "visits"}, "SELECT name FROM nexus_migrations")
+	names, err := orm.RawOn[string](ctx, orm.Schema{DB: "visits"}, "SELECT name FROM nexus_migrations")
 	if err != nil || !slices.Equal(names, []string{"0001_initial"}) {
 		t.Fatalf("recorded %v, %v", names, err)
 	}
@@ -76,7 +76,7 @@ func library(log *[]string) []m.Migration {
 						return err
 					}
 					// The ORM's queries on ctx run in the migration.
-					n, err := orm.Raw[int64](ctx, orm.Schema{}, "SELECT COUNT(*) FROM authors")
+					n, err := orm.Raw[int64](ctx, "SELECT COUNT(*) FROM authors")
 					*log = append(*log, "forward", strings.Repeat("x", int(n[0])))
 					return err
 				},
@@ -101,10 +101,10 @@ func TestApplyMigrations(t *testing.T) {
 	d, _ := orm.DBFrom(ctx)
 	var log []string
 	migs := library(&log)
-	exec := func(q string) error { _, err := orm.Exec(ctx, orm.Schema{}, q); return err }
+	exec := func(q string) error { _, err := orm.Exec(ctx, q); return err }
 	applied := func() []string {
 		t.Helper()
-		names, err := orm.Raw[string](ctx, orm.Schema{}, "SELECT name FROM nexus_migrations ORDER BY name")
+		names, err := orm.Raw[string](ctx, "SELECT name FROM nexus_migrations ORDER BY name")
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -213,14 +213,14 @@ func TestApplySearchMigration(t *testing.T) {
 	if err := orm.ApplyMigrations(ctx, d, "", migs...); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := orm.Exec(ctx, orm.Schema{}, "INSERT INTO pages (title) VALUES ('go')"); err != nil {
+	if _, err := orm.Exec(ctx, "INSERT INTO pages (title) VALUES ('go')"); err != nil {
 		t.Fatal(err)
 	}
 	// Back to 0001: the extension stays, other tables may need it.
 	if err := orm.ApplyMigrations(ctx, d, "0001", migs...); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := orm.Exec(ctx, orm.Schema{}, "SELECT 1 FROM pages"); err == nil {
+	if _, err := orm.Exec(ctx, "SELECT 1 FROM pages"); err == nil {
 		t.Fatal("pages outlived its migration")
 	}
 }
@@ -242,17 +242,17 @@ func TestApplyVectorMigration(t *testing.T) {
 	if err := orm.ApplyMigrations(ctx, d, "", migs...); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := orm.Exec(ctx, orm.Schema{}, "INSERT INTO items (embedding) VALUES (?), (?)", "[0,1,0]", "[1,0,0]"); err != nil {
+	if _, err := orm.Exec(ctx, "INSERT INTO items (embedding) VALUES (?), (?)", "[0,1,0]", "[1,0,0]"); err != nil {
 		t.Fatal(err)
 	}
-	near, err := orm.Raw[int64](ctx, orm.Schema{}, "SELECT id FROM items ORDER BY embedding <=> ? LIMIT 1", "[0.9,0.1,0]")
+	near, err := orm.Raw[int64](ctx, "SELECT id FROM items ORDER BY embedding <=> ? LIMIT 1", "[0.9,0.1,0]")
 	if err != nil || !slices.Equal(near, []int64{2}) {
 		t.Fatalf("nearest %v, %v", near, err)
 	}
 	if err := orm.ApplyMigrations(ctx, d, "0001", migs...); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := orm.Exec(ctx, orm.Schema{}, "SELECT 1 FROM items"); err == nil {
+	if _, err := orm.Exec(ctx, "SELECT 1 FROM items"); err == nil {
 		t.Fatal("items outlived its migration")
 	}
 }

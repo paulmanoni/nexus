@@ -393,8 +393,8 @@ func columnOf(f *field) schema.Column {
 		c.Nullable, t = true, t.Elem()
 	}
 	c.Kind = kindOf(t)
-	// A nil []byte or Vector is NULL, as the driver sends it.
-	if c.Kind == schema.Bytes || t == vectorType {
+	// A nil []byte, Vector, JSON or CSV is NULL, as the driver sends it.
+	if c.Kind == schema.Bytes || c.Kind == schema.JSON || t == vectorType || t.Implements(csvColType) {
 		c.Nullable = true
 	}
 	if c.PK {
@@ -413,6 +413,8 @@ func kindOf(t reflect.Type) schema.Kind {
 	switch {
 	case t == timeType:
 		return schema.Time
+	case t.Implements(jsonColType):
+		return schema.JSON
 	case reflect.PointerTo(t).Implements(scannerT) || t.Implements(valuerT):
 		return schema.Custom
 	}

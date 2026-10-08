@@ -55,16 +55,41 @@ func (q query) builder(d Dialect) *builder {
 	return b
 }
 
-// whereSQL is the WHERE clause, empty when there is none.
+// whereSQL is the WHERE clause, empty when there is none. A condition on
+// an aggregate is HAVING's, which only a SELECT of rows has.
 func (q query) whereSQL(b *builder) (string, error) {
-	if len(q.where) == 0 {
+	where, having := q.split(b)
+	if len(having) > 0 {
+		return "", fmt.Errorf("orm: a condition on an aggregate filters the rows Values reads, grouped")
+	}
+	return clause(b, " WHERE ", where)
+}
+
+// split is q's conditions: those of the rows (WHERE), and those naming an
+// aggregate annotation (HAVING).
+func (q query) split(b *builder) (where, having []Cond) {
+	if len(b.ann) == 0 {
+		return q.where, nil
+	}
+	for _, c := range q.where {
+		if b.aggregated(c) {
+			having = append(having, c)
+		} else {
+			where = append(where, c)
+		}
+	}
+	return where, having
+}
+
+func clause(b *builder, kw string, conds []Cond) (string, error) {
+	if len(conds) == 0 {
 		return "", nil
 	}
-	s, err := And(q.where...).sql(b)
+	s, err := And(conds...).sql(b)
 	if err != nil || s == "" {
 		return "", err
 	}
-	return " WHERE " + s, nil
+	return kw + s, nil
 }
 
 // ordered is q in the model's Meta Ordering when it sets no order of its
@@ -114,7 +139,13 @@ func (q query) pageSQL(b *builder) string {
 // page: written in that order, so the arguments are; the FROM, with the
 // joins they followed, last.
 func (q query) selectSQL(b *builder, cols string) (string, error) {
-	w, err := q.whereSQL(b)
+	at := len(b.st.args)
+	where, having := q.split(b)
+	w, err := clause(b, " WHERE ", where)
+	if err != nil {
+		return "", err
+	}
+	h, err := clause(b, " HAVING ", having)
 	if err != nil {
 		return "", err
 	}
@@ -122,11 +153,15 @@ func (q query) selectSQL(b *builder, cols string) (string, error) {
 	if err != nil {
 		return "", err
 	}
+	from, err := b.from(at)
+	if err != nil {
+		return "", err
+	}
 	d := ""
 	if q.distinct {
 		d = "DISTINCT "
 	}
-	return "SELECT " + d + cols + " FROM " + b.from() + w + q.group + o + q.pageSQL(b), nil
+	return "SELECT " + d + cols + " FROM " + from + w + q.group + h + o + q.pageSQL(b), nil
 }
 
 type computedField struct {
@@ -343,6 +378,7 @@ func (q query) all(ctx context.Context, c conn, s Schema) ([]reflect.Value, erro
 // (UPDATE and DELETE can't join portably; MySQL also needs the subquery
 // wrapped to read the table it writes).
 func (q query) writeWhere(b *builder) (string, error) {
+	at := len(b.st.args)
 	w, err := q.whereSQL(b)
 	if err != nil || len(*b.joins) == 0 {
 		return w, err
@@ -351,6 +387,10 @@ func (q query) writeWhere(b *builder) (string, error) {
 	if pk == nil {
 		return "", fmt.Errorf("orm: %s has no primary key to write rows found through a relation", q.m.Name)
 	}
-	inner := "SELECT " + b.col(pk) + " AS nexus_pk FROM " + b.from() + w
+	from, err := b.from(at)
+	if err != nil {
+		return "", err
+	}
+	inner := "SELECT " + b.col(pk) + " AS nexus_pk FROM " + from + w
 	return " WHERE " + b.col(pk) + " IN (SELECT nexus_pk FROM (" + inner + ") AS nexus_rows)", nil
 }

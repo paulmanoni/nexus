@@ -92,7 +92,7 @@ func schemas(t *testing.T) []schemaCase {
 			&Person{Email: "juma@x", Name: "Juma Ali", FirstName: "Juma", TeamID: 2})
 		ormtest.Seed(t, c.ctx, orm.Of[PersonProfile](c.s),
 			&PersonProfile{PersonID: 1, FirstName: "Ali"}, &PersonProfile{PersonID: 2, FirstName: "Neema"}, &PersonProfile{PersonID: 3, FirstName: "Juma"})
-		if _, err := orm.Exec(c.ctx, c.s, "INSERT INTO "+c.link+" VALUES (?, ?), (?, ?), (?, ?)", 1, 1, 1, 2, 2, 2); err != nil {
+		if _, err := orm.ExecOn(c.ctx, c.s, "INSERT INTO "+c.link+" VALUES (?, ?), (?, ?), (?, ?)", 1, 1, 1, 2, 2, 2); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -314,7 +314,7 @@ func TestSchemaWrites(t *testing.T) {
 	if err := persons.Save(legacy.ctx, &p); err != nil {
 		t.Fatal(err)
 	}
-	rows, err := orm.Raw[map[string]any](legacy.ctx, legacySchema, "SELECT email_address, full_name, phone, is_active, team_ref FROM auth_user WHERE id = ?", p.ID)
+	rows, err := orm.RawOn[map[string]any](legacy.ctx, legacySchema, "SELECT email_address, full_name, phone, is_active, team_ref FROM auth_user WHERE id = ?", p.ID)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -407,7 +407,7 @@ func TestRaw(t *testing.T) {
 		t.Fatalf("no row: %v", err)
 	}
 
-	emails, err := orm.Raw[string](ctx, legacySchema, "SELECT email_address FROM auth_user WHERE email_address LIKE '%?%' OR is_active = ? ORDER BY id", true)
+	emails, err := orm.RawOn[string](ctx, legacySchema, "SELECT email_address FROM auth_user WHERE email_address LIKE '%?%' OR is_active = ? ORDER BY id", true)
 	if err != nil || !slices.Equal(emails, []string{"ali@x", "neema@x"}) {
 		t.Fatalf("scalars %v, %v", emails, err)
 	}
@@ -415,30 +415,30 @@ func TestRaw(t *testing.T) {
 		Email string `orm:"column:email_address"`
 		Title string
 	}
-	rows, err := orm.Raw[row](ctx, legacySchema, "SELECT u.email_address, g.title FROM auth_user u JOIN auth_user_groups l ON l.user_id = u.id JOIN auth_group g ON g.id = l.group_id ORDER BY u.id, g.title")
+	rows, err := orm.RawOn[row](ctx, legacySchema, "SELECT u.email_address, g.title FROM auth_user u JOIN auth_user_groups l ON l.user_id = u.id JOIN auth_group g ON g.id = l.group_id ORDER BY u.id, g.title")
 	if err != nil || !slices.Equal(rows, []row{{"ali@x", "admin"}, {"ali@x", "editor"}, {"neema@x", "editor"}}) {
 		t.Fatalf("structs %v, %v", rows, err)
 	}
-	lists, err := orm.Raw[[]any](ctx, legacySchema, "SELECT title, id FROM auth_group WHERE id = ?", 3)
+	lists, err := orm.RawOn[[]any](ctx, legacySchema, "SELECT title, id FROM auth_group WHERE id = ?", 3)
 	if err != nil || !reflect.DeepEqual(lists, [][]any{{"viewer", int64(3)}}) {
 		t.Fatalf("lists %v, %v", lists, err)
 	}
 
 	err = orm.Atomic(ctx, func(ctx context.Context) error {
-		n, err := orm.Exec(ctx, legacySchema, "UPDATE auth_user SET is_active = ? WHERE team_ref = ?", false, 1)
+		n, err := orm.ExecOn(ctx, legacySchema, "UPDATE auth_user SET is_active = ? WHERE team_ref = ?", false, 1)
 		if err != nil || n != 2 {
 			t.Fatalf("exec %d, %v", n, err)
 		}
-		left, _ := orm.Raw[int64](ctx, legacySchema, "SELECT COUNT(*) FROM auth_user WHERE is_active")
+		left, _ := orm.RawOn[int64](ctx, legacySchema, "SELECT COUNT(*) FROM auth_user WHERE is_active")
 		if left[0] != 0 {
 			t.Fatalf("the transaction's own write unseen: %v", left)
 		}
 		return errors.New("roll back")
 	})
-	if active, _ := orm.Raw[int64](ctx, legacySchema, "SELECT COUNT(*) FROM auth_user WHERE is_active"); err == nil || active[0] != 2 {
+	if active, _ := orm.RawOn[int64](ctx, legacySchema, "SELECT COUNT(*) FROM auth_user WHERE is_active"); err == nil || active[0] != 2 {
 		t.Fatalf("rolled back: %v, %v", active, err)
 	}
-	if _, err := orm.Exec(ctx, legacySchema, "DELETE FROM auth_user WHERE id = ?"); err == nil {
+	if _, err := orm.ExecOn(ctx, legacySchema, "DELETE FROM auth_user WHERE id = ?"); err == nil {
 		t.Fatal("ran with a ? and no argument")
 	}
 }

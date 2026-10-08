@@ -28,6 +28,7 @@ const (
 	String  Kind = "string"
 	Time    Kind = "time"
 	Bytes   Kind = "bytes"
+	JSON    Kind = "json"
 	Custom  Kind = "custom" // a Scanner/Valuer: TEXT unless typed
 )
 
@@ -268,6 +269,14 @@ func (d Dialect) typ(c Column, keyed bool) string {
 			return "LONGBLOB"
 		}
 		return "BLOB"
+	case JSON:
+		switch d.Name {
+		case "postgres":
+			return "jsonb"
+		case "mysql":
+			return "JSON"
+		}
+		return "TEXT"
 	}
 	return "TEXT"
 }

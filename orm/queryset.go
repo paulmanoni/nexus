@@ -273,7 +273,11 @@ func (qs QuerySet[T]) Count(ctx context.Context) (int64, error) {
 		if err != nil {
 			return 0, err
 		}
-		s = "SELECT COUNT(*) FROM " + b.from() + w
+		from, err := b.from(0)
+		if err != nil {
+			return 0, err
+		}
+		s = "SELECT COUNT(*) FROM " + from + w
 	}
 	var n int64
 	err = scanOne(ctx, c, s, b.args(), &n)
@@ -291,7 +295,11 @@ func (qs QuerySet[T]) Exists(ctx context.Context) (bool, error) {
 	if err != nil {
 		return false, err
 	}
-	rows, err := c.query(ctx, "SELECT 1 FROM "+b.from()+w+" LIMIT 1", b.args())
+	from, err := b.from(0)
+	if err != nil {
+		return false, err
+	}
+	rows, err := c.query(ctx, "SELECT 1 FROM "+from+w+" LIMIT 1", b.args())
 	if err != nil {
 		return false, err
 	}
@@ -756,6 +764,7 @@ type Agg struct {
 	key       string
 	expr      Expr
 	filter    Cond
+	distinct  bool
 }
 
 // AggOf is an aggregate expression under a key of your own, for the
@@ -779,6 +788,13 @@ func (a Agg) Filter(cond Cond) Agg {
 	return a
 }
 
+// Distinct aggregates each distinct value once, Django's distinct=True:
+// COUNT(DISTINCT …), so a row reached twice through joins counts once.
+func (a Agg) Distinct() Agg {
+	a.distinct = true
+	return a
+}
+
 // As names the aggregate's Key.
 func (a Agg) As(key string) Agg {
 	a.key = key
@@ -789,8 +805,8 @@ func (a Agg) As(key string) Agg {
 // listing it groups by the other names.
 func (a Agg) exprSQL(b *builder) (string, error) {
 	if a.expr != nil {
-		if a.filter != nil {
-			return "", fmt.Errorf("orm: AggOf(%q) takes no Filter: put the condition in its expression (orm.Case)", a.key)
+		if a.filter != nil || a.distinct {
+			return "", fmt.Errorf("orm: AggOf(%q) takes no Filter or Distinct: put them in its expression", a.key)
 		}
 		return a.expr.exprSQL(b)
 	}
@@ -798,20 +814,24 @@ func (a Agg) exprSQL(b *builder) (string, error) {
 	if err != nil {
 		return "", err
 	}
+	fn := a.fn + "("
+	if a.distinct {
+		fn += "DISTINCT "
+	}
 	if a.filter == nil {
-		return a.fn + "(" + col + ")", nil
+		return fn + col + ")", nil
 	}
 	neg := b.neg
 	b.neg = false
 	defer func() { b.neg = neg }()
 	cond, err := a.filter.sql(b)
 	if err != nil || cond == "" {
-		return a.fn + "(" + col + ")", err
+		return fn + col + ")", err
 	}
 	if b.d.Name() == "mysql" {
-		return a.fn + "(CASE WHEN " + cond + " THEN " + col + " END)", nil
+		return fn + "CASE WHEN " + cond + " THEN " + col + " END)", nil
 	}
-	return a.fn + "(" + col + ") FILTER (WHERE " + cond + ")", nil
+	return fn + col + ") FILTER (WHERE " + cond + ")", nil
 }
 
 func Count(field string) Agg { return Agg{fn: "COUNT", field: field} }
@@ -862,11 +882,16 @@ func (qs QuerySet[T]) Aggregate(ctx context.Context, aggs ...Agg) (Result, error
 		}
 		exprs[i] = s
 	}
+	at := len(b.st.args)
 	w, err := q.whereSQL(b)
 	if err != nil {
 		return nil, err
 	}
-	rows, err := c.query(ctx, "SELECT "+strings.Join(exprs, ", ")+" FROM "+b.from()+w, b.args())
+	from, err := b.from(at)
+	if err != nil {
+		return nil, err
+	}
+	rows, err := c.query(ctx, "SELECT "+strings.Join(exprs, ", ")+" FROM "+from+w, b.args())
 	if err != nil {
 		return nil, err
 	}

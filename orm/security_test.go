@@ -241,7 +241,7 @@ func TestSecurityRawMarks(t *testing.T) {
 		}
 	}
 	for _, c := range cases {
-		rows, err := orm.Raw[[]any](ctx, orm.Schema{}, c.sql, c.args...)
+		rows, err := orm.Raw[[]any](ctx, c.sql, c.args...)
 		if err != nil || len(rows) != 1 || len(rows[0]) != len(c.want) {
 			t.Errorf("%q: %v %v", c.sql, rows, err)
 			continue

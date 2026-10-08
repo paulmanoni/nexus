@@ -168,7 +168,7 @@ func TestModelSchemaMemory(t *testing.T) {
 	if err := c.Save(ctx); err != nil {
 		t.Fatal(err)
 	}
-	mails, err := orm.Raw[string](ctx, orm.Schema{}, "SELECT mail FROM clients")
+	mails, err := orm.Raw[string](ctx, "SELECT mail FROM clients")
 	if err != nil || !slices.Equal(mails, []string{"new@x"}) {
 		t.Fatalf("legacy table: %v, %v", mails, err)
 	}

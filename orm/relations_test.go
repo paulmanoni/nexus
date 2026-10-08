@@ -2,6 +2,7 @@ package orm_test
 
 import (
 	"context"
+	"reflect"
 	"slices"
 	"strings"
 	"testing"
@@ -205,5 +206,55 @@ func TestPrefetchRelated(t *testing.T) {
 	}
 	if _, err := Authors.PrefetchRelated("nothing").All(ctx); err == nil {
 		t.Fatal("prefetched a relation that isn't there")
+	}
+}
+
+func TestFilteredRelation(t *testing.T) {
+	ctx := relOpen(t) // Ali: 2 books, 1 published; Neema: 1 published; Juma: none
+	published := Authors.Annotate("published", orm.FilteredRelation("books", orm.Q{"published": true}))
+
+	counts, err := published.Annotate("n", orm.Count("published__id")).OrderBy("name").Values[[]any]("name", "n").All(ctx)
+	if err != nil || !reflect.DeepEqual(counts, [][]any{{"Ali", int64(1)}, {"Juma", int64(0)}, {"Neema", int64(1)}}) {
+		t.Fatalf("counts through a filtered relation = %v, %v", counts, err)
+	}
+	// Arguments in the columns, the join, WHERE and HAVING: positional ?
+	// marks need them in the order the SQL names them.
+	got, err := published.
+		Annotate("label", orm.Case(orm.When(orm.Q{"name": "Ali"}, "first")).Else("other")).
+		Annotate("n", orm.Count("published__id").Distinct()).
+		Filter(orm.Q{"name__in": []string{"Ali", "Neema", "Juma"}}, orm.Q{"n__gte": 1}).
+		OrderBy("name").Values[[]any]("name", "label", "n").All(ctx)
+	if err != nil || !reflect.DeepEqual(got, [][]any{{"Ali", "first", int64(1)}, {"Neema", "other", int64(1)}}) {
+		t.Fatalf("HAVING over a filtered relation = %v, %v", got, err)
+	}
+
+	for _, c := range []struct {
+		q    orm.Q
+		want []string
+	}{
+		{orm.Q{"published__title__icontains": "go"}, []string{"Ali", "Neema"}},
+		{orm.Q{"published__title": "Poems"}, nil},
+		{orm.Q{"published__isnull": true}, []string{"Juma"}},
+	} {
+		as, err := published.Filter(c.q).OrderBy("id").All(ctx)
+		if err != nil || !slices.Equal(authorNames(as), c.want) {
+			t.Errorf("%v = %v, %v", c.q, authorNames(as), err)
+		}
+	}
+
+	poets := Books.Annotate("poet", orm.FilteredRelation("author__profile", orm.Q{"bio__icontains": "poet"}))
+	bios, err := poets.OrderBy("id").Values[[]any]("title", "poet__bio").All(ctx)
+	if err != nil || !reflect.DeepEqual(bios, [][]any{{"Go in Practice", "a poet from Dodoma"}, {"Poems", "a poet from Dodoma"}, {"Learning Go", nil}}) {
+		t.Fatalf("a filtered foreign key = %v, %v", bios, err)
+	}
+	if ts, err := poets.Filter(orm.Q{"poet__isnull": false}).OrderBy("id").Values[string]("title").All(ctx); err != nil || !slices.Equal(ts, []string{"Go in Practice", "Poems"}) {
+		t.Fatalf("filtered through a filtered foreign key = %v, %v", ts, err)
+	}
+
+	if _, err := Authors.Annotate("x", orm.FilteredRelation("books", orm.Q{"author__name": "Ali"})).Values[string]("x__title").All(ctx); err == nil || !strings.Contains(err.Error(), "own fields") {
+		t.Fatalf("a condition that joins: %v", err)
+	}
+	if _, err := published.Annotate("n", orm.Count("id")).Filter(orm.Q{"n__gt": 0}).Count(ctx); err == nil {
+		t.Fatal("Count took a condition on an aggregate")
 	}
 }

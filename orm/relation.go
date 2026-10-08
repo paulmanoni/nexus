@@ -15,9 +15,10 @@ import (
 type relKind int
 
 const (
-	relFK  relKind = iota + 1 // this row holds the related row's key
-	relRev                    // the related rows hold this row's key
-	relM2M                    // a table between holds both keys
+	relFK       relKind = iota + 1 // this row holds the related row's key
+	relRev                         // the related rows hold this row's key
+	relM2M                         // a table between holds both keys
+	relElements                    // this row's JSON array or comma-separated column holds their keys
 )
 
 // relation is a field holding related rows: a pointer or struct for a
@@ -130,6 +131,17 @@ func (r *relation) settle(m *model) error {
 		return nil
 	}
 	switch {
+	case t.Elements != "":
+		r.Kind = relElements
+		col, ref, _ := strings.Cut(t.Elements, ",")
+		f, ok := m.field(strings.TrimSpace(col))
+		if !ok {
+			return fmt.Errorf("orm: %s.%s: elements: %s has no column %q", m.Name, r.Name, m.Name, col)
+		}
+		r.local, r.remote = f, strings.TrimSpace(ref)
+		if !r.Slice {
+			return fmt.Errorf("orm: %s.%s holds elements but is not a slice", m.Name, r.Name)
+		}
 	case t.M2M != "":
 		r.Kind = relM2M
 		r.Through = t.M2M
@@ -212,6 +224,16 @@ func (r *relation) resolve() (*model, *field, error) {
 		return nil, nil, fmt.Errorf("orm: %s.%s: %s has no column holding %s's key (tag it orm:\"rel:<column>\")", m.Name, r.Name, t.Name, m.Name)
 	}
 	return t, t.PK, nil
+}
+
+// jsonLocal is whether an elements relation's column holds a JSON array
+// (orm.JSON) rather than comma-separated text.
+func (r *relation) jsonLocal() bool {
+	t := r.local.Type
+	if t.Kind() == reflect.Pointer {
+		t = t.Elem()
+	}
+	return t.Implements(jsonColType)
 }
 
 // one is whether the relation holds one row: a foreign key, or a has-one.

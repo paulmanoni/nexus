@@ -34,9 +34,9 @@ func newMakeMigrationsCmd(stdout, stderr io.Writer) *cobra.Command {
 
 The app is built and run as a tool (its main never runs): it replays the
 migrations its migrations package registers into the schema they leave,
-compares it with the models it declares (types embedding orm.Model, and
-orm.For managers; managed ones, of the database), and writes the operations
-between as <dir>/NNNN_<name>.go, a file of package migrations
+compares it with its models (the types embedding orm.Model; managed ones,
+of the database; an orm.For or orm.Of of a plain struct is never planned),
+and writes the operations between as <dir>/NNNN_<name>.go, a file of package migrations
 (migrations/<db> for a database that isn't the default). Import the package
 in the app so orm.Migrate (and nexus migrate) apply them.
 

@@ -143,6 +143,24 @@ with no field drops it.
   is allocated while scanning). An outer field shadows an embedded one of the same name.
 - **Table:** `orm.For[T](orm.Table("…"))`, else `Meta().Table`, else the model's
   `TableName()`, else the type's name, plural and in snake_case.
+- **JSON columns:** `orm.JSON[T]` holds any T as JSON, Django's `JSONField` — `jsonb`
+  on Postgres, `JSON` on MySQL, `TEXT` on SQLite. Read and write `.V`
+  (`orm.JSONOf(v)` builds one); the field marshals as the value alone, so responses
+  carry it unwrapped. A nil slice, map or pointer is NULL (the column is nullable,
+  like `[]byte`), and `__isnull` finds it.
+
+  ```go
+  type Letter struct {
+      ID       int64
+      Placings orm.JSON[[]int64]
+      Settings orm.JSON[map[string]string]
+  }
+  letter.Placings.V = append(letter.Placings.V, 7)
+  ```
+- **CSV columns:** `orm.CSV[int64]` (any int or string element) holds a list as
+  comma-separated text (`"7,9,11"`), for legacy tables that keep lists in a string:
+  read and write `.V` (`orm.CSVOf(7, 9)`), marshalled as the list, NULL when nil, `""`
+  when empty; reading trims spaces around the commas.
 - **Not columns:** relation fields like `Posts []Post`, unexported fields, and fields
   tagged `orm:"-"`.
 - **Legacy tables:** `orm.For[T](orm.Unmanaged())` (or `Meta().Unmanaged`) marks a table
@@ -229,7 +247,13 @@ perTeam, _ := Users.Annotate("n", orm.Count("id")).Values[[]any]("team__name", "
 - **Through rows held by many** (`roles__name`), there is a row per related row, and
   one with `nil` when there is none, as in Django.
 - **Grouping:** listing an annotation that is an aggregate (`orm.Count`, `orm.Sum`, …,
-  `orm.AggOf`) groups the rows by the other names.
+  `orm.AggOf`) groups the rows by the other names. Order by a grouped name: Postgres
+  and MySQL refuse to order by one that isn't.
+- **HAVING:** a `Filter` naming an aggregate annotation filters the groups, Django's
+  way: `Annotate("n", orm.Count("books__id")).Filter(orm.Q{"n__gt": 0})`. Only a
+  query reading rows takes it; `Count`, `Exists` and writes refuse it.
+- **Distinct:** `orm.Count("books__id").Distinct()` is `COUNT(DISTINCT …)`, for a
+  row reached more than once through joins.
 
 ## Writes
 
@@ -470,6 +494,62 @@ authors, _ = Authors.PrefetchRelated(
 - **`PrefetchRelated`** runs one `IN (…)` query per relation and level, in chunks of
   1,000 keys. A relation with no rows becomes an empty slice, not nil.
 
+### Elements relations (keys inside a column)
+
+A legacy table that keeps related ids *inside* a column — a JSON array
+(`[7, 9]`) or comma-separated text (`"7,9"`) — declares the relation with
+`elements:`, and it behaves as any to-many:
+
+```go
+type Letter struct {
+    ID          int64
+    PlacementID orm.JSON[[]int64]        // or orm.CSV[int64], or a plain string
+    Placements  []Placement `orm:"elements:placement_id"`
+}
+
+Letters.Filter(orm.Q{"placements__status": "ACTIVE"})          // EXISTS, expanded + keyed
+Letters.Annotate("n", orm.Count("placements__id"))             // joins through the elements
+letters, _ := Letters.PrefetchRelated("placements").All(ctx)   // slices in the array's order
+```
+
+- **The SQL expands each row's array once** (`jsonb_array_elements_text` /
+  `JSON_TABLE` / `json_each`; a text column is split on the commas, spaces forgiven)
+  and joins the related key by index — the shape the hand-written lateral join takes,
+  not a membership test per pair.
+- `elements:col,other` joins a related column other than the primary key; a string
+  column may hold string keys.
+- **No constraint, no inverse, no `Add`/`Remove`** — the column is the truth: write it.
+  A NULL or empty column holds no rows. For new tables prefer a real relation (a link
+  table): only it gives the database a foreign key and an indexable join both ways.
+
+### Filtered relations
+
+`orm.FilteredRelation` is a relation limited to the related rows where a condition
+holds, Django's `FilteredRelation`: annotate it under a name, then read and filter
+through that name. The condition names the related model's own fields.
+
+```go
+published := Authors.Annotate("published", orm.FilteredRelation("books", orm.Q{"published": true}))
+
+// LEFT JOIN books AS published ON … AND published.published = ?: authors with none keep a row.
+rows, _ := published.Annotate("n", orm.Count("published__id")).
+    OrderBy("name").Values[[]any]("name", "n").All(ctx)
+
+published.Filter(orm.Q{"published__title__icontains": "go"}) // EXISTS a published book
+published.Filter(orm.Q{"published__isnull": true})           // authors with none
+
+Books.Annotate("poet", orm.FilteredRelation("author__profile", orm.Q{"bio__icontains": "poet"})).
+    Values[[]any]("title", "poet__bio")
+```
+
+- **Reading** (`Values`, aggregates) joins with the condition in the `ON`, so rows
+  without a match stay, with NULLs.
+- **Filtering** through a relation holding many rows asks `EXISTS` one matching, as
+  plain paths do: rows never repeat.
+- **The path** may cross relations (`author__profile`); the condition applies to the
+  last. It can't follow a foreign key of the related model (that would be a join inside
+  the join); a relation holding many rows is fine, as `EXISTS`.
+
 ### Inverses
 
 Every foreign key and many-to-many declared on a model implies its inverse on the
@@ -595,12 +675,13 @@ users, err := orm.Of[User](Legacy).Raw("SELECT * FROM auth_user WHERE tel_no LIK
 u, err := Users.Raw("SELECT * FROM users WHERE email = ?", e).First(ctx) // nexus.NotFound for none
 
 // Any shape, read as Values reads it: a scalar, a struct, map[string]any or []any.
-ids, err := orm.Raw[int64](ctx, orm.Schema{}, "SELECT id FROM users WHERE age > ?", 18)
-rows, err := orm.Raw[map[string]any](ctx, Legacy, "SELECT tel_no, email_address FROM auth_user")
-for row, err := range orm.RawIter[[]any](ctx, Legacy, "SELECT …") { … }
+// Raw, RawIter and Exec run on the default database; RawOn, RawIterOn and ExecOn on a schema's.
+ids, err := orm.Raw[int64](ctx, "SELECT id FROM users WHERE age > ?", 18)
+rows, err := orm.RawOn[map[string]any](ctx, Legacy, "SELECT tel_no, email_address FROM auth_user")
+for row, err := range orm.RawIterOn[[]any](ctx, Legacy, "SELECT …") { … }
 
 // Writes and DDL.
-changed, err := orm.Exec(ctx, Legacy, "UPDATE auth_user SET is_active = ? WHERE last_login < ?", false, cutoff)
+changed, err := orm.ExecOn(ctx, Legacy, "UPDATE auth_user SET is_active = ? WHERE last_login < ?", false, cutoff)
 ```
 
 - **Placeholders:** `?` marks each argument on every database (written `$1, $2…` for
@@ -847,9 +928,12 @@ func init() {
 
 - **How it plans:** `makemigrations` builds the app with a tool in its main package and
   runs it (main never does). It replays the migrations the app's migrations packages
-  register, compares the result with the models the app declares (types embedding
-  `orm.Model`, and `orm.For` managers; managed ones, of the database), and writes the
-  operations between. `--dry-run` prints the file.
+  register, compares the result with the app's models (the types embedding
+  `orm.Model`; managed ones, of the database), and writes the operations between.
+  `--dry-run` prints the file.
+- **Only models are planned:** an `orm.For` or `orm.Of` of a plain struct is a query
+  over a table someone else owns, never a table to make. A model's database and
+  `Unmanaged` come from its `Meta()`, or from its own `orm.For[T](…)` (no `Names`).
 - **Renames:** a column (or table) gone where one alike appeared may have been renamed.
   On a terminal it asks, `Did you rename users.mail to users.email? [y/N]`; yes writes
   `m.RenameField`, keeping the data. `--noinput`, or no terminal, writes a removal and
@@ -862,7 +946,7 @@ func init() {
   database's dialect, forwards and back.
 - **Fields:** `m.BigAuto()`, `m.Auto()`, `m.BigInt()`, `m.Int()`, `m.Float()`,
   `m.Bool()`, `m.Text()`, `m.Varchar(n)`, `m.Time()`, `m.Bytes()`, `m.Custom()`,
-  `m.Vector(n)`, `m.TSVector()`, with `.Null()`, `.PK()`, `.Unique()`, `.Index()`,
+  `m.Vector(n)`, `m.TSVector()`, `m.JSON()`, with `.Null()`, `.PK()`, `.Unique()`, `.Index()`,
   `.Type(sql)`, `.Default(v)`, `.Generated(m.Dialects{…})`, `.FK(table, column)` and
   `.OnDelete(m.Cascade)`. Declared indexes and generated expressions are SQL per
   dialect (`m.Dialects{Postgres: …, MySQL: …, SQLite: …}`): a dialect with none for an

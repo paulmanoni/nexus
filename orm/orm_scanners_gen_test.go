@@ -9,6 +9,11 @@ func init() {
 	RegisterScanner[gadget]([]string{"id", "name"}, func() RowScanner[gadget] { return new(ormScangadget) })
 	Register[ledger]()
 	RegisterScanner[ledger]([]string{"id", "amount"}, func() RowScanner[ledger] { return new(ormScanledger) })
+	RegisterScanner[plainRow]([]string{"id", "name"}, func() RowScanner[plainRow] { return new(ormScanplainRow) })
+	Register[planChunk]()
+	RegisterScanner[planChunk]([]string{"id", "embedding"}, func() RowScanner[planChunk] { return new(ormScanplanChunk) })
+	Register[planDoc]()
+	RegisterScanner[planDoc]([]string{"id", "title", "body", "search"}, func() RowScanner[planDoc] { return new(ormScanplanDoc) })
 	Register[routed]()
 	RegisterScanner[routed]([]string{"id"}, func() RowScanner[routed] { return new(ormScanrouted) })
 	RegisterScanner[sqlUser]([]string{"id", "name", "age"}, func() RowScanner[sqlUser] { return new(ormScansqlUser) })
@@ -130,6 +135,137 @@ func (s ledgerFieldSet) Under(prefix string) ledgerFieldSet {
 		p:      prefix,
 		ID:     FieldAt[int64](prefix + "id"),
 		Amount: FieldAt[int64](prefix + "amount"),
+	}
+}
+
+type ormScanplainRow struct {
+	c0   Cell[int64]
+	c1   Cell[string]
+	dest []any
+}
+
+func (s *ormScanplainRow) Dest() []any {
+	if s.dest == nil {
+		s.dest = []any{&s.c0, &s.c1}
+	}
+	return s.dest
+}
+
+func (s *ormScanplainRow) Bind(r *plainRow) {
+	s.c0.P = &r.ID
+	s.c1.P = &r.Name
+}
+
+func (s *ormScanplainRow) Values(r *plainRow, dst []any) []any {
+	return append(dst[:0], r.ID, r.Name)
+}
+
+// plainRowFields is plainRow's fields as typed lookups.
+var plainRowFields = plainRowFieldSet{}.Under("")
+
+// plainRowFieldSet is plainRow's fields as typed lookups: plainRowFields from the model itself, Under from a model related to it.
+type plainRowFieldSet struct {
+	p    string
+	ID   Field[int64]
+	Name TextField[string]
+}
+
+// Under is the set through a relation path, such as "author__".
+func (s plainRowFieldSet) Under(prefix string) plainRowFieldSet {
+	return plainRowFieldSet{
+		p:    prefix,
+		ID:   FieldAt[int64](prefix + "id"),
+		Name: TextFieldAt[string](prefix + "name"),
+	}
+}
+
+type ormScanplanChunk struct {
+	c0   Cell[int64]
+	c1   Cell[Vector]
+	dest []any
+}
+
+func (s *ormScanplanChunk) Dest() []any {
+	if s.dest == nil {
+		s.dest = []any{&s.c0, &s.c1}
+	}
+	return s.dest
+}
+
+func (s *ormScanplanChunk) Bind(r *planChunk) {
+	s.c0.P = &r.ID
+	s.c1.P = &r.Embedding
+}
+
+func (s *ormScanplanChunk) Values(r *planChunk, dst []any) []any {
+	return append(dst[:0], r.ID, r.Embedding)
+}
+
+// planChunkFields is planChunk's fields as typed lookups.
+var planChunkFields = planChunkFieldSet{}.Under("")
+
+// planChunkFieldSet is planChunk's fields as typed lookups: planChunkFields from the model itself, Under from a model related to it.
+type planChunkFieldSet struct {
+	p         string
+	ID        Field[int64]
+	Embedding Field[Vector]
+}
+
+// Under is the set through a relation path, such as "author__".
+func (s planChunkFieldSet) Under(prefix string) planChunkFieldSet {
+	return planChunkFieldSet{
+		p:         prefix,
+		ID:        FieldAt[int64](prefix + "id"),
+		Embedding: FieldAt[Vector](prefix + "embedding"),
+	}
+}
+
+type ormScanplanDoc struct {
+	c0   Cell[int64]
+	c1   Cell[string]
+	c2   Cell[string]
+	c3   Cell[string]
+	dest []any
+}
+
+func (s *ormScanplanDoc) Dest() []any {
+	if s.dest == nil {
+		s.dest = []any{&s.c0, &s.c1, &s.c2, &s.c3}
+	}
+	return s.dest
+}
+
+func (s *ormScanplanDoc) Bind(r *planDoc) {
+	s.c0.P = &r.ID
+	s.c1.P = &r.Title
+	s.c2.P = &r.Body
+	s.c3.P = (*string)(&r.Search)
+}
+
+func (s *ormScanplanDoc) Values(r *planDoc, dst []any) []any {
+	return append(dst[:0], r.ID, r.Title, r.Body, r.Search)
+}
+
+// planDocFields is planDoc's fields as typed lookups.
+var planDocFields = planDocFieldSet{}.Under("")
+
+// planDocFieldSet is planDoc's fields as typed lookups: planDocFields from the model itself, Under from a model related to it.
+type planDocFieldSet struct {
+	p      string
+	ID     Field[int64]
+	Title  TextField[string]
+	Body   TextField[string]
+	Search TextField[TSVector]
+}
+
+// Under is the set through a relation path, such as "author__".
+func (s planDocFieldSet) Under(prefix string) planDocFieldSet {
+	return planDocFieldSet{
+		p:      prefix,
+		ID:     FieldAt[int64](prefix + "id"),
+		Title:  TextFieldAt[string](prefix + "title"),
+		Body:   TextFieldAt[string](prefix + "body"),
+		Search: TextFieldAt[TSVector](prefix + "search"),
 	}
 }
 

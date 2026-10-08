@@ -875,7 +875,7 @@ func BenchmarkRaw(b *testing.B) {
 	b.Run("struct", func(b *testing.B) {
 		e := benchOpen(b, 1000)
 		for b.Loop() {
-			out, err := orm.Raw[benchUserRow](e.ctx, orm.Schema{}, "SELECT id, name, age FROM bench_users WHERE age >= ? ORDER BY id LIMIT 100", 20)
+			out, err := orm.Raw[benchUserRow](e.ctx, "SELECT id, name, age FROM bench_users WHERE age >= ? ORDER BY id LIMIT 100", 20)
 			if err != nil || len(out) != 100 {
 				b.Fatal(len(out), err)
 			}
@@ -1072,9 +1072,9 @@ func benchApp(b *testing.B, asDefault bool) context.Context {
 	ctx := context.Background()
 	s, _ := mgr.GetDB().DB()
 	setup := orm.WithDB(ctx, orm.Open(s, string(cfg.Driver)))
-	_, _ = orm.Exec(setup, orm.Schema{}, "DROP TABLE IF EXISTS bench_users")
+	_, _ = orm.Exec(setup, "DROP TABLE IF EXISTS bench_users")
 	check(b, orm.CreateTables(setup, BenchUsers))
-	b.Cleanup(func() { _, _ = orm.Exec(setup, orm.Schema{}, "DROP TABLE IF EXISTS bench_users") })
+	b.Cleanup(func() { _, _ = orm.Exec(setup, "DROP TABLE IF EXISTS bench_users") })
 	batch := make([]*benchUser, 1000)
 	for i := range batch {
 		batch[i] = &benchUser{Name: fmt.Sprint("user", i), Email: fmt.Sprint("u", i), Age: 18 + i%50}

@@ -6,6 +6,37 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [2.31.0] - 2026-10-08
+
+### Added
+
+- **`orm.FilteredRelation(relation, cond)`**, Django's: annotate a relation limited to the
+  related rows where cond holds, then read and filter through its name. Reading joins with
+  the condition in the `ON` (rows without a match stay); filtering through a relation
+  holding many rows asks `EXISTS` one matching.
+- **HAVING:** a `Filter` naming an aggregate annotation filters `Values`' groups.
+- **`orm.JSON[T]`**, Django's `JSONField`: a column holding any T as JSON (`jsonb` |
+  `JSON` | `TEXT`), read and written as `.V`, marshalled unwrapped, NULL when nil;
+  `m.JSON()` in migrations.
+- **`Agg.Distinct()`**: `COUNT(DISTINCT …)` and the other aggregates over distinct values.
+- **Elements relations.** `orm:"elements:placement_id"` declares a to-many whose keys live
+  inside a column — a JSON array or comma-separated text: filtering, aggregates,
+  `FilteredRelation` and `PrefetchRelated` (in the array's order) all work; the SQL expands
+  each row's array once and joins the related key by index.
+- **`orm.CSV[E]`**: a list held as comma-separated text ("7,9,11"), read and written as
+  `.V`, marshalled as the list — the legacy sibling of `orm.JSON`.
+
+### Changed
+
+- **`orm.Raw`, `orm.RawIter` and `orm.Exec` run on the default database** and take no
+  schema: `orm.Raw[R](ctx, sql, args…)`. `orm.RawOn`, `orm.RawIterOn` and `orm.ExecOn`
+  take one, as the old functions did.
+- **`nexus makemigrations` plans `orm.Model` types only.** An `orm.For` or `orm.Of` of a
+  plain struct is a query over a table, so it no longer becomes a migration (or collides
+  with another schema's mapping of the same table).
+
+The ORM entries ship as `orm/v0.6.0`.
+
 ## [2.30.0] - 2026-10-08
 
 The ORM entries ship as `orm/v0.5.2`.

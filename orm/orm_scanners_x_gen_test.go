@@ -18,7 +18,9 @@ func init() {
 	orm.RegisterScanner[Doc]([]string{"id", "title", "body", "search"}, func() orm.RowScanner[Doc] { return new(ormScanDoc) })
 	orm.Register[Group]()
 	orm.RegisterScanner[Group]([]string{"id", "name"}, func() orm.RowScanner[Group] { return new(ormScanGroup) })
+	orm.RegisterScanner[Letter]([]string{"id", "ref", "placings", "settings"}, func() orm.RowScanner[Letter] { return new(ormScanLetter) })
 	orm.RegisterScanner[Member]([]string{"group_id", "user_id"}, func() orm.RowScanner[Member] { return new(ormScanMember) })
+	orm.RegisterScanner[Memo]([]string{"id", "refs", "tags", "codes"}, func() orm.RowScanner[Memo] { return new(ormScanMemo) })
 	orm.RegisterScanner[Note]([]string{"id", "title", "body", "search"}, func() orm.RowScanner[Note] { return new(ormScanNote) })
 	orm.Register[Order]()
 	orm.RegisterScanner[Order]([]string{"id", "customer_id", "total"}, func() orm.RowScanner[Order] { return new(ormScanOrder) })
@@ -27,6 +29,7 @@ func init() {
 	orm.RegisterScanner[SecItem]([]string{"id", "name", "age", "parent_id"}, func() orm.RowScanner[SecItem] { return new(ormScanSecItem) })
 	orm.RegisterScanner[SecRef]([]string{"id", "ref"}, func() orm.RowScanner[SecRef] { return new(ormScanSecRef) })
 	orm.RegisterScanner[Settings]([]string{"id", "account_id", "theme"}, func() orm.RowScanner[Settings] { return new(ormScanSettings) })
+	orm.RegisterScanner[Spot]([]string{"id", "kind"}, func() orm.RowScanner[Spot] { return new(ormScanSpot) })
 	orm.RegisterScanner[Tag]([]string{"id", "name"}, func() orm.RowScanner[Tag] { return new(ormScanTag) })
 	orm.RegisterScanner[User]([]string{"id", "created_at", "updated_at", "name", "email", "age", "bio", "active"}, func() orm.RowScanner[User] { return new(ormScanUser) })
 	orm.RegisterScanner[UserStats]([]string{"id", "name"}, func() orm.RowScanner[UserStats] { return new(ormScanUserStats) })
@@ -441,6 +444,60 @@ func (s GroupFieldSet) Under(prefix string) GroupFieldSet {
 	}
 }
 
+type ormScanLetter struct {
+	c0   orm.Cell[int64]
+	c1   orm.Cell[string]
+	c2   orm.Cell[orm.JSON[[]int64]]
+	c3   orm.Cell[orm.JSON[map[string]string]]
+	dest []any
+}
+
+func (s *ormScanLetter) Dest() []any {
+	if s.dest == nil {
+		s.dest = []any{&s.c0, &s.c1, &s.c2, &s.c3}
+	}
+	return s.dest
+}
+
+func (s *ormScanLetter) Bind(r *Letter) {
+	s.c0.P = &r.ID
+	s.c1.P = &r.Ref
+	s.c2.P = &r.Placings
+	s.c3.P = &r.Settings
+}
+
+func (s *ormScanLetter) Values(r *Letter, dst []any) []any {
+	return append(dst[:0], r.ID, r.Ref, r.Placings, r.Settings)
+}
+
+// LetterFields is Letter's fields as typed lookups.
+var LetterFields = LetterFieldSet{}.Under("")
+
+// LetterFieldSet is Letter's fields as typed lookups: LetterFields from the model itself, Under from a model related to it.
+type LetterFieldSet struct {
+	p        string
+	ID       orm.Field[int64]
+	Ref      orm.TextField[string]
+	Placings orm.Field[orm.JSON[[]int64]]
+	Settings orm.Field[orm.JSON[map[string]string]]
+}
+
+// Under is the set through a relation path, such as "author__".
+func (s LetterFieldSet) Under(prefix string) LetterFieldSet {
+	return LetterFieldSet{
+		p:        prefix,
+		ID:       orm.FieldAt[int64](prefix + "id"),
+		Ref:      orm.TextFieldAt[string](prefix + "ref"),
+		Placings: orm.FieldAt[orm.JSON[[]int64]](prefix + "placings"),
+		Settings: orm.FieldAt[orm.JSON[map[string]string]](prefix + "settings"),
+	}
+}
+
+// Spots is the fields of Letter's Spots, for lookups across the relation.
+func (s LetterFieldSet) Spots() SpotFieldSet {
+	return SpotFieldSet{}.Under(s.p + "spots__")
+}
+
 type ormScanMember struct {
 	c0   orm.Cell[int64]
 	c1   orm.Cell[int64]
@@ -480,6 +537,65 @@ func (s MemberFieldSet) Under(prefix string) MemberFieldSet {
 		GroupID: orm.FieldAt[int64](prefix + "group_id"),
 		UserID:  orm.FieldAt[int64](prefix + "user_id"),
 	}
+}
+
+type ormScanMemo struct {
+	c0   orm.Cell[int64]
+	c1   orm.Cell[orm.CSV[int64]]
+	c2   orm.Cell[orm.CSV[string]]
+	c3   orm.Cell[orm.JSON[[]string]]
+	dest []any
+}
+
+func (s *ormScanMemo) Dest() []any {
+	if s.dest == nil {
+		s.dest = []any{&s.c0, &s.c1, &s.c2, &s.c3}
+	}
+	return s.dest
+}
+
+func (s *ormScanMemo) Bind(r *Memo) {
+	s.c0.P = &r.ID
+	s.c1.P = &r.Refs
+	s.c2.P = &r.Tags
+	s.c3.P = &r.Codes
+}
+
+func (s *ormScanMemo) Values(r *Memo, dst []any) []any {
+	return append(dst[:0], r.ID, r.Refs, r.Tags, r.Codes)
+}
+
+// MemoFields is Memo's fields as typed lookups.
+var MemoFields = MemoFieldSet{}.Under("")
+
+// MemoFieldSet is Memo's fields as typed lookups: MemoFields from the model itself, Under from a model related to it.
+type MemoFieldSet struct {
+	p     string
+	ID    orm.Field[int64]
+	Refs  orm.Field[orm.CSV[int64]]
+	Tags  orm.Field[orm.CSV[string]]
+	Codes orm.Field[orm.JSON[[]string]]
+}
+
+// Under is the set through a relation path, such as "author__".
+func (s MemoFieldSet) Under(prefix string) MemoFieldSet {
+	return MemoFieldSet{
+		p:     prefix,
+		ID:    orm.FieldAt[int64](prefix + "id"),
+		Refs:  orm.FieldAt[orm.CSV[int64]](prefix + "refs"),
+		Tags:  orm.FieldAt[orm.CSV[string]](prefix + "tags"),
+		Codes: orm.FieldAt[orm.JSON[[]string]](prefix + "codes"),
+	}
+}
+
+// Spots is the fields of Memo's Spots, for lookups across the relation.
+func (s MemoFieldSet) Spots() SpotFieldSet {
+	return SpotFieldSet{}.Under(s.p + "spots__")
+}
+
+// Coded is the fields of Memo's Coded, for lookups across the relation.
+func (s MemoFieldSet) Coded() SpotFieldSet {
+	return SpotFieldSet{}.Under(s.p + "coded__")
 }
 
 type ormScanNote struct {
@@ -804,6 +920,47 @@ func (s SettingsFieldSet) Under(prefix string) SettingsFieldSet {
 		ID:        orm.FieldAt[int64](prefix + "id"),
 		AccountID: orm.FieldAt[int64](prefix + "account_id"),
 		Theme:     orm.TextFieldAt[string](prefix + "theme"),
+	}
+}
+
+type ormScanSpot struct {
+	c0   orm.Cell[int64]
+	c1   orm.Cell[string]
+	dest []any
+}
+
+func (s *ormScanSpot) Dest() []any {
+	if s.dest == nil {
+		s.dest = []any{&s.c0, &s.c1}
+	}
+	return s.dest
+}
+
+func (s *ormScanSpot) Bind(r *Spot) {
+	s.c0.P = &r.ID
+	s.c1.P = &r.Kind
+}
+
+func (s *ormScanSpot) Values(r *Spot, dst []any) []any {
+	return append(dst[:0], r.ID, r.Kind)
+}
+
+// SpotFields is Spot's fields as typed lookups.
+var SpotFields = SpotFieldSet{}.Under("")
+
+// SpotFieldSet is Spot's fields as typed lookups: SpotFields from the model itself, Under from a model related to it.
+type SpotFieldSet struct {
+	p    string
+	ID   orm.Field[int64]
+	Kind orm.TextField[string]
+}
+
+// Under is the set through a relation path, such as "author__".
+func (s SpotFieldSet) Under(prefix string) SpotFieldSet {
+	return SpotFieldSet{
+		p:    prefix,
+		ID:   orm.FieldAt[int64](prefix + "id"),
+		Kind: orm.TextFieldAt[string](prefix + "kind"),
 	}
 }
 

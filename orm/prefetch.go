@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"reflect"
 	"slices"
+	"strconv"
 	"strings"
 )
 
@@ -96,6 +97,9 @@ func fetchRelated(ctx context.Context, c conn, m *model, s Schema, r *relation, 
 		base.limit, base.offset = 0, 0
 	}
 	base.prefetch = append(base.prefetch, nested...)
+	if r.Kind == relElements {
+		return fetchElements(ctx, c, s, r, parents, base)
+	}
 	byKey, err := related(ctx, c, s, r, base, distinctKeys(parents, r.local))
 	if err != nil {
 		return err
@@ -110,6 +114,119 @@ func fetchRelated(ctx context.Context, c conn, m *model, s Schema, r *relation, 
 		}
 	}
 	return nil
+}
+
+// fetchElements loads an elements relation: the keys inside each
+// parent's array read in Go, the rows fetched by them, each parent's
+// slice set in its array's order.
+func fetchElements(ctx context.Context, c conn, s Schema, r *relation, parents []reflect.Value, base query) error {
+	elems := make([][]any, len(parents))
+	var keys []any
+	seen := map[any]bool{}
+	for i, p := range parents {
+		es, err := r.elementKeys(p)
+		if err != nil {
+			return err
+		}
+		elems[i] = es
+		for _, e := range es {
+			if !seen[e] {
+				seen[e] = true
+				keys = append(keys, e)
+			}
+		}
+	}
+	byKey, err := related(ctx, c, s, r, base, keys)
+	if err != nil {
+		return err
+	}
+	for i, p := range parents {
+		var got []reflect.Value
+		for _, e := range elems[i] {
+			got = append(got, byKey[e]...)
+		}
+		setMany(fieldOf(p, r.Index), r, got)
+	}
+	return nil
+}
+
+// elementKeys is the related keys inside a parent's array column:
+// an orm.JSON or orm.CSV value's list, or comma-separated text.
+func (r *relation) elementKeys(parent reflect.Value) ([]any, error) {
+	_, rf, err := r.ends()
+	if err != nil {
+		return nil, err
+	}
+	numeric := intKind(rf.Type)
+	v := peek(parent, r.local.Index, r.local.Type)
+	for v.Kind() == reflect.Pointer {
+		if v.IsNil() {
+			return nil, nil
+		}
+		v = v.Elem()
+	}
+	if v.Kind() == reflect.Struct {
+		f := v.FieldByName("V")
+		if !f.IsValid() {
+			return nil, fmt.Errorf("orm: %s.%s: elements: %s is no list", r.owner.Name, r.Name, r.local.Name)
+		}
+		v = f
+	}
+	one := func(e reflect.Value) (any, error) {
+		for e.Kind() == reflect.Pointer || e.Kind() == reflect.Interface {
+			if e.IsNil() {
+				return nil, nil
+			}
+			e = e.Elem()
+		}
+		switch {
+		case intKind(e.Type()):
+			if e.CanInt() {
+				return e.Int(), nil
+			}
+			return int64(e.Uint()), nil
+		case e.Kind() == reflect.Float64 && numeric: // a JSON[[]any] number
+			return int64(e.Float()), nil
+		case e.Kind() == reflect.String && numeric:
+			n, err := strconv.ParseInt(strings.TrimSpace(e.String()), 10, 64)
+			if err != nil {
+				return nil, fmt.Errorf("orm: %s.%s holds %q, not a key of %s", r.owner.Name, r.local.Name, e.String(), r.Target.Name())
+			}
+			return n, nil
+		case e.Kind() == reflect.String:
+			return e.String(), nil
+		}
+		return nil, fmt.Errorf("orm: %s.%s: elements of %s can't be keys", r.owner.Name, r.local.Name, e.Type())
+	}
+	switch v.Kind() {
+	case reflect.String:
+		var out []any
+		for part := range strings.SplitSeq(v.String(), ",") {
+			part = strings.TrimSpace(part)
+			if part == "" {
+				continue
+			}
+			k, err := one(reflect.ValueOf(part))
+			if err != nil {
+				return nil, err
+			}
+			out = append(out, k)
+		}
+		return out, nil
+	case reflect.Slice, reflect.Array:
+		out := make([]any, 0, v.Len())
+		for i := range v.Len() {
+			k, err := one(v.Index(i))
+			if err != nil {
+				return nil, err
+			}
+			if k != nil {
+				out = append(out, k)
+			}
+		}
+		return out, nil
+	}
+	return nil, fmt.Errorf("orm: %s.%s: elements: %s holds %s, not a list or comma-separated text", r.owner.Name, r.Name, r.local.Name, v.Type())
 }
 
 // related is a relation's rows (pointers, loaded from schema s), read by

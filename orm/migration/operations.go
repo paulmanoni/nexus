@@ -29,6 +29,7 @@ func Time() Field            { return Field{schema.Column{Kind: schema.Time}} }
 func Bytes() Field           { return Field{schema.Column{Kind: schema.Bytes}} }
 func Custom() Field          { return Field{schema.Column{Kind: schema.Custom}} } // a Scanner/Valuer's: TEXT unless Type says
 func TSVector() Field        { return Field{schema.Column{Kind: schema.String, TSVector: true}} }
+func JSON() Field            { return Field{schema.Column{Kind: schema.JSON, Nullable: true}} } // jsonb | JSON | TEXT
 
 // Vector is a pgvector column of dims dimensions (0: any).
 func Vector(dims int) Field {

@@ -10,7 +10,6 @@ import (
 	"fmt"
 	"io"
 	"os"
-	"reflect"
 	"regexp"
 	"slices"
 	"strings"
@@ -25,18 +24,15 @@ import (
 	"github.com/paulmanoni/nexus/orm/migration"
 )
 
-// declared is every manager orm.For and orm.Of made and every extension
-// CreateExtension declared, for the migration autodetector: the models a
-// program links are the models of its schema.
+// declared is every extension CreateExtension declared, for the
+// migration autodetector.
 var declared struct {
 	mu   sync.Mutex
-	list []declaredModel
 	exts []extension
 }
 
 type declaredModel struct {
-	t         reflect.Type
-	own       bool // the model's own manager: a For without Names
+	model     bool // T embeds orm.Model
 	db        string
 	unmanaged bool
 	tables    func() ([]schema.Table, error)
@@ -105,29 +101,17 @@ func missingExtensions(ctx context.Context, d *DB, names []string) error {
 	return errors.Join(append(errs, rows.Err())...)
 }
 
-func declare(d declaredModel) {
-	declared.mu.Lock()
-	declared.list = append(declared.list, d)
-	declared.mu.Unlock()
-}
-
-// plannedModels is the managers the autodetector reads: every For and Of
-// the program made, and the own manager of each registered model with no
-// For of its own.
+// plannedModels is the models the autodetector reads: the types embedding
+// orm.Model the program registers, each by its own manager. orm.For and
+// orm.Of managers of other types are queries over tables, not models.
 func plannedModels() []declaredModel {
-	declared.mu.Lock()
-	list := slices.Clone(declared.list)
-	declared.mu.Unlock()
-	own := map[reflect.Type]bool{}
-	for _, d := range list {
-		own[d.t] = own[d.t] || d.own
-	}
+	var out []declaredModel
 	for _, m := range registered() {
-		if d := m.declaration(); !own[d.t] {
-			list = append(list, d)
+		if d := m.declaration(); d.model {
+			out = append(out, d)
 		}
 	}
-	return list
+	return out
 }
 
 // declaredState is the schema the program's managed models of the

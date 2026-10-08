@@ -27,7 +27,11 @@ type Tags struct {
 	// JoinForeignKey and JoinReferences its columns for this row's key and
 	// the related row's. Related names the relation's inverse on the
 	// related model (orm:"related:members").
-	FK, Rel, M2M                   string
+	FK, Rel, M2M string
+	// Elements names the owner's JSON-array or comma-separated column
+	// holding the related rows' keys (orm:"elements:placement_id[,col]",
+	// col the related column, its primary key otherwise).
+	Elements                       string
 	JoinForeignKey, JoinReferences string
 	Related                        string
 	// Path is a lookup path through relations the field is read at
@@ -96,6 +100,8 @@ func Parse(name string, tag reflect.StructTag, isTime bool) Tags {
 				t.Rel = val
 			case "m2m":
 				t.m2m(val)
+			case "elements":
+				t.Elements = val
 			case "related":
 				t.Related = val
 			case "prefix":
@@ -217,6 +223,8 @@ func (t Tags) Under(v string) Tags {
 				t.References = val
 			case "many2many", "m2m":
 				t.m2m(val)
+			case "elements":
+				t.Elements = val
 			case "joinforeignkey":
 				t.JoinForeignKey = val
 			case "joinreferences":

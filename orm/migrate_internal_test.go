@@ -101,10 +101,39 @@ func TestMigrateDatabases(t *testing.T) {
 	}
 }
 
-// TestSearchPlan plans the search models (search_test.go) from nothing:
-// their extensions, generated column, vector and indexes, and nothing
-// once replayed.
+type planDoc struct {
+	Model[planDoc]
+	ID     int64
+	Title  string
+	Body   string
+	Search TSVector `orm:"generated"`
+}
+
+func (planDoc) Meta() Meta { return Meta{DB: "search", Table: "docs"} }
+
+func (planDoc) Generated() map[string]Expr {
+	return map[string]Expr{"Search": SearchVector("title").Weight("A").Add(SearchVector("body").Weight("B")).Config("english")}
+}
+
+func (planDoc) Indexes() []Index { return []Index{GinIndex("search"), GinIndex("title").Trigram()} }
+
+type planChunk struct {
+	Model[planChunk]
+	ID        int64
+	Embedding Vector `orm:"vector:3"`
+}
+
+func (planChunk) Meta() Meta { return Meta{DB: "vectors", Table: "chunks"} }
+
+func (planChunk) Indexes() []Index { return []Index{HnswIndex("embedding").Ops(Cosine)} }
+
+// TestSearchPlan plans search models from nothing: their extensions
+// (search_test.go declares them), generated column, vector and indexes,
+// and nothing once replayed.
 func TestSearchPlan(t *testing.T) {
+	isolate(t)
+	Register[planDoc]()
+	Register[planChunk]()
 	to, err := declaredState([]string{"search", "vectors"}, "postgres")
 	if err != nil {
 		t.Fatal(err)
@@ -138,6 +167,21 @@ func TestSearchPlan(t *testing.T) {
 	}
 	if _, err := declaredState([]string{"vectors"}, "mysql"); err == nil || !strings.Contains(err.Error(), "MySQL has no vector") {
 		t.Fatalf("vectors on MySQL: %v", err)
+	}
+}
+
+type plainRow struct {
+	ID   int64
+	Name string
+}
+
+// Only types embedding Model are planned: an orm.For of a plain struct is
+// a query over a table, not a model.
+func TestPlanOnlyModels(t *testing.T) {
+	_ = For[plainRow](On("plain"))
+	to, err := declaredState([]string{"plain"}, "postgres")
+	if err != nil || len(to.Tables()) != 0 {
+		t.Fatalf("planned %v, %v", to.Tables(), err)
 	}
 }
 

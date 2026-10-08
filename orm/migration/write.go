@@ -87,7 +87,7 @@ func (f Field) source() string {
 	default:
 		s = "m." + map[schema.Kind]string{
 			schema.Bool: "Bool", schema.Int: "BigInt", schema.Int32: "Int", schema.Float: "Float", schema.Float32: "Float32",
-			schema.String: "Text", schema.Time: "Time", schema.Bytes: "Bytes", schema.Custom: "Custom",
+			schema.String: "Text", schema.Time: "Time", schema.Bytes: "Bytes", schema.Custom: "Custom", schema.JSON: "JSON",
 		}[c.Kind] + "()"
 	}
 	if c.PK && !c.Auto {

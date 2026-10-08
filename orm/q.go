@@ -111,10 +111,12 @@ type stmt struct {
 	n    int
 }
 
-// join is a LEFT JOIN of a foreign key the statement follows, by its
-// path from the queried model.
+// join is a LEFT JOIN of a relation the statement follows, by its path
+// from the queried model; on adds a FilteredRelation's condition to its
+// ON, written where the FROM is.
 type joinClause struct {
 	path, sql string
+	on        func() (string, error)
 }
 
 // builder writes SQL about one model under one alias: the queried model,
@@ -194,8 +196,9 @@ func (b *builder) bare(f *field) string {
 }
 
 // from is the FROM of b's statement: its table and the joins its
-// conditions, orders and columns follow.
-func (b *builder) from() string {
+// conditions, orders and columns follow. at is where the FROM stands
+// among the statement's arguments (see joinSQL).
+func (b *builder) from(at int) (string, error) {
 	var s string
 	if n := b.m.names(b.d); n != nil {
 		s = n.table
@@ -205,21 +208,52 @@ func (b *builder) from() string {
 	if b.alias != b.m.Table {
 		s += " AS " + b.d.Quote(b.alias)
 	}
+	j, err := b.joinSQL(at)
+	return s + j, err
+}
+
+// joinSQL is b's joins. A FilteredRelation's condition is written now,
+// after the conditions that named it: its arguments are moved to at, the
+// FROM's place among them, which positional ? marks need ($1 marks are
+// numbered as written and need nothing).
+func (b *builder) joinSQL(at int) (string, error) {
+	var s strings.Builder
+	n := len(b.st.args)
 	for _, j := range *b.joins {
-		s += j.sql
+		s.WriteString(j.sql)
+		if j.on == nil {
+			continue
+		}
+		c, err := j.on()
+		if err != nil {
+			return "", err
+		}
+		if c != "" {
+			s.WriteString(" AND (" + c + ")")
+		}
 	}
-	return s
+	if args := b.st.args; len(args) > n && at < n && b.d.Placeholder(1) == "?" {
+		moved := slices.Clone(args[n:])
+		copy(args[at+len(moved):], args[at:n])
+		copy(args[at:], moved)
+	}
+	return s.String(), nil
 }
 
 // follow is the builder of the model a relation leads to, LEFT JOINed
 // once per path: a foreign key's row, or, for Values, rows held by many
 // (through the table between, for a many-to-many).
 func (b *builder) follow(r *relation) (*builder, error) {
+	return b.joinTo(r, strings.TrimPrefix(b.path+"__"+tags.Snake(r.Name), "__"), nil)
+}
+
+// joinTo is follow under path, the related rows limited to those where
+// cond holds when there is one (a FilteredRelation, path its name).
+func (b *builder) joinTo(r *relation, path string, cond Cond) (*builder, error) {
 	t, rf, err := r.ends()
 	if err != nil {
 		return nil, err
 	}
-	path := strings.TrimPrefix(b.path+"__"+tags.Snake(r.Name), "__")
 	alias := path
 	if alias == b.joinRoot() {
 		alias += "_"
@@ -232,13 +266,96 @@ func (b *builder) follow(r *relation) (*builder, error) {
 	}
 	q := b.d.Quote
 	join, on := "", nb.col(rf)+" = "+b.col(r.local)
+	if r.Kind == relElements {
+		through, tval := elementsFrom(b.d, b.col(r.local), alias+"_through", r.jsonLocal(), intKind(rf.Type))
+		join = " LEFT JOIN " + through + " ON TRUE"
+		on = nb.col(rf) + " = " + tval
+	}
 	if r.Kind == relM2M {
 		through := q(alias + "_through")
 		join = " LEFT JOIN " + q(r.Through) + " AS " + through + " ON " + through + "." + q(r.ThroughLocal) + " = " + b.col(r.local)
 		on = nb.col(rf) + " = " + through + "." + q(r.ThroughRemote)
 	}
-	*b.joins = append(*b.joins, joinClause{path: path, sql: join + " LEFT JOIN " + q(t.Table) + " AS " + q(alias) + " ON " + on})
+	j := joinClause{path: path, sql: join + " LEFT JOIN " + q(t.Table) + " AS " + q(alias) + " ON " + on}
+	if cond != nil {
+		sub := *nb
+		sub.joins, sub.neg = &[]joinClause{}, false
+		j.on = func() (string, error) {
+			s, err := cond.sql(&sub)
+			if err == nil && len(*sub.joins) > 0 {
+				err = fmt.Errorf("orm: FilteredRelation %q: its condition may name only %s's own fields", path, t.Name)
+			}
+			return s, err
+		}
+	}
+	*b.joins = append(*b.joins, j)
 	return nb, nil
+}
+
+// FilteredRelation is a relation (a path of them, posts__comments) whose
+// related rows are only those where cond holds, Django's FilteredRelation:
+// annotate it under a name, then name the related fields through it. cond
+// names the related model's own fields. Reading through it joins with
+// cond in the ON, so rows without a match keep a row of NULLs; filtering
+// through a relation holding many rows asks EXISTS one matching.
+//
+//	Users.Annotate("active_apps", orm.FilteredRelation("applications", orm.Q{"status": "active"})).
+//		Annotate("n", orm.Count("active_apps__id")).Values[[]any]("name", "n")
+func FilteredRelation(relation string, cond Cond) Expr { return filteredRel{relation, cond} }
+
+type filteredRel struct {
+	relation string
+	cond     Cond
+}
+
+func (f filteredRel) exprSQL(*builder) (string, error) {
+	return "", fmt.Errorf("orm: FilteredRelation(%q) is a relation: name a field through it", f.relation)
+}
+
+// hop is the relation a FilteredRelation filters, by its index in the
+// parts of a name read through it; at is -1 for none.
+type hop struct {
+	at   int
+	name string
+	cond Cond
+}
+
+// aggregated is whether c names an aggregate annotation, a condition
+// HAVING holds.
+func (b *builder) aggregated(c Cond) bool {
+	switch c := c.(type) {
+	case Q:
+		for k := range c {
+			if _, ok := b.ann[strings.SplitN(k, "__", 2)[0]].(Agg); ok {
+				return true
+			}
+		}
+	case group:
+		return slices.ContainsFunc(c.conds, b.aggregated)
+	case not:
+		return b.aggregated(c.c)
+	}
+	return false
+}
+
+// expand is parts with a FilteredRelation's name in front replaced by its
+// relation path, and the hop it filters.
+func (b *builder) expand(parts []string) ([]string, hop) {
+	f, ok := b.ann[parts[0]].(filteredRel)
+	if !ok {
+		return parts, hop{at: -1}
+	}
+	rel := strings.Split(f.relation, "__")
+	return append(rel, parts[1:]...), hop{len(rel) - 1, parts[0], f.cond}
+}
+
+// via is the builder of the model r leads to: through h's join when r is
+// the hop h filters.
+func (b *builder) via(r *relation, i int, h hop) (*builder, error) {
+	if i == h.at {
+		return b.joinTo(r, h.name, h.cond)
+	}
+	return b.follow(r)
 }
 
 // joinRoot is the alias of the FROM's own table, which no join may take.
@@ -278,7 +395,8 @@ func (b *builder) refField(name string) (string, *field, error) {
 	if err := checkPath(name); err != nil {
 		return "", nil, err
 	}
-	if e, ok := b.ann[name]; ok {
+	parts, h := b.expand(strings.Split(name, "__"))
+	if e, ok := b.ann[name]; ok && h.at < 0 {
 		if b.depth > 16 {
 			return "", nil, fmt.Errorf("orm: annotation %q refers to itself", name)
 		}
@@ -290,7 +408,6 @@ func (b *builder) refField(name string) (string, *field, error) {
 		}
 		return "(" + s + ")", nil, nil
 	}
-	parts := strings.Split(name, "__")
 	cur := b
 	for i, part := range parts {
 		last := i == len(parts)-1
@@ -307,10 +424,10 @@ func (b *builder) refField(name string) (string, *field, error) {
 		if !r.one() && !cur.many {
 			return "", nil, fmt.Errorf("orm: %s.%s holds many rows: it can't be read as one value", cur.m.Name, r.Name)
 		}
-		if last && r.Kind == relFK {
+		if last && r.Kind == relFK && i != h.at {
 			return cur.col(r.local), r.local, nil
 		}
-		next, err := cur.follow(r)
+		next, err := cur.via(r, i, h)
 		if err != nil {
 			return "", nil, err
 		}
@@ -335,13 +452,19 @@ func (b *builder) lookup(key string, v any) (string, error) {
 		lookup = parts[len(parts)-1]
 		parts = parts[:len(parts)-1]
 	}
-	if _, ok := b.ann[parts[0]]; ok {
+	parts, h := b.expand(parts)
+	if _, ok := b.ann[parts[0]]; ok && h.at < 0 {
 		col, err := b.ref(parts[0])
 		if err != nil {
 			return "", err
 		}
 		return b.transformed(col, parts[1:], lookup, v, key)
 	}
+	return b.lookupParts(parts, lookup, v, key, h)
+}
+
+// lookupParts is lookup of a key split into its parts and its lookup.
+func (b *builder) lookupParts(parts []string, lookup string, v any, key string, h hop) (string, error) {
 	cur := b
 	for i := 0; i < len(parts); i++ {
 		part := parts[i]
@@ -362,11 +485,11 @@ func (b *builder) lookup(key string, v any) (string, error) {
 		}
 		rest := parts[i+1:]
 		if r.one() {
-			if len(rest) == 0 && r.Kind == relFK {
+			if len(rest) == 0 && r.Kind == relFK && i != h.at {
 				s, err := cur.compare(cur.col(r.local), lookup, v, key)
 				return cur.nullSafe(s, r.local, lookup, v), err
 			}
-			next, err := cur.follow(r)
+			next, err := cur.via(r, i, h)
 			if err != nil {
 				return "", err
 			}
@@ -377,7 +500,8 @@ func (b *builder) lookup(key string, v any) (string, error) {
 			}
 			continue
 		}
-		return cur.exists(r, rest, lookup, v, key)
+		h.at -= i + 1
+		return cur.exists(r, rest, lookup, v, key, h)
 	}
 	return "", fmt.Errorf("orm: %s has no field %q", b.m.Name, key)
 }
@@ -414,8 +538,9 @@ func (b *builder) transformed(col string, steps []string, lookup string, v any, 
 
 // exists is a lookup across a relation holding many rows: EXISTS a
 // related row matching the rest of the key. With no rest, isnull asks
-// whether there is none.
-func (b *builder) exists(r *relation, rest []string, lookup string, v any, key string) (string, error) {
+// whether there is none. h.at is the hop's index in rest, -1 when r is
+// the relation a FilteredRelation filters.
+func (b *builder) exists(r *relation, rest []string, lookup string, v any, key string, h hop) (string, error) {
 	t, rf, err := r.ends()
 	if err != nil {
 		return "", err
@@ -425,29 +550,115 @@ func (b *builder) exists(r *relation, rest []string, lookup string, v any, key s
 	child := &builder{d: b.d, m: t, alias: alias, path: alias, st: b.st, joins: &[]joinClause{}, outer: b.outer}
 	from := b.d.Quote(t.Table) + " AS " + b.d.Quote(alias)
 	link := child.col(rf) + " = " + b.col(r.local)
+	sel := "EXISTS (SELECT 1 FROM "
+	if r.Kind == relElements {
+		through, tval := elementsFrom(b.d, b.col(r.local), alias+"_through", r.jsonLocal(), intKind(rf.Type))
+		from = through + ", " + from
+		link = child.col(rf) + " = " + tval
+		if b.d.Name() == "mysql" {
+			// MySQL's semijoin rewrite loses JSON_TABLE's reference to
+			// the outer row and matches nothing: keep the subquery as
+			// written.
+			sel = "EXISTS (SELECT /*+ NO_SEMIJOIN() */ 1 FROM "
+		}
+	}
 	if r.Kind == relM2M {
 		through := b.d.Quote(alias + "_through")
 		from = b.d.Quote(r.Through) + " AS " + through + " JOIN " + from + " ON " + child.col(rf) + " = " + through + "." + b.d.Quote(r.ThroughRemote)
 		link = through + "." + b.d.Quote(r.ThroughLocal) + " = " + b.col(r.local)
 	}
+	at := len(b.st.args)
+	if h.at == -1 && h.cond != nil {
+		c, err := h.cond.sql(child)
+		if err != nil {
+			return "", err
+		}
+		if c != "" {
+			link += " AND (" + c + ")"
+		}
+	}
 	if len(rest) == 0 {
 		if lookup != "isnull" {
 			return "", fmt.Errorf("orm: %q compares %s.%s, which holds many rows: name one of its fields", key, b.m.Name, r.Name)
 		}
-		s := "EXISTS (SELECT 1 FROM " + from + " WHERE " + link + ")"
+		j, err := child.joinSQL(at)
+		if err != nil {
+			return "", err
+		}
+		s := sel + from + j + " WHERE " + link + ")"
 		if yes, _ := v.(bool); yes {
 			s = "NOT " + s
 		}
 		return s, nil
 	}
-	cond, err := child.lookup(strings.Join(rest, "__")+"__"+lookup, v)
+	cond, err := child.lookupParts(rest, lookup, v, key, h)
 	if err != nil {
 		return "", err
 	}
-	for _, j := range *child.joins {
-		from += j.sql
+	j, err := child.joinSQL(at)
+	if err != nil {
+		return "", err
 	}
-	return "EXISTS (SELECT 1 FROM " + from + " WHERE " + link + " AND " + cond + ")", nil
+	return sel + from + j + " WHERE " + link + " AND " + cond + ")", nil
+}
+
+// elementsFrom is the elements of arr — a JSON array, else
+// comma-separated text (spaces forgiven) — as a table the related rows
+// join on: each row's array expanded once, so the join probes the
+// related key by index instead of testing membership per pair. val is
+// one element, typed for the related column; a NULL arr expands to
+// nothing.
+func elementsFrom(d Dialect, arr, alias string, json, numeric bool) (from, val string) {
+	q := d.Quote(alias)
+	switch d.Name() {
+	case "postgres":
+		if json {
+			from, val = "jsonb_array_elements_text("+arr+") AS "+q+"(v)", q+".v"
+		} else {
+			from, val = "unnest(string_to_array("+arr+", ',')) AS "+q+"(v)", "NULLIF(btrim("+q+".v), '')"
+		}
+		if numeric {
+			val = "(" + val + ")::bigint"
+		}
+		return from, val
+	case "mysql":
+		doc, col := arr, "v BIGINT PATH '$'"
+		if !numeric {
+			col = "v VARCHAR(255) PATH '$'"
+		}
+		if !json {
+			doc = "CONCAT('[', REPLACE(" + arr + ", ' ', ''), ']')"
+			if !numeric {
+				doc = `CONCAT('["', REPLACE(REPLACE(` + arr + `, ' ', ''), ',', '","'), '"]')`
+			}
+		}
+		return "JSON_TABLE(" + doc + ", '$[*]' COLUMNS (" + col + ")) AS " + q, q + ".v"
+	}
+	doc := arr
+	if !json {
+		doc = "'[' || REPLACE(" + arr + ", ' ', '') || ']'"
+		if !numeric {
+			doc = `'["' || REPLACE(REPLACE(` + arr + `, ' ', ''), ',', '","') || '"]'`
+		}
+	}
+	val = q + ".value"
+	if numeric {
+		val = "CAST(" + val + " AS INTEGER)"
+	}
+	return "json_each(" + doc + ") AS " + q, val
+}
+
+// intKind is whether t (or what it points to) is an integer.
+func intKind(t reflect.Type) bool {
+	if t.Kind() == reflect.Pointer {
+		t = t.Elem()
+	}
+	switch t.Kind() {
+	case reflect.Int, reflect.Int8, reflect.Int16, reflect.Int32, reflect.Int64,
+		reflect.Uint, reflect.Uint8, reflect.Uint16, reflect.Uint32, reflect.Uint64:
+		return true
+	}
+	return false
 }
 
 // rawSQL is SQL already written, passed back into a template.

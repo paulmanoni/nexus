@@ -189,7 +189,11 @@ func (m *Manager[T]) insert(ctx context.Context, c conn, rows []*T) error {
 	b.st.args = make([]any, 0, len(rows)*len(fields))
 	var sb strings.Builder
 	sb.Grow(64 + len(cols)*16 + len(rows)*len(fields)*7)
-	sb.WriteString("INSERT INTO " + b.from() + " (" + strings.Join(cols, ", ") + ") VALUES ")
+	table, err := b.from(0)
+	if err != nil {
+		return err
+	}
+	sb.WriteString("INSERT INTO " + table + " (" + strings.Join(cols, ", ") + ") VALUES ")
 	var vals []any
 	for r, row := range rows {
 		if r > 0 {

@@ -1617,7 +1617,7 @@ nexus generate models [dir]  Write the ORM's generated code to disk: orm.Registe
 nexus docs [topic]   Inline reference. --web opens the docs site (paulmanoni.github.io/nexus).
 nexus makemigrations [name]  Write the next ORM migration as Go (migrations/NNNN_name.go,
                      migrations/<db>/ for another database): replays the registered migrations,
-                     diffs them with the models (orm.Model types, orm.For), asks about renames
+                     diffs them with the orm.Model types (never a plain orm.For/Of), asks about renames
                      on a terminal (--noinput: remove+add with a note). --empty (a RunGo),
                      --check (CI), --dry-run, --db. The app imports its migrations package.
 nexus migrate [target]  Apply the ORM's migrations (every database's; orm.Migrate() does it at
