@@ -55,9 +55,10 @@ func (qs QuerySet[T]) Exclude(conds ...Cond) QuerySet[T] {
 }
 
 // OrderBy sorts by fields, a leading - for descending: OrderBy("-age",
-// "author__name").
+// "author__name"). A query that sets no order reads rows in the model's
+// Meta Ordering; OrderBy() sets none, that one included.
 func (qs QuerySet[T]) OrderBy(fields ...string) QuerySet[T] {
-	return qs.with(func(q *query) { q.order = slices.Clone(fields) })
+	return qs.with(func(q *query) { q.order = append([]string{}, fields...) })
 }
 
 // Limit keeps at most n rows.
@@ -112,7 +113,7 @@ func (qs QuerySet[T]) Iter(ctx context.Context) iter.Seq2[T, error] {
 			yield(zero, err)
 			return
 		}
-		q := qs.q
+		q := qs.q.ordered()
 		if mk, ok := rowScanner[T](q.m); ok && len(q.computedFields()) == 0 && len(q.related) == 0 {
 			b := q.builder(c.d)
 			cols, err := q.columns(b, nil)
@@ -140,6 +141,7 @@ func (qs QuerySet[T]) Iter(ctx context.Context) iter.Seq2[T, error] {
 					yield(zero, err)
 					return
 				}
+				qs.m.adopt(&row)
 				if !yield(row, nil) {
 					return
 				}
@@ -150,8 +152,10 @@ func (qs QuerySet[T]) Iter(ctx context.Context) iter.Seq2[T, error] {
 			return
 		}
 		stopped := false
-		err = q.scan(ctx, c, func() reflect.Value { return reflect.New(q.m.Type).Elem() }, func(v reflect.Value) bool {
-			if !yield(v.Interface().(T), nil) {
+		err = q.scan(ctx, c, qs.m.schema(), func() reflect.Value { return reflect.New(q.m.Type).Elem() }, func(v reflect.Value) bool {
+			row := v.Addr().Interface().(*T)
+			qs.m.adopt(row)
+			if !yield(*row, nil) {
 				stopped = true
 				return false
 			}
@@ -191,13 +195,13 @@ func (m *Manager[T]) prefetchRows(ctx context.Context, rows []T, specs []Prefetc
 	for i := range rows {
 		parents[i] = reflect.ValueOf(&rows[i]).Elem()
 	}
-	return prefetch(ctx, c, m.meta, parents, specs)
+	return prefetch(ctx, c, m.meta, m.schema(), parents, specs)
 }
 
-// First is the first row, by the order given or else by primary key;
+// First is the first row, by the order given (or Meta's) or else by primary key;
 // nexus.NotFound when there is none.
 func (qs QuerySet[T]) First(ctx context.Context) (T, error) {
-	if len(qs.q.order) == 0 && qs.q.m != nil && qs.q.m.PK != nil {
+	if qs.q.ordered().order == nil && qs.q.m != nil && qs.q.m.PK != nil {
 		qs = qs.OrderBy(qs.q.m.PK.Name)
 	}
 	rows, err := qs.Limit(1).All(ctx)
@@ -544,6 +548,9 @@ func (vq Values[T, R]) Iter(ctx context.Context) iter.Seq2[R, error] {
 		}
 		if grouped && len(group) > 0 {
 			q.group = " GROUP BY " + strings.Join(group, ", ")
+		}
+		if !grouped {
+			q = q.ordered()
 		}
 		rd, err := newReader(rt, names, fields)
 		if err != nil {

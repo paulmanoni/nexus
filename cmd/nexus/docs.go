@@ -2000,7 +2000,9 @@ CLI CHEATSHEET
 
   nexus generate frontend    Generate the typed TS source tree from a manifest.
   nexus generate handlers    Wire //nexus:-annotated handlers into registrations.
-                             --check on either one is a CI drift gate.
+  nexus generate models      Write the ORM's model registrations (orm.Model types)
+                             and row scanners to disk, for a plain go build.
+                             --check on any of them is a CI drift gate.
 
   nexus migrate v2 [dir]     Rewrite a v1 project for v2: /v2 import paths,
                              go.mod requirements, moved symbols
@@ -2011,6 +2013,14 @@ CLI CHEATSHEET
                              names; a // TODO(nexus v2) comment where a
                              step needs a person.
                              --dry-run lists every change; re-running is a no-op.
+
+  nexus makemigrations [name] Write the next ORM migration, Go, into migrations/
+                             (asks about renames; --noinput, --empty, --check,
+                             --dry-run, --db).
+  nexus migrate [target]     Apply the ORM's migrations, or take a database (--db)
+                             to target: later ones unapplied, "zero" for none.
+  nexus showmigrations       Each database's migrations, [X] applied.
+  nexus sqlmigrate <name>    The SQL a migration runs (--backwards).
 
   nexus config check [path]  Validate nexus.toml with the boot rules (--json).
   nexus config schema        Print nexus.toml's JSON schema.
@@ -2804,7 +2814,22 @@ Run 'nexus docs pki' for the cert-generation toolchain.
 	"orm": `
 ORM — Django-style models over the app's databases (module nexus/orm, Go 1.27)
 
-  var Users = orm.For[User]()            // a manager: pass it to nexus.Boot
+  type User struct {                     // Django's models.Model
+      orm.Model[User]
+      ID    int64
+      Email string
+  }
+  func (User) Meta() orm.Meta { return orm.Meta{Table: "accounts", Ordering: []string{"email"}} }
+
+  u := User{Email: e}; u.Save(ctx)        // INSERT, then UPDATE once loaded
+  u.SaveFields(ctx, "email") / u.Refresh(ctx) / u.Delete(ctx) / u.Load(ctx, "roles")
+  u.Add(ctx, "roles", admin) / Remove / Set   // many-to-many links
+  User{}.Objects().Filter(…)             // its manager; Objects(schema) = orm.Of
+  orm.Related[Post](&u, "posts")         // a QuerySet of its related rows
+  The CLI registers every orm.Model type the app links (nexus generate models
+  writes it to disk): nexus.Boot binds and checks it, makemigrations plans it.
+
+  var Users = orm.For[User]()            // or a manager of a plain struct: pass it to nexus.Boot
   nexus.Boot(db.BindFromConfig[DB]("main"), Users)
 
 Querysets (lazy, immutable; string lookups as in Django):
@@ -2834,14 +2859,21 @@ Writes: Create / BulkCreate / Save / Remove (hooks: BeforeCreate, AfterSave, …
 Pages: orm.Paginate(ctx, qs, orm.PageFrom(r.URL.Query()), orm.Sortable("name"),
   orm.Searchable("name", "email"), orm.MaxSize(100))
 
-Migrations:
-  nexus makemigrations [name]     diff the models with migrations/schema.json,
-                                  write migrations/NNNN_name.sql (--check in CI)
-  //go:embed migrations
-  var migrations embed.FS
-  nexus.Boot(…, orm.Migrate(migrations, orm.MigrateDir("migrations")))
-  Applied at boot, before serving, recorded in nexus_migrations, under a lock.
-  orm.Unmanaged() keeps a legacy table out; orm.On("name") picks a database.
+Migrations (Django's; Go files in the app's migrations package):
+  nexus makemigrations [name]     replay the migrations, diff with the models, write
+                                  migrations/NNNN_name.go (asks: "Did you rename
+                                  users.mail to users.email? [y/N]"; --noinput,
+                                  --empty for a RunGo, --check in CI, --db)
+  m.Register(m.Migration{Name, Dependencies, Operations: []m.Operation{
+      m.CreateModel{…}, m.AddField{Table, Name, Field: m.Varchar(255).Null()},
+      m.AlterField, m.RenameField, m.RemoveField, m.RenameModel, m.DeleteModel,
+      m.AddIndex, m.AddConstraint{…, m.Unique(…) / m.Check(…)}, m.CreateExtension,
+      m.RunSQL{SQL, ReverseSQL}, m.RunGo{Forward, Backward}}})
+  import _ "example.com/app/migrations"
+  nexus.Boot(…, orm.Migrate())    applied at boot, before serving, recorded in
+                                  nexus_migrations, under a lock
+  nexus migrate [target|zero]     apply, or go back; showmigrations; sqlmigrate <name>
+  orm.Unmanaged() / Meta().Unmanaged keeps a legacy table out; orm.On picks a database.
 
 Tests: ctx := ormtest.Open(t, Users, Posts)   sqlite, or ORMTEST_DRIVER/DSN
 Dev: a query repeated in one request logs an N+1 warning with a hint.

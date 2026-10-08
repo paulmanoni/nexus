@@ -31,7 +31,7 @@ import (
 
 // Open is a context whose queries use a fresh database with the models'
 // tables (and their many-to-many tables) made.
-func Open(t testing.TB, models ...orm.Model) context.Context {
+func Open(t testing.TB, models ...orm.AnyManager) context.Context {
 	t.Helper()
 	d := open(t)
 	ctx := orm.WithDB(context.Background(), d)
@@ -55,7 +55,7 @@ func Driver() string {
 // with ORMTEST_MIRROR_DSN: MySQL as Open's and Postgres as the mirror's
 // is the move the ORM's mirror is for. The returned context reads the
 // mirror, to check what reached it.
-func Mirror(t testing.TB, ctx context.Context, models ...orm.Model) (mirrored, onMirror context.Context) {
+func Mirror(t testing.TB, ctx context.Context, models ...orm.AnyManager) (mirrored, onMirror context.Context) {
 	t.Helper()
 	driver := os.Getenv("ORMTEST_MIRROR_DRIVER")
 	if driver == "" {
@@ -95,7 +95,7 @@ func openDriver(t testing.TB, driver, dsn string) *orm.DB {
 func name() string {
 	b := make([]byte, 6)
 	_, _ = rand.Read(b)
-	return "ormtest_" + hex.EncodeToString(b)
+	return "orm_test_" + hex.EncodeToString(b)
 }
 
 // openPostgres makes a schema of the test's own and a pool whose

@@ -103,15 +103,6 @@ type migrateFileResult struct {
 	Out     []byte
 }
 
-func newMigrateCmd(stdout, stderr io.Writer) *cobra.Command {
-	cmd := &cobra.Command{
-		Use:   "migrate",
-		Short: "Codemods between nexus major versions",
-	}
-	cmd.AddCommand(newMigrateV2Cmd(stdout, stderr))
-	return cmd
-}
-
 func newMigrateV2Cmd(stdout, _ io.Writer) *cobra.Command {
 	var dryRun bool
 	cmd := &cobra.Command{

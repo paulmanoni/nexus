@@ -1,10 +1,14 @@
 // Package schema is the ORM's tables as the database needs them, and the
-// SQL that creates and changes them. The runtime builds it from reflect
-// (orm.CreateTables, ormtest) and the generator from go/types
-// (nexus makemigrations): one description, one SQL, both ways.
+// SQL that creates and changes them on each dialect. A table is described
+// once for every dialect: what differs (a generated column's expression,
+// a declared index) is held per dialect. The ORM builds it from its
+// models (orm.CreateTables, the migration autodetector), and migrations
+// replay their operations into it.
 package schema
 
 import (
+	"crypto/sha256"
+	"encoding/hex"
 	"fmt"
 	"slices"
 	"sort"
@@ -27,44 +31,169 @@ const (
 	Custom  Kind = "custom" // a Scanner/Valuer: TEXT unless typed
 )
 
+func (k Kind) numeric() bool { return k == Int || k == Int32 || k == Float || k == Float32 }
+
+// Dialects is SQL written for each dialect: "" where a dialect has none.
+type Dialects struct {
+	Postgres, MySQL, SQLite string
+}
+
+// For is the SQL of the dialect named.
+func (x Dialects) For(dialect string) string {
+	switch dialect {
+	case "postgres":
+		return x.Postgres
+	case "mysql":
+		return x.MySQL
+	}
+	return x.SQLite
+}
+
+// Set is x with the dialect's SQL set to s.
+func (x Dialects) Set(dialect, s string) Dialects {
+	switch dialect {
+	case "postgres":
+		x.Postgres = s
+	case "mysql":
+		x.MySQL = s
+	default:
+		x.SQLite = s
+	}
+	return x
+}
+
+func (x Dialects) Zero() bool { return x == Dialects{} }
+
+// Names is the dialects, in the order SQL is written for them.
+var Names = []string{"postgres", "mysql", "sqlite"}
+
 // Column is a table's column.
 type Column struct {
-	Name     string `json:"name"`
-	Kind     Kind   `json:"kind"`
-	Nullable bool   `json:"nullable,omitempty"`
-	PK       bool   `json:"pk,omitempty"`
-	Auto     bool   `json:"auto,omitempty"` // an integer key the database counts
-	Unique   bool   `json:"unique,omitempty"`
-	Index    bool   `json:"index,omitempty"`
-	Size     int    `json:"size,omitempty"`
-	Type     string `json:"type,omitempty"` // a database type of the model's own
+	Name     string
+	Kind     Kind
+	Nullable bool
+	PK       bool
+	Auto     bool // an integer key the database counts
+	Unique   bool
+	Index    bool
+	Size     int
+	Type     string // a database type of the model's own
+	Vector   int    // a pgvector column of so many dimensions (-1: any)
+	TSVector bool   // a Postgres tsvector column
+	// Default is the SQL literal a row written without the column takes.
+	Default string
 	// Generated is the expression a stored generated column is computed
-	// by, as the dialect writes it.
-	Generated string `json:"generated,omitempty"`
+	// by, on each dialect.
+	Generated Dialects
+	FK        *ForeignKey
+
+	// The names of the column's unique constraint and index, given when
+	// the column comes to have them (see Table.Named).
+	UniqueName, IndexName string
+}
+
+// Same is whether c and o define a column alike, their names and their
+// constraints' aside.
+func (c Column) Same(o Column) bool {
+	a, b := c.bare(), o.bare()
+	fa, fb := a.FK, b.FK
+	a.FK, b.FK = nil, nil
+	return a == b && (fa == nil) == (fb == nil) && (fa == nil || *fa == *fb)
+}
+
+func (c Column) bare() Column {
+	c.Name, c.UniqueName, c.IndexName = "", "", ""
+	if c.FK != nil {
+		fk := *c.FK
+		fk.Name = ""
+		c.FK = &fk
+	}
+	return c
 }
 
 // ForeignKey is a column referring to another table's key.
 type ForeignKey struct {
-	Column   string `json:"column"`
-	Table    string `json:"table"`
-	Ref      string `json:"ref"`
-	OnDelete string `json:"onDelete,omitempty"` // cascade, set_null, restrict
+	Table    string
+	Ref      string
+	OnDelete string // cascade, set_null, restrict
+	Name     string
 }
 
-// Index is an index the model declares (GIN, HNSW, FULLTEXT, …), as the
-// statement creating it on the dialect.
+// Constraint is a table's unique constraint over columns, or, with
+// Check, its check constraint.
+type Constraint struct {
+	Name    string
+	Columns []string
+	Check   string
+}
+
+// Index is an index a model declares (GIN, HNSW, FULLTEXT, …), as the
+// statement creating it on each dialect: none where it has no SQL.
 type Index struct {
-	Name string `json:"name"`
-	SQL  string `json:"sql"`
+	Name string
+	SQL  Dialects
 }
 
-// Table is a table: its columns in order, its foreign keys, its declared
+// Table is a table: its columns in order, its constraints, its declared
 // indexes.
 type Table struct {
-	Name    string       `json:"name"`
-	Columns []Column     `json:"columns"`
-	FKs     []ForeignKey `json:"fks,omitempty"`
-	Indexes []Index      `json:"indexes,omitempty"`
+	Name        string
+	Columns     []Column
+	Constraints []Constraint
+	Indexes     []Index
+}
+
+// Column is t's column named name.
+func (t *Table) Column(name string) (*Column, bool) {
+	for i := range t.Columns {
+		if t.Columns[i].Name == name {
+			return &t.Columns[i], true
+		}
+	}
+	return nil, false
+}
+
+// Named is t with the constraints and indexes its columns hold named
+// where they aren't: after the table and column, as the table is named
+// now. Names stay with a renamed table or column.
+func (t Table) Named() Table {
+	t.Columns = slices.Clone(t.Columns)
+	for i := range t.Columns {
+		t.Columns[i].Named(t.Name)
+	}
+	return t
+}
+
+// Named names c's unique constraint, index and foreign key, where it has
+// them unnamed, after table; and drops the names of those it hasn't.
+func (c *Column) Named(table string) {
+	if c.Unique && !c.PK && c.UniqueName == "" {
+		c.UniqueName = Ident("uniq_" + table + "_" + c.Name)
+	}
+	if c.Index && !c.Unique && !c.PK && c.IndexName == "" {
+		c.IndexName = Ident("idx_" + table + "_" + c.Name)
+	}
+	if !c.Unique || c.PK {
+		c.UniqueName = ""
+	}
+	if !c.Index || c.Unique || c.PK {
+		c.IndexName = ""
+	}
+	if c.FK != nil && c.FK.Name == "" {
+		fk := *c.FK
+		fk.Name = Ident("fk_" + table + "_" + c.Name)
+		c.FK = &fk
+	}
+}
+
+// Ident is name as every dialect takes an identifier: at most 63 bytes,
+// a longer one cut and told apart by a hash of it.
+func Ident(name string) string {
+	if len(name) <= 63 {
+		return name
+	}
+	h := sha256.Sum256([]byte(name))
+	return name[:54] + "_" + hex.EncodeToString(h[:4])
 }
 
 // Dialect is how a database writes the schema.
@@ -73,10 +202,19 @@ type Dialect struct {
 	Quote func(string) string
 }
 
-// Type is a column's SQL type, its key clause included.
-func (d Dialect) Type(c Column) string {
-	if c.Type != "" {
+// typ is c's SQL type, its key clause excluded; keyed says an index or
+// constraint holds it (MySQL can't key TEXT).
+func (d Dialect) typ(c Column, keyed bool) string {
+	switch {
+	case c.Type != "":
 		return c.Type
+	case c.Vector != 0 && d.Name == "postgres":
+		if c.Vector > 0 {
+			return "vector(" + strconv.Itoa(c.Vector) + ")"
+		}
+		return "vector"
+	case c.TSVector && d.Name == "postgres":
+		return "tsvector"
 	}
 	switch c.Kind {
 	case Bool:
@@ -110,8 +248,8 @@ func (d Dialect) Type(c Column) string {
 		if c.Size > 0 {
 			return "VARCHAR(" + strconv.Itoa(c.Size) + ")"
 		}
-		if d.Name == "mysql" && (c.PK || c.Unique || c.Index) {
-			return "VARCHAR(255)" // MySQL can't key TEXT
+		if d.Name == "mysql" && keyed {
+			return "VARCHAR(255)"
 		}
 		return "TEXT"
 	case Time:
@@ -134,11 +272,38 @@ func (d Dialect) Type(c Column) string {
 	return "TEXT"
 }
 
+// keyed is whether an index or constraint of t holds c.
+func (t Table) keyed(c Column) bool {
+	if c.PK || c.Unique || c.Index {
+		return true
+	}
+	for _, k := range t.Constraints {
+		if k.Check == "" && slices.Contains(k.Columns, c.Name) {
+			return true
+		}
+	}
+	return false
+}
+
+// Check is what keeps t from being made on d: a vector on MySQL, a
+// generated column with no expression for d.
+func (d Dialect) Check(t Table) error {
+	for _, c := range t.Columns {
+		switch {
+		case c.Vector != 0 && d.Name == "mysql":
+			return fmt.Errorf("%s.%s: MySQL has no vector type nexus can search (its VECTOR distances are HeatWave's only)", t.Name, c.Name)
+		case !c.Generated.Zero() && c.Generated.For(d.Name) == "":
+			return fmt.Errorf("%s.%s: the generated column has no expression for %s", t.Name, c.Name, d.Name)
+		}
+	}
+	return nil
+}
+
 // columnSQL is a column's definition in CREATE TABLE or ADD COLUMN.
-func (d Dialect) columnSQL(c Column, singlePK bool) string {
-	s := d.Quote(c.Name) + " " + d.Type(c)
-	if c.Generated != "" {
-		return s + " GENERATED ALWAYS AS (" + c.Generated + ") STORED"
+func (d Dialect) columnSQL(t Table, c Column, singlePK bool) string {
+	s := d.Quote(c.Name) + " " + d.typ(c, t.keyed(c))
+	if g := c.Generated.For(d.Name); g != "" {
+		return s + " GENERATED ALWAYS AS (" + g + ") STORED"
 	}
 	if c.PK && singlePK {
 		s += " PRIMARY KEY"
@@ -155,8 +320,8 @@ func (d Dialect) columnSQL(c Column, singlePK bool) string {
 	if !c.Nullable {
 		s += " NOT NULL"
 	}
-	if c.Unique {
-		s += " UNIQUE"
+	if c.Default != "" {
+		s += " DEFAULT " + c.Default
 	}
 	return s
 }
@@ -171,8 +336,8 @@ func (t Table) pks() []string {
 	return out
 }
 
-func (d Dialect) fkSQL(fk ForeignKey) string {
-	s := "FOREIGN KEY (" + d.Quote(fk.Column) + ") REFERENCES " + d.Quote(fk.Table) + " (" + d.Quote(fk.Ref) + ")"
+func (d Dialect) fkSQL(col string, fk ForeignKey) string {
+	s := "CONSTRAINT " + d.Quote(fk.Name) + " FOREIGN KEY (" + d.Quote(col) + ") REFERENCES " + d.Quote(fk.Table) + " (" + d.Quote(fk.Ref) + ")"
 	switch fk.OnDelete {
 	case "cascade":
 		s += " ON DELETE CASCADE"
@@ -184,25 +349,53 @@ func (d Dialect) fkSQL(fk ForeignKey) string {
 	return s
 }
 
-func (d Dialect) indexName(table, col string) string { return "idx_" + table + "_" + col }
+func (d Dialect) constraintSQL(k Constraint) string {
+	if k.Check != "" {
+		return "CONSTRAINT " + d.Quote(k.Name) + " CHECK (" + k.Check + ")"
+	}
+	return "CONSTRAINT " + d.Quote(k.Name) + " UNIQUE (" + d.list(k.Columns) + ")"
+}
 
-// Create is the statements creating t: the table, then its indexes.
+func (d Dialect) list(names []string) string {
+	q := make([]string, len(names))
+	for i, n := range names {
+		q[i] = d.Quote(n)
+	}
+	return strings.Join(q, ", ")
+}
+
+// Create is the statements creating t, its names given (Named): the
+// table, its constraints and foreign keys inside it, then its indexes.
 // ifNotExists leaves a table that is there alone.
 func (d Dialect) Create(t Table, ifNotExists bool) []string {
+	t = t.Named()
 	pks := t.pks()
 	var defs []string
 	for _, c := range t.Columns {
-		defs = append(defs, d.columnSQL(c, len(pks) == 1))
+		defs = append(defs, d.columnSQL(t, c, len(pks) == 1))
 	}
 	if len(pks) > 1 {
-		quoted := make([]string, len(pks))
-		for i, p := range pks {
-			quoted[i] = d.Quote(p)
-		}
-		defs = append(defs, "PRIMARY KEY ("+strings.Join(quoted, ", ")+")")
+		defs = append(defs, "PRIMARY KEY ("+d.list(pks)+")")
 	}
-	for _, fk := range t.FKs {
-		defs = append(defs, d.fkSQL(fk))
+	for _, c := range t.Columns {
+		if c.UniqueName != "" {
+			defs = append(defs, d.constraintSQL(Constraint{Name: c.UniqueName, Columns: []string{c.Name}}))
+		}
+	}
+	for _, k := range t.Constraints {
+		defs = append(defs, d.constraintSQL(k))
+	}
+	for _, c := range t.Columns {
+		if c.FK == nil {
+			continue
+		}
+		// MySQL keys a foreign key by an index that leads with its column,
+		// a unique constraint's if one does: then that constraint can't be
+		// dropped. The foreign key gets its own.
+		if d.Name == "mysql" {
+			defs = append(defs, "KEY "+d.Quote(c.FK.Name)+" ("+d.Quote(c.Name)+")")
+		}
+		defs = append(defs, d.fkSQL(c.Name, *c.FK))
 	}
 	head := "CREATE TABLE "
 	if ifNotExists {
@@ -210,26 +403,257 @@ func (d Dialect) Create(t Table, ifNotExists bool) []string {
 	}
 	out := []string{head + d.Quote(t.Name) + " (\n  " + strings.Join(defs, ",\n  ") + "\n)"}
 	for _, c := range t.Columns {
-		if c.Index && !c.Unique && !c.PK {
-			out = append(out, d.createIndex(t.Name, c.Name, ifNotExists))
+		if c.IndexName != "" {
+			out = append(out, d.createIndex(t.Name, c.IndexName, c.Name, ifNotExists))
 		}
 	}
 	for _, ix := range t.Indexes {
-		s := ix.SQL
-		if ifNotExists && d.Name != "mysql" {
-			s = strings.Replace(s, "CREATE INDEX ", "CREATE INDEX IF NOT EXISTS ", 1)
+		if s := ix.SQL.For(d.Name); s != "" {
+			if ifNotExists && d.Name != "mysql" {
+				s = strings.Replace(s, "CREATE INDEX ", "CREATE INDEX IF NOT EXISTS ", 1)
+			}
+			out = append(out, s)
 		}
-		out = append(out, s)
 	}
 	return out
 }
 
-func (d Dialect) createIndex(table, col string, ifNotExists bool) string {
+func (d Dialect) createIndex(table, name, col string, ifNotExists bool) string {
 	s := "CREATE INDEX "
 	if ifNotExists && d.Name != "mysql" {
 		s += "IF NOT EXISTS "
 	}
-	return s + d.Quote(d.indexName(table, col)) + " ON " + d.Quote(table) + " (" + d.Quote(col) + ")"
+	return s + d.Quote(name) + " ON " + d.Quote(table) + " (" + d.Quote(col) + ")"
+}
+
+// DropTable drops a table.
+func (d Dialect) DropTable(name string) []string { return []string{"DROP TABLE " + d.Quote(name)} }
+
+// RenameTable renames a table: the constraints and indexes keep their
+// names, and the foreign keys referring to it follow.
+func (d Dialect) RenameTable(from, to string) []string {
+	return []string{"ALTER TABLE " + d.Quote(from) + " RENAME TO " + d.Quote(to)}
+}
+
+// RenameColumn renames a column of table.
+func (d Dialect) RenameColumn(table, from, to string) []string {
+	return []string{"ALTER TABLE " + d.Quote(table) + " RENAME COLUMN " + d.Quote(from) + " TO " + d.Quote(to)}
+}
+
+// Simple is whether SQLite adds (or drops) c with ALTER TABLE: no key,
+// constraint, foreign key or generated expression, and a value for rows
+// that exist. Others rebuild the table (Remake).
+func Simple(c Column) bool {
+	return !c.PK && !c.Unique && c.FK == nil && c.Generated.Zero() && (c.Nullable || c.Default != "")
+}
+
+// AddColumn adds c to the table t (t as it is with c), and its
+// constraint, foreign key and index. Not SQLite's: see Simple.
+func (d Dialect) AddColumn(t Table, c Column) []string {
+	tq := d.Quote(t.Name)
+	out := []string{"ALTER TABLE " + tq + " ADD COLUMN " + d.columnSQL(t, c, false)}
+	if c.UniqueName != "" {
+		out = append(out, "ALTER TABLE "+tq+" ADD "+d.constraintSQL(Constraint{Name: c.UniqueName, Columns: []string{c.Name}}))
+	}
+	if c.FK != nil && d.Name != "sqlite" {
+		out = append(out, "ALTER TABLE "+tq+" ADD "+d.fkSQL(c.Name, *c.FK))
+	}
+	if c.IndexName != "" {
+		out = append(out, d.createIndex(t.Name, c.IndexName, c.Name, false))
+	}
+	return out
+}
+
+// DropColumn drops c from table: its foreign key first on MySQL, which
+// won't drop a column one holds.
+func (d Dialect) DropColumn(table string, c Column) []string {
+	tq := d.Quote(table)
+	var out []string
+	if c.FK != nil && d.Name == "mysql" {
+		out = append(out, "ALTER TABLE "+tq+" DROP FOREIGN KEY "+d.Quote(c.FK.Name))
+	}
+	if c.IndexName != "" && d.Name == "sqlite" {
+		out = append(out, d.DropIndex(table, c.IndexName)...)
+	}
+	return append(out, "ALTER TABLE "+tq+" DROP COLUMN "+d.Quote(c.Name))
+}
+
+// CreateIndex is the statement creating a declared index on d, none when
+// d has no SQL for it.
+func (d Dialect) CreateIndex(ix Index) []string {
+	if s := ix.SQL.For(d.Name); s != "" {
+		return []string{s}
+	}
+	return nil
+}
+
+// DropIndex drops the index named of table.
+func (d Dialect) DropIndex(table, name string) []string {
+	if d.Name == "mysql" {
+		return []string{"DROP INDEX " + d.Quote(name) + " ON " + d.Quote(table)}
+	}
+	return []string{"DROP INDEX " + d.Quote(name)}
+}
+
+// AddConstraint adds a unique or check constraint to table. Not
+// SQLite's: it rebuilds the table.
+func (d Dialect) AddConstraint(table string, k Constraint) []string {
+	return []string{"ALTER TABLE " + d.Quote(table) + " ADD " + d.constraintSQL(k)}
+}
+
+// DropConstraint drops a unique or check constraint of table. Not
+// SQLite's: it rebuilds the table.
+func (d Dialect) DropConstraint(table string, k Constraint) []string {
+	tq := d.Quote(table)
+	if d.Name == "mysql" {
+		if k.Check != "" {
+			return []string{"ALTER TABLE " + tq + " DROP CHECK " + d.Quote(k.Name)}
+		}
+		return []string{"ALTER TABLE " + tq + " DROP INDEX " + d.Quote(k.Name)}
+	}
+	return []string{"ALTER TABLE " + tq + " DROP CONSTRAINT " + d.Quote(k.Name)}
+}
+
+func (d Dialect) dropFK(table string, fk ForeignKey) string {
+	if d.Name == "mysql" {
+		return "ALTER TABLE " + d.Quote(table) + " DROP FOREIGN KEY " + d.Quote(fk.Name)
+	}
+	return "ALTER TABLE " + d.Quote(table) + " DROP CONSTRAINT " + d.Quote(fk.Name)
+}
+
+// AlterColumn changes column o of the table t (t as it is after) to c:
+// its type, nullability, default, unique constraint, index, foreign key
+// and generated expression. Not SQLite's: it rebuilds the table.
+func (d Dialect) AlterColumn(t Table, o, c Column) []string {
+	tq, cq := d.Quote(t.Name), d.Quote(c.Name)
+	var out []string
+	// What holds the column goes first and comes back last: MySQL can't
+	// make a keyed column TEXT, nor key a TEXT one.
+	if o.FK != nil && (c.FK == nil || *o.FK != *c.FK) {
+		out = append(out, d.dropFK(t.Name, *o.FK))
+	}
+	if o.UniqueName != "" && o.UniqueName != c.UniqueName {
+		out = append(out, d.DropConstraint(t.Name, Constraint{Name: o.UniqueName})...)
+	}
+	if o.IndexName != "" && o.IndexName != c.IndexName {
+		out = append(out, d.DropIndex(t.Name, o.IndexName)...)
+	}
+	if o.Generated != c.Generated {
+		// A generated column changes by being made again.
+		out = append(out, "ALTER TABLE "+tq+" DROP COLUMN "+cq, "ALTER TABLE "+tq+" ADD COLUMN "+d.columnSQL(t, c, false))
+	} else if d.typ(o, t.keyed(o)) != d.typ(c, t.keyed(c)) || o.Nullable != c.Nullable || o.Default != c.Default || o.Auto != c.Auto {
+		out = append(out, d.changeColumn(t, o, c)...)
+	}
+	if c.UniqueName != "" && o.UniqueName != c.UniqueName {
+		out = append(out, d.AddConstraint(t.Name, Constraint{Name: c.UniqueName, Columns: []string{c.Name}})...)
+	}
+	if c.IndexName != "" && o.IndexName != c.IndexName {
+		out = append(out, d.createIndex(t.Name, c.IndexName, c.Name, false))
+	}
+	if c.FK != nil && (o.FK == nil || *o.FK != *c.FK) {
+		out = append(out, "ALTER TABLE "+tq+" ADD "+d.fkSQL(c.Name, *c.FK))
+	}
+	return out
+}
+
+func (d Dialect) changeColumn(t Table, o, c Column) []string {
+	tq, cq := d.Quote(t.Name), d.Quote(c.Name)
+	if d.Name == "mysql" {
+		// The column's keys stay as they are.
+		s := "ALTER TABLE " + tq + " MODIFY COLUMN " + cq + " " + d.typ(c, t.keyed(c))
+		if !c.Nullable {
+			s += " NOT NULL"
+		}
+		if c.Default != "" {
+			s += " DEFAULT " + c.Default
+		}
+		if c.Auto {
+			s += " AUTO_INCREMENT"
+		}
+		return []string{s}
+	}
+	var out []string
+	if d.typ(o, false) != d.typ(c, false) {
+		// SERIAL and BIGSERIAL are no types: the column is the integer,
+		// and the sequence it owns counts as far.
+		plain := c
+		plain.Auto = false
+		typ := d.typ(plain, false)
+		using := cq + "::" + typ
+		switch {
+		case c.Kind == Bool && o.Kind.numeric():
+			using = cq + " <> 0"
+		case o.Kind == Bool && c.Kind.numeric():
+			using = "CASE WHEN " + cq + " THEN 1 ELSE 0 END"
+		}
+		if o.Default != "" {
+			out = append(out, "ALTER TABLE "+tq+" ALTER COLUMN "+cq+" DROP DEFAULT")
+		}
+		out = append(out, "ALTER TABLE "+tq+" ALTER COLUMN "+cq+" TYPE "+typ+" USING "+using)
+		if o.Auto && c.Auto {
+			out = append(out, "ALTER SEQUENCE "+d.Quote(t.Name+"_"+c.Name+"_seq")+" AS "+typ)
+		}
+		if c.Default != "" {
+			out = append(out, "ALTER TABLE "+tq+" ALTER COLUMN "+cq+" SET DEFAULT "+c.Default)
+		}
+	} else if o.Default != c.Default {
+		if c.Default == "" {
+			out = append(out, "ALTER TABLE "+tq+" ALTER COLUMN "+cq+" DROP DEFAULT")
+		} else {
+			out = append(out, "ALTER TABLE "+tq+" ALTER COLUMN "+cq+" SET DEFAULT "+c.Default)
+		}
+	}
+	if o.Nullable != c.Nullable {
+		if c.Nullable {
+			out = append(out, "ALTER TABLE "+tq+" ALTER COLUMN "+cq+" DROP NOT NULL")
+		} else {
+			out = append(out, "ALTER TABLE "+tq+" ALTER COLUMN "+cq+" SET NOT NULL")
+		}
+	}
+	return out
+}
+
+// Remake is SQLite's change of a table it can't ALTER: the table made
+// again as to is, the rows of from copied over (columns of the same name,
+// generated ones aside), from dropped and the new table renamed to it,
+// then to's indexes. The connection must have foreign keys off.
+func (d Dialect) Remake(from, to Table) []string {
+	tmp := to
+	tmp.Name = "nexus__new_" + to.Name
+	tmp.Indexes = nil
+	tmp.Columns = slices.Clone(to.Columns)
+	for i := range tmp.Columns {
+		tmp.Columns[i].Index = false
+	}
+	out := d.Create(tmp, false)[:1]
+	var cols []string
+	for _, c := range to.Columns {
+		if oc, ok := from.Column(c.Name); ok && oc.Generated.Zero() && c.Generated.Zero() {
+			cols = append(cols, d.Quote(c.Name))
+		}
+	}
+	if len(cols) > 0 {
+		list := strings.Join(cols, ", ")
+		out = append(out, "INSERT INTO "+d.Quote(tmp.Name)+" ("+list+") SELECT "+list+" FROM "+d.Quote(from.Name))
+	}
+	out = append(out, "DROP TABLE "+d.Quote(from.Name), "ALTER TABLE "+d.Quote(tmp.Name)+" RENAME TO "+d.Quote(to.Name))
+	return append(out, d.Create(to, false)[1:]...)
+}
+
+// CreateExtension and DropExtension install and remove a Postgres
+// extension; other dialects have none.
+func (d Dialect) CreateExtension(name string) []string {
+	if d.Name != "postgres" {
+		return nil
+	}
+	return []string{"CREATE EXTENSION IF NOT EXISTS " + d.Quote(name)}
+}
+
+func (d Dialect) DropExtension(name string) []string {
+	if d.Name != "postgres" {
+		return nil
+	}
+	return []string{"DROP EXTENSION IF EXISTS " + d.Quote(name)}
 }
 
 // Sort orders tables so each comes after the tables its foreign keys
@@ -252,9 +676,11 @@ func Sort(tables []Table) []Table {
 			return
 		}
 		state[n] = 1
-		for _, fk := range byName[n].FKs {
-			if _, ok := byName[fk.Table]; ok && fk.Table != n {
-				visit(fk.Table)
+		for _, c := range byName[n].Columns {
+			if c.FK != nil {
+				if _, ok := byName[c.FK.Table]; ok && c.FK.Table != n {
+					visit(c.FK.Table)
+				}
 			}
 		}
 		state[n] = 2
@@ -266,163 +692,11 @@ func Sort(tables []Table) []Table {
 	return out
 }
 
-// Step is one statement of a migration, and a note when it needs a
-// person (a drop that loses data, a change SQLite can't make).
-type Step struct {
-	SQL  string
-	Note string
-}
-
-// Diff is the steps from the tables old to the tables new: tables created
-// and dropped, columns added, dropped and changed, indexes, foreign keys.
-// A rename shows as a drop and an add: the note says so.
-func (d Dialect) Diff(old, new []Table) []Step {
-	var steps []Step
-	oldBy := map[string]Table{}
-	for _, t := range old {
-		oldBy[t.Name] = t
+// For is the dialect named (postgres, mysql, sqlite), quoting as the ORM
+// does.
+func For(name string) Dialect {
+	if name == "mysql" {
+		return Dialect{Name: name, Quote: func(s string) string { return "`" + strings.ReplaceAll(s, "`", "``") + "`" }}
 	}
-	newBy := map[string]Table{}
-	for _, t := range new {
-		newBy[t.Name] = t
-	}
-	for _, t := range Sort(new) {
-		o, ok := oldBy[t.Name]
-		if !ok {
-			for _, s := range d.Create(t, false) {
-				steps = append(steps, Step{SQL: s})
-			}
-			continue
-		}
-		steps = append(steps, d.alter(o, t)...)
-	}
-	sorted := Sort(old)
-	slices.Reverse(sorted)
-	for _, t := range sorted {
-		if _, ok := newBy[t.Name]; !ok {
-			steps = append(steps, Step{SQL: "DROP TABLE " + d.Quote(t.Name), Note: "drops table " + t.Name + " and its rows; if it was renamed, write the rename instead"})
-		}
-	}
-	return steps
-}
-
-func (d Dialect) alter(o, t Table) []Step {
-	var steps []Step
-	tq := d.Quote(t.Name)
-	oldCols := map[string]Column{}
-	for _, c := range o.Columns {
-		oldCols[c.Name] = c
-	}
-	newCols := map[string]bool{}
-	for _, c := range t.Columns {
-		newCols[c.Name] = true
-		oc, ok := oldCols[c.Name]
-		if !ok {
-			def := c
-			note := ""
-			if !c.Nullable && !c.PK {
-				// A NOT NULL column added to rows that exist needs a value.
-				note = "adds NOT NULL column " + t.Name + "." + c.Name + ": give existing rows a value (a DEFAULT) if the table has any"
-			}
-			if c.Generated != "" && d.Name == "sqlite" {
-				note = "SQLite can't add the stored generated column " + t.Name + "." + c.Name + " to an existing table: rebuild the table"
-			}
-			steps = append(steps, Step{SQL: "ALTER TABLE " + tq + " ADD COLUMN " + d.columnSQL(def, false), Note: note})
-			if c.Index && !c.Unique {
-				steps = append(steps, Step{SQL: d.createIndex(t.Name, c.Name, false)})
-			}
-			continue
-		}
-		if oc.Generated != c.Generated {
-			steps = append(steps, Step{Note: "the expression generating " + t.Name + "." + c.Name + " changed: drop the column and add it again"})
-		} else if d.Type(oc) != d.Type(c) || oc.Nullable != c.Nullable {
-			steps = append(steps, d.changeColumn(t.Name, oc, c)...)
-		}
-		if oc.Unique != c.Unique {
-			if c.Unique {
-				steps = append(steps, Step{SQL: "CREATE UNIQUE INDEX " + d.Quote("uniq_"+t.Name+"_"+c.Name) + " ON " + tq + " (" + d.Quote(c.Name) + ")"})
-			} else {
-				steps = append(steps, Step{Note: "drop the unique constraint on " + t.Name + "." + c.Name + " (its name is the database's)"})
-			}
-		}
-		if oc.Index != c.Index && !c.Unique {
-			if c.Index {
-				steps = append(steps, Step{SQL: d.createIndex(t.Name, c.Name, false)})
-			} else {
-				steps = append(steps, Step{SQL: d.dropIndex(t.Name, c.Name)})
-			}
-		}
-	}
-	for _, c := range o.Columns {
-		if !newCols[c.Name] {
-			steps = append(steps, Step{SQL: "ALTER TABLE " + tq + " DROP COLUMN " + d.Quote(c.Name), Note: "drops column " + t.Name + "." + c.Name + " and its data; if it was renamed, write the rename instead"})
-		}
-	}
-	oldIx := map[string]string{}
-	for _, ix := range o.Indexes {
-		oldIx[ix.Name] = ix.SQL
-	}
-	newIx := map[string]bool{}
-	for _, ix := range t.Indexes {
-		newIx[ix.Name] = true
-		switch was, ok := oldIx[ix.Name]; {
-		case !ok:
-			steps = append(steps, Step{SQL: ix.SQL})
-		case was != ix.SQL:
-			steps = append(steps, Step{SQL: d.dropNamedIndex(t.Name, ix.Name)}, Step{SQL: ix.SQL})
-		}
-	}
-	for _, ix := range o.Indexes {
-		if !newIx[ix.Name] {
-			steps = append(steps, Step{SQL: d.dropNamedIndex(t.Name, ix.Name)})
-		}
-	}
-	oldFK := map[ForeignKey]bool{}
-	for _, fk := range o.FKs {
-		oldFK[fk] = true
-	}
-	for _, fk := range t.FKs {
-		if oldFK[fk] {
-			continue
-		}
-		if d.Name == "sqlite" {
-			steps = append(steps, Step{Note: "SQLite can't add a foreign key to " + t.Name + "." + fk.Column + " to an existing table: rebuild the table to enforce it"})
-			continue
-		}
-		steps = append(steps, Step{SQL: "ALTER TABLE " + tq + " ADD " + d.fkSQL(fk)})
-	}
-	return steps
-}
-
-func (d Dialect) dropIndex(table, col string) string {
-	return d.dropNamedIndex(table, d.indexName(table, col))
-}
-
-func (d Dialect) dropNamedIndex(table, name string) string {
-	if d.Name == "mysql" {
-		return "DROP INDEX " + d.Quote(name) + " ON " + d.Quote(table)
-	}
-	return "DROP INDEX " + d.Quote(name)
-}
-
-func (d Dialect) changeColumn(table string, o, c Column) []Step {
-	tq, cq := d.Quote(table), d.Quote(c.Name)
-	switch d.Name {
-	case "postgres":
-		var steps []Step
-		if d.Type(o) != d.Type(c) {
-			steps = append(steps, Step{SQL: "ALTER TABLE " + tq + " ALTER COLUMN " + cq + " TYPE " + d.Type(c) + " USING " + cq + "::" + d.Type(c)})
-		}
-		if o.Nullable != c.Nullable {
-			if c.Nullable {
-				steps = append(steps, Step{SQL: "ALTER TABLE " + tq + " ALTER COLUMN " + cq + " DROP NOT NULL"})
-			} else {
-				steps = append(steps, Step{SQL: "ALTER TABLE " + tq + " ALTER COLUMN " + cq + " SET NOT NULL", Note: "fails while " + table + "." + c.Name + " holds NULLs"})
-			}
-		}
-		return steps
-	case "mysql":
-		return []Step{{SQL: "ALTER TABLE " + tq + " MODIFY COLUMN " + d.columnSQL(c, false)}}
-	}
-	return []Step{{Note: fmt.Sprintf("SQLite can't change %s.%s to %s: rebuild the table", table, c.Name, d.Type(c))}}
+	return Dialect{Name: name, Quote: func(s string) string { return `"` + strings.ReplaceAll(s, `"`, `""`) + `"` }}
 }

@@ -91,6 +91,7 @@ func (r RawQuerySet[T]) Iter(ctx context.Context) iter.Seq2[T, error] {
 				yield(zero, err)
 				return
 			}
+			r.m.adopt(&row)
 			if !yield(row, nil) {
 				return
 			}

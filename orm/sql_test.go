@@ -7,6 +7,7 @@ import (
 	"testing"
 
 	"github.com/paulmanoni/nexus/orm/internal/schema"
+	"github.com/paulmanoni/nexus/orm/migration"
 )
 
 type SQLBase struct {
@@ -220,9 +221,9 @@ func TestSearchSQL(t *testing.T) {
 				`(similarity("docs"."title", $10))`,
 			}},
 		{searchModel(t, sqlNote{}, "notes"), mysql{},
-			"WHERE ((MATCH(`notes`.`search`) AGAINST(? IN NATURAL LANGUAGE MODE) AND MATCH(`notes`.`search`) AGAINST(? IN NATURAL LANGUAGE MODE) AND LOWER(`notes`.`title`) LIKE LOWER(?) ESCAPE '!') AND MATCH(`notes`.`title`, `notes`.`body`) AGAINST(? IN NATURAL LANGUAGE MODE))",
+			"WHERE ((MATCH(`notes`.`search`) AGAINST(? IN BOOLEAN MODE) AND MATCH(`notes`.`search`) AGAINST(? IN BOOLEAN MODE) AND LOWER(`notes`.`title`) LIKE LOWER(?) ESCAPE '!') AND MATCH(`notes`.`title`, `notes`.`body`) AGAINST(? IN BOOLEAN MODE))",
 			[]string{
-				"(MATCH(`notes`.`title`, `notes`.`body`) AGAINST(? IN NATURAL LANGUAGE MODE))",
+				"(MATCH(`notes`.`title`, `notes`.`body`) AGAINST(? IN BOOLEAN MODE))",
 				"(SUBSTRING(`notes`.`body`, GREATEST(1, LOCATE(?, `notes`.`body`) - 40), 160))",
 			}},
 	} {
@@ -241,6 +242,11 @@ func TestSearchSQL(t *testing.T) {
 		}
 	}
 	b := newBuilder(mysql{}, searchModel(t, sqlNote{}, "notes"))
+	b.against([]string{"x"}, `web the "in practice" -java or go rust`)
+	if want := `(+"web" +"in practice" -"java") (+"rust")`; !reflect.DeepEqual(b.args(), []any{want}) {
+		t.Errorf("mysql boolean search %q, want %q", b.args(), want)
+	}
+	b = newBuilder(mysql{}, searchModel(t, sqlNote{}, "notes"))
 	b.ann = map[string]Expr{"sim": Similarity("title", "go")}
 	if _, err := b.ref("sim"); err == nil {
 		t.Error("Similarity on MySQL")
@@ -275,23 +281,29 @@ func TestSearchDDL(t *testing.T) {
 			"CREATE TABLE \"docs\" (\n  \"id\" INTEGER PRIMARY KEY AUTOINCREMENT,\n  \"title\" TEXT NOT NULL,\n  \"body\" TEXT NOT NULL,\n  \"search\" TEXT GENERATED ALWAYS AS (COALESCE(\"title\", '') || ' ' || COALESCE(\"body\", '')) STORED,\n  \"embedding\" TEXT\n)",
 		}, ""},
 		{docs, mysql{}, nil, "MySQL has no vector type"},
+		{notes, postgres{}, []string{
+			"CREATE TABLE \"notes\" (\n  \"id\" BIGSERIAL PRIMARY KEY,\n  \"title\" TEXT NOT NULL,\n  \"body\" TEXT NOT NULL,\n  \"search\" tsvector GENERATED ALWAYS AS ((to_tsvector('english', COALESCE(\"title\", '') || ' ' || COALESCE(\"body\", '')))) STORED\n)",
+			`CREATE INDEX "notes_search_fulltext" ON "notes" USING gin ("search")`,
+			`CREATE INDEX "notes_text" ON "notes" USING gin (((to_tsvector('simple', COALESCE("title", '') || ' ' || COALESCE("body", '')))))`,
+		}, ""},
 		{notes, mysql{}, []string{
 			"CREATE TABLE `notes` (\n  `id` BIGINT PRIMARY KEY AUTO_INCREMENT,\n  `title` TEXT NOT NULL,\n  `body` TEXT NOT NULL,\n  `search` TEXT GENERATED ALWAYS AS (CONCAT_WS(' ', `title`, `body`)) STORED\n)",
 			"CREATE FULLTEXT INDEX `notes_search_fulltext` ON `notes` (`search`)",
 			"CREATE FULLTEXT INDEX `notes_text` ON `notes` (`title`, `body`)",
 		}, ""},
 	} {
-		ts, err := c.m.tables(c.d)
+		err := c.m.madeOn(c.d)
 		if c.err != "" {
 			if err == nil || !strings.Contains(err.Error(), c.err) {
 				t.Errorf("%s: %v, want %q", c.d.Name(), err, c.err)
 			}
 			continue
 		}
-		if err != nil {
-			t.Fatal(err)
+		ts, terr := c.m.tables()
+		if err != nil || terr != nil {
+			t.Fatal(err, terr)
 		}
-		got := schema.Dialect{Name: c.d.Name(), Quote: c.d.Quote}.Create(ts[0], false)
+		got := schema.For(c.d.Name()).Create(ts[0], false)
 		if !slices.Equal(got, c.want) {
 			t.Errorf("%s:\n got %q\nwant %q", c.d.Name(), got, c.want)
 		}
@@ -300,14 +312,21 @@ func TestSearchDDL(t *testing.T) {
 		t.Errorf("extensions %v", got)
 	}
 
-	ts, _ := docs.tables(postgres{})
+	// A changed index is dropped and made again.
+	ts, _ := docs.tables()
 	changed := ts[0]
-	changed.Indexes = []schema.Index{changed.Indexes[0], {Name: "docs_ivf", SQL: `CREATE INDEX "docs_ivf" ON "docs" USING ivfflat ("embedding" vector_l2_ops) WITH (lists = 200)`}}
-	var steps []string
-	for _, s := range (schema.Dialect{Name: "postgres", Quote: postgres{}.Quote}).Diff(ts, []schema.Table{changed}) {
-		steps = append(steps, s.SQL)
+	changed.Indexes = []schema.Index{changed.Indexes[0], {Name: "docs_ivf", SQL: schema.Dialects{Postgres: `CREATE INDEX "docs_ivf" ON "docs" USING ivfflat ("embedding" vector_l2_ops) WITH (lists = 200)`}}}
+	from := migration.NewState(ts, nil)
+	ops, _ := migration.Diff(from, migration.NewState([]schema.Table{changed}, nil), func(string) bool { return false })
+	steps, err := (migration.Migration{Operations: ops}).Forwards("postgres", from)
+	if err != nil {
+		t.Fatal(err)
 	}
-	if want := []string{`DROP INDEX "docs_ivf"`, changed.Indexes[1].SQL, `DROP INDEX "docs_title_gin"`, `DROP INDEX "docs_embedding_hnsw"`, `DROP INDEX "docs_body_fulltext"`}; !slices.Equal(steps, want) {
-		t.Errorf("diff %q", steps)
+	var sqls []string
+	for _, s := range steps {
+		sqls = append(sqls, s.SQL)
+	}
+	if want := []string{`DROP INDEX "docs_title_gin"`, `DROP INDEX "docs_embedding_hnsw"`, `DROP INDEX "docs_ivf"`, `DROP INDEX "docs_body_fulltext"`, changed.Indexes[1].SQL.Postgres}; !slices.Equal(sqls, want) {
+		t.Errorf("diff %q", sqls)
 	}
 }

@@ -10,6 +10,7 @@ import (
 	"strconv"
 	"strings"
 	"unicode"
+	"unicode/utf8"
 )
 
 // Text search, Django's contrib.postgres.search, and vector search,
@@ -315,9 +316,37 @@ func (m match) sql(b *builder) (string, error) {
 	return b.likeWords(b.text(slices.Concat(cols...)), m.q.text), nil
 }
 
-// against is MySQL's full-text match of cols, a FULLTEXT index's.
+// against is MySQL's full-text match of cols, a FULLTEXT index's: the web
+// search in boolean mode, each alternative's words required and -words
+// excluded. A word InnoDB's index leaves out by default (shorter than
+// innodb_ft_min_token_size, 3, or a stopword) is not required, as
+// Postgres drops its stopwords: required, it would match nothing.
 func (b *builder) against(cols []string, text string) string {
-	return "MATCH(" + strings.Join(cols, ", ") + ") AGAINST(" + b.arg(text) + " IN NATURAL LANGUAGE MODE)"
+	var alts []string
+	for _, group := range webSearch(text) {
+		var words []string
+		for _, t := range group {
+			w := `"` + strings.ReplaceAll(t.text, `"`, "") + `"`
+			switch {
+			case t.not:
+				words = append(words, "-"+w)
+			case !strings.ContainsFunc(t.text, unicode.IsSpace) && (utf8.RuneCountInString(t.text) < 3 || innodbStopwords[strings.ToLower(t.text)]):
+			default:
+				words = append(words, "+"+w)
+			}
+		}
+		alts = append(alts, "("+strings.Join(words, " ")+")")
+	}
+	return "MATCH(" + strings.Join(cols, ", ") + ") AGAINST(" + b.arg(strings.Join(alts, " ")) + " IN BOOLEAN MODE)"
+}
+
+// innodbStopwords is InnoDB's default full-text stopword list.
+var innodbStopwords = map[string]bool{}
+
+func init() {
+	for _, w := range strings.Fields("a about an are as at be by com de en for from how i in is it la of on or that the this to und was what when where who will with www") {
+		innodbStopwords[w] = true
+	}
 }
 
 // SearchRank is how well the document matches the query, higher better:

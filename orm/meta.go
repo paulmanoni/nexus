@@ -13,6 +13,7 @@
 package orm
 
 import (
+	"cmp"
 	"database/sql"
 	"database/sql/driver"
 	"fmt"
@@ -71,7 +72,12 @@ type model struct {
 	// rels is the relation fields, by Go name lowercased and snake_case.
 	rels    map[string]*relation
 	relList []*relation
-	indexes []Index // the model's Indexes()
+	indexes []Index // Meta's Indexes, else Indexes()
+	meta    Meta
+	// state is the index of the embedded Model, nil for none, and
+	// stateOff its offset in the struct.
+	state    []int
+	stateOff uintptr
 
 	// The inverses other models' relations imply on this one, as of
 	// declarers' version invVer; see inverses.
@@ -140,6 +146,24 @@ func modelOf(t reflect.Type, names, table string) (*model, error) {
 
 type tableNamer interface{ TableName() string }
 
+// Meta is what a model declares about itself, Django's class Meta: a
+// method of the model, func (User) Meta() orm.Meta.
+//
+//	func (User) Meta() orm.Meta {
+//		return orm.Meta{Table: "accounts", Ordering: []string{"-created_at"}}
+//	}
+//
+// It wins over the model's TableName and Indexes methods; For's options
+// (orm.Table, orm.On, orm.Unmanaged) win over it, and under a names set
+// the set's <Names>TableName (LegacyTableName) does.
+type Meta struct {
+	Table     string   // the table; the plural of the type's name in snake_case otherwise
+	DB        string   // the database db.Bind registered, orm.On's; the default otherwise
+	Unmanaged bool     // the database's own table: never created or migrated, orm.Unmanaged's
+	Indexes   []Index  // its indexes, as Indexes() returns them
+	Ordering  []string // the order of a query that sets none, as OrderBy takes it
+}
+
 var (
 	scannerType = reflect.TypeFor[sql.Scanner]()
 	valuerType  = reflect.TypeFor[driver.Valuer]()
@@ -151,15 +175,24 @@ func buildModel(t reflect.Type, names, table string) (*model, error) {
 		return nil, fmt.Errorf("orm: %v is not a struct", t)
 	}
 	m := &model{Type: t, Name: t.Name(), Names: names, byName: map[string]*field{}, byCol: map[string]*field{}, computed: map[string]*field{}, rels: map[string]*relation{}}
+	var err error
+	if m.state, m.stateOff, err = modelState(t); err != nil && table != "-" {
+		return nil, err
+	}
+	v := reflect.New(t).Interface()
+	if mt, ok := v.(interface{ Meta() Meta }); ok {
+		m.meta = mt.Meta()
+	}
 	m.Table = table
 	if table == "" {
 		m.Table = tags.Plural(tags.Snake(t.Name()))
-		if tn, ok := reflect.New(t).Interface().(tableNamer); ok {
+		if tn, ok := v.(tableNamer); ok {
 			m.Table = tn.TableName()
 		}
+		m.Table = cmp.Or(m.meta.Table, m.Table)
 		// Under a names set, <Names>TableName (LegacyTableName) wins.
 		if names != "" {
-			if mt := reflect.New(t).MethodByName(strings.ToUpper(names[:1]) + names[1:] + "TableName"); mt.IsValid() {
+			if mt := reflect.ValueOf(v).MethodByName(strings.ToUpper(names[:1]) + names[1:] + "TableName"); mt.IsValid() {
 				if f, ok := mt.Interface().(func() string); ok {
 					m.Table = f()
 				}
@@ -191,7 +224,7 @@ func buildModel(t reflect.Type, names, table string) (*model, error) {
 	if len(m.Fields)+len(m.via) == 0 {
 		return nil, fmt.Errorf("orm: %s has no columns", m.Name)
 	}
-	if err := m.declared(reflect.New(t).Interface()); err != nil {
+	if err := m.declared(v); err != nil {
 		return nil, err
 	}
 	for _, r := range m.relList {
@@ -277,9 +310,9 @@ func collect(m *model, t reflect.Type, index []int, prefix string) error {
 	return nil
 }
 
-// declared reads what the model declares by method, Django's Meta: its
-// generated columns' expressions (Generated, by Go field name) and its
-// indexes (Indexes).
+// declared reads what the model declares by method: its generated
+// columns' expressions (Generated, by Go field name) and its indexes
+// (Meta's, else Indexes).
 func (m *model) declared(v any) error {
 	if g, ok := v.(interface{ Generated() map[string]Expr }); ok {
 		for name, e := range g.Generated() {
@@ -297,6 +330,9 @@ func (m *model) declared(v any) error {
 	}
 	if ix, ok := v.(interface{ Indexes() []Index }); ok {
 		m.indexes = ix.Indexes()
+	}
+	if m.meta.Indexes != nil {
+		m.indexes = m.meta.Indexes
 	}
 	return nil
 }

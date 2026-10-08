@@ -1606,7 +1606,20 @@ nexus generate frontend    Typed TS source tree from a manifest (--check = drift
 nexus generate handlers [./...]  Wire //nexus:-annotated handlers: write nexus_handlers_gen.go
                      per package + a main-package import aggregator. --check = CI drift gate.
                      (Run automatically by nexus dev/build; see §5.)
+nexus generate models [dir]  Write the ORM's generated code to disk: orm.Register[T]() for every
+                     type embedding orm.Model[T], row scanners, field sets (overlaid by
+                     dev/build/test/vet/lsp/makemigrations otherwise). --check = drift gate.
 nexus docs [topic]   Inline reference. --web opens the docs site (paulmanoni.github.io/nexus).
+nexus makemigrations [name]  Write the next ORM migration as Go (migrations/NNNN_name.go,
+                     migrations/<db>/ for another database): replays the registered migrations,
+                     diffs them with the models (orm.Model types, orm.For), asks about renames
+                     on a terminal (--noinput: remove+add with a note). --empty (a RunGo),
+                     --check (CI), --dry-run, --db. The app imports its migrations package.
+nexus migrate [target]  Apply the ORM's migrations (every database's; orm.Migrate() does it at
+                     boot), or take one database (--db) to target, unapplying later ones
+                     ("zero": all). `nexus migrate v2` stays the codemod below.
+nexus showmigrations / nexus sqlmigrate <name> [--backwards]  [X]/[ ] per database; a
+                     migration's SQL for the database's dialect.
 nexus migrate v2 [dir]  Codemod a v1 project for v2: /v2 import paths (Go + templ), go.mod
                      requires at v2.0.0 (view dropped — it's in the root module), moved
                      symbols (nexus.Config → config.Runtime, nexus.Get → config.Get, …;

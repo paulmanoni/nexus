@@ -6,6 +6,102 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [2.29.0] - 2026-10-08
+
+The ORM entries ship as `orm/v0.5.0`.
+
+### Added
+
+- ORM: **`orm.Model[T]`, Django's `models.Model`.** A struct embedding `orm.Model[T]` (of
+  its own type) gets row methods — `Save` (INSERT when new, UPDATE once loaded),
+  `SaveFields` (`update_fields`), `Refresh`, `Delete`, `Using(schema)`, `Load(ctx,
+  paths…)` (prefetch onto one row), and `Add`/`Remove`/`Set` for many-to-many links —
+  and its manager with no package-level variable: `User{}.Objects()` /
+  `orm.Objects[User]()` (its package-level `orm.For[T]()` when it has one, so listeners
+  and mirrors apply), `Objects(schema)` = `orm.Of`. Rows read through any QuerySet, `Raw`,
+  `Get`, `Create`, `SelectRelated` or `PrefetchRelated` come back loaded with the schema
+  they came from. `orm.Related[R](row, relation)` is a QuerySet of a row's related rows
+  (foreign key, reverse, many-to-many, inverses). Embedding it twice, through a pointer,
+  or of another type fails boot with the reason; its state is unexported, so GORM and
+  JSON ignore it.
+- ORM: **`func (T) Meta() orm.Meta`**, Django's `class Meta`: `Table`, `DB`, `Unmanaged`,
+  `Indexes`, and `Ordering` (the order of a query that sets none; `OrderBy()` drops it).
+  `orm.For`'s options win over it; it wins over `TableName()` and `Indexes()`.
+- ORM: **`orm.Register[T]()`**: a registered model is bound to every app nexus boots and
+  checked at boot (through nexus's built-in options) and planned by `makemigrations`
+  without an `orm.For`. The nexus CLI generates a `Register` for every type embedding
+  `orm.Model` (beside the row scanners ormgen writes, overlaid by `nexus
+  dev/build/test/vet/lsp/makemigrations`); **`nexus generate models [--check]`** writes
+  the ORM's generated code to disk for a plain `go build`. `orm.Objects` registers on
+  first use.
+- ORM: **`Schema.Verify(ctx, app, models…)`**, the check `Schema.Check` runs at boot, as
+  a function for apps that pick their schema at run time.
+- ORM: **Django-style migration commands:** `nexus migrate [target]` applies every
+  database's pending migrations, or takes one database (`--db`) to a migration, unapplying
+  the later ones by their operations' reverses (`zero` for all); `nexus showmigrations`
+  lists them `[X]`/`[ ]` per database; `nexus sqlmigrate <name> [--backwards]` prints a
+  migration's SQL for the database's dialect. They run the app as a tool (its main never
+  runs) and connect with nexus.toml's `[databases]` blocks. `nexus migrate v2` stays the
+  v1 → v2 codemod, a subcommand. `orm.ApplyMigrations(ctx, db, target, migrations…)` does
+  the same for tools and tests.
+- `db.ConfigFor(name)`: the `Config` a `[databases.<name>]` block connects with, for tools
+  opening a database outside an app.
+
+### Changed
+
+- ORM: **migrations are Go files, Django's.** `nexus makemigrations` writes
+  `migrations/NNNN_name.go` (package `migrations`; `migrations/<db>` for another
+  database), registering an `m.Migration{Name, DB, Dependencies, Operations}` from its
+  `init` (`github.com/paulmanoni/nexus/orm/migration`): `CreateModel`, `DeleteModel`,
+  `RenameModel`/`AlterModelTable`, `AddField`, `RemoveField`, `AlterField`,
+  `RenameField`, `AddIndex`/`RemoveIndex`, `AddConstraint`/`RemoveConstraint` (unique
+  together, check), `CreateExtension`, `RunSQL` and `RunGo` (a data migration in the
+  migration's transaction), over fields `m.BigAuto()`, `m.Varchar(n)`, `m.Text()`,
+  `m.Time()`, `m.Vector(n)`, `m.TSVector()`, … with `.Null()`, `.Unique()`, `.Index()`,
+  `.Default(v)`, `.FK(table, column)`, `.Generated(…)`. Each operation writes its SQL per
+  dialect, forwards and back (SQLite rebuilds a table it can't alter). The state is the
+  replay of the migrations — no `schema.json` — diffed with the models (`orm.Model`
+  types and `orm.For` managers); a column or table gone where one alike appeared is asked
+  about on a terminal (`Did you rename users.mail to users.email? [y/N]`), `--noinput`
+  writing a removal and an addition with a note. `--empty` writes a `RunGo` to fill in.
+  `orm.Migrate()` applies the registered migrations at boot (every database's, in
+  dependency order; `orm.MigrateOn(db)` for one). The `.sql` + `schema.json` format,
+  `orm.Migrate(fsys, orm.MigrateDir(…))`, `orm.ApplyMigrations(ctx, db, fsys)`,
+  `orm.PlanMigration`, `orm.MigrationFile` and `orm.ServePlan` are gone; neither the
+  model tables' constraints nor their foreign keys are unnamed any more (`uniq_…`,
+  `fk_…`, `idx_…`), and a GORM `uniqueIndex:name` shared by several fields is one unique
+  constraint over them rather than a unique column each.
+- ORM: the interface `orm.Model` (any model's manager, as `CreateTables` and
+  `ormtest.Open` take it) is now **`orm.AnyManager`**: `orm.Model` is the generic base.
+- ORM: `orm.Of[T](schema)` and `orm.For` read the model's `Meta` for what their options
+  leave out.
+
+### Fixed
+
+- ORM: an empty condition beside another (`Filter(orm.Q{}).Filter(orm.Q{"id": 1})`,
+  `Filter(orm.And())`) wrote invalid SQL (`(x AND )`); an empty `Q`, `And`, `Or` or `Not`
+  now drops out of the combination, as Django's `Q()`.
+- ORM: `gorm:"-"` hid a field from the ORM even when its own `orm:` tag named it (a
+  column, a path read through a relation); the ORM's tag now wins, GORM still ignores the
+  field.
+
+- ORM: **text search on MySQL follows web search syntax.** `__search`, `Match` and
+  `SearchRank` ran `MATCH … AGAINST` in natural language mode, which matches any of the
+  words and ignores `-word`, `"phrases"` and `or`; they now run in boolean mode, every word
+  of an alternative required and `-word` excluded, as on Postgres. A word InnoDB doesn't
+  index (shorter than 3 letters, a stopword) isn't required, as Postgres drops stopwords.
+- ORM: a `FullTextIndex` of a `TSVector` field (the model MySQL indexes with FULLTEXT) failed
+  to create on Postgres (`to_tsvector(tsvector)`); it is a GIN index of the column itself.
+- ORM: migrations changing a column's type now apply on Postgres and MySQL: widening an
+  auto-increment key (`int32` to `int64`) wrote `TYPE BIGSERIAL` on Postgres (now `BIGINT`,
+  and its sequence `AS BIGINT`) and dropped `AUTO_INCREMENT` on MySQL; an integer column
+  made `bool` or back failed Postgres's cast (now `<> 0` / `CASE`); MySQL's `MODIFY COLUMN`
+  of a unique column added a second unique index; and a column losing its index on MySQL
+  was changed to `TEXT` before the index was dropped (now dropped first).
+- ORM: `CreateTables` (and `ormtest.Open`) made every extension `orm.CreateExtension`
+  declared, whichever database (`orm.On`) it was declared for; it makes those of its
+  models' databases.
+
 ## [2.28.1] - 2026-10-08
 
 The ORM entries ship as `orm/v0.4.1`.

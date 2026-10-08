@@ -160,6 +160,7 @@ func (m *Manager[T]) BulkCreate(ctx context.Context, rows []*T) error {
 		})
 	}
 	for _, row := range rows {
+		m.adopt(row)
 		if err := m.afterCreate(ctx, row); err != nil {
 			return err
 		}
@@ -268,6 +269,12 @@ func (m *Manager[T]) Save(ctx context.Context, row *T) error {
 	if m.err != nil {
 		return m.err
 	}
+	return m.save(ctx, row, nil)
+}
+
+// save writes fields of row (every one for none) and the auto_now ones,
+// set to now, to its row.
+func (m *Manager[T]) save(ctx context.Context, row *T, fields []*field) error {
 	pk := m.meta.PK
 	if pk == nil {
 		return fmt.Errorf("orm: %s has no primary key to save by", m.meta.Name)
@@ -280,7 +287,7 @@ func (m *Manager[T]) Save(ctx context.Context, row *T) error {
 	v := reflect.ValueOf(row).Elem()
 	values := Set{}
 	for _, f := range m.meta.Fields {
-		if f.PK || f.Gen != nil {
+		if f.PK || f.Gen != nil || fields != nil && !f.AutoNow && !slices.Contains(fields, f) {
 			continue
 		}
 		dst := fieldOf(v, f.Index)
@@ -290,6 +297,11 @@ func (m *Manager[T]) Save(ctx context.Context, row *T) error {
 			}
 		}
 		values[f.Name] = value(dst)
+	}
+	for _, f := range fields {
+		if _, ok := values[f.Name]; !ok {
+			return fmt.Errorf("orm: %s.%s can't be saved: it is the primary key, generated, or read through a relation", m.meta.Name, f.Name)
+		}
 	}
 	key := value(peek(v, pk.Index, pk.Type))
 	n, err := m.Filter(Q{pk.Name: key}).Update(hush(ctx), values)
@@ -307,6 +319,7 @@ func (m *Manager[T]) Save(ctx context.Context, row *T) error {
 			return m.notFound()
 		}
 	}
+	m.adopt(row)
 	if h, ok := any(row).(AfterSaver); ok {
 		if err := h.AfterSave(ctx); err != nil {
 			return err
@@ -318,7 +331,8 @@ func (m *Manager[T]) Save(ctx context.Context, row *T) error {
 	return nil
 }
 
-// Remove deletes row's row, found by primary key.
+// Remove deletes row's row, found by primary key. A row of a Model is new
+// again after.
 func (m *Manager[T]) Remove(ctx context.Context, row *T) error {
 	if m.err != nil {
 		return m.err
@@ -339,6 +353,9 @@ func (m *Manager[T]) Remove(ctx context.Context, row *T) error {
 	}
 	if n == 0 {
 		return m.notFound()
+	}
+	if m.meta.state != nil {
+		m.state(row).loaded = false
 	}
 	if h, ok := any(row).(AfterDeleter); ok {
 		if err := h.AfterDelete(ctx); err != nil {

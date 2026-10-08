@@ -4,6 +4,7 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
+	"strings"
 	"testing"
 
 	"github.com/paulmanoni/nexus/v2"
@@ -195,5 +196,33 @@ func TestConfigFor_Session(t *testing.T) {
 	want := map[string]string{"foreign_key_checks": "0", "sql_mode": "ANSI", "autocommit": "on", "long_query_time": "1.5"}
 	if !reflect.DeepEqual(cfg.Session, want) {
 		t.Errorf("Session = %v, want %v", cfg.Session, want)
+	}
+}
+
+func TestConfigFor(t *testing.T) {
+	const toml = `
+[databases.main]
+driver   = "mysql"
+host     = "db.local"
+port     = "3307"
+user     = "app"
+password = "secret"
+name     = "shop"
+
+[databases.bad]
+driver = "mongo"
+`
+	if _, err := config.Load(writeTOML(t, toml)); err != nil {
+		t.Fatalf("config.Load: %v", err)
+	}
+	cfg, err := ConfigFor("main")
+	if err != nil || cfg.Driver != MySQL || cfg.Host != "db.local" || cfg.Port != "3307" || cfg.Database != "shop" || cfg.Password != "secret" {
+		t.Fatalf("ConfigFor(main) = %+v, %v", cfg, err)
+	}
+	if _, err := ConfigFor("bad"); err == nil || !strings.Contains(err.Error(), "mongo") {
+		t.Fatalf("a bad driver: %v", err)
+	}
+	if _, err := ConfigFor("absent"); err == nil || !strings.Contains(err.Error(), "[databases.absent]") {
+		t.Fatalf("a missing block: %v", err)
 	}
 }

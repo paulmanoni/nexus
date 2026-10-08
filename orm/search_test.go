@@ -15,13 +15,14 @@ import (
 	"github.com/paulmanoni/nexus/orm/ormtest"
 )
 
+// The search models are on databases of their own: MySQL holds neither,
+// and each needs an extension a Postgres server may not have.
 type Doc struct {
-	ID        int64
-	Title     string
-	Body      string
-	Search    orm.TSVector `orm:"generated"`
-	Embedding orm.Vector   `orm:"vector:3"`
-	Score     float64      `orm:"computed"`
+	ID     int64
+	Title  string
+	Body   string
+	Search orm.TSVector `orm:"generated"`
+	Score  float64      `orm:"computed"`
 }
 
 func (Doc) Generated() map[string]orm.Expr {
@@ -29,27 +30,63 @@ func (Doc) Generated() map[string]orm.Expr {
 }
 
 func (Doc) Indexes() []orm.Index {
-	return []orm.Index{
-		orm.GinIndex("search"),
-		orm.HnswIndex("embedding").Ops(orm.Cosine),
+	return []orm.Index{orm.GinIndex("search"), orm.GinIndex("title").Trigram()}
+}
+
+type Chunk struct {
+	ID        int64
+	Title     string
+	Body      string
+	Embedding orm.Vector `orm:"vector:3"`
+	Score     float64    `orm:"computed"`
+}
+
+func (Chunk) Indexes() []orm.Index {
+	return []orm.Index{orm.HnswIndex("embedding").Ops(orm.Cosine)}
+}
+
+var (
+	Docs     = orm.For[Doc](orm.On("search"))
+	Trigrams = orm.CreateExtension("pg_trgm", orm.On("search"))
+	Chunks   = orm.For[Chunk](orm.On("vectors"))
+	Vectors  = orm.CreateExtension("vector", orm.On("vectors"))
+)
+
+// needs skips the test on a server that can't hold the search models:
+// MySQL, or a Postgres without one of the extensions.
+func needs(t *testing.T, exts ...string) {
+	t.Helper()
+	switch ormtest.Driver() {
+	case "mysql":
+		t.Skip("the search models are Postgres's and SQLite's: MySQL has no vectors or trigram similarity")
+	case "postgres":
+		ctx := ormtest.Open(t)
+		d, _ := orm.DBFrom(ctx)
+		for _, e := range exts {
+			var ok bool
+			if err := d.SQL().QueryRowContext(ctx, "SELECT EXISTS (SELECT 1 FROM pg_available_extensions WHERE name = $1)", e).Scan(&ok); err != nil {
+				t.Fatal(err)
+			}
+			if !ok {
+				t.Skipf("the server has no %s extension to install", e)
+			}
+		}
 	}
 }
 
-var Docs = orm.For[Doc]()
-
-func docOpen(t *testing.T) []Doc {
+func chunkOpen(t *testing.T) []Chunk {
 	t.Helper()
-	ctx := ormtest.Open(t, Docs)
-	ormtest.Seed(t, ctx, Docs,
-		&Doc{Title: "Go web servers", Body: "net/http and routing", Embedding: orm.Vector{1, 0, 0}},
-		&Doc{Title: "Rust in practice", Body: "a web server in Rust", Embedding: orm.Vector{0, 1, 0}},
-		&Doc{Title: "Java streams", Body: "collections, not the web", Embedding: orm.Vector{0.9, 0.1, 0}},
-		&Doc{Title: "Gardening", Body: "tomatoes", Embedding: orm.Vector{0, 0, 1}})
-	docs, err := Docs.OrderBy("id").All(ctx)
+	ctx := ormtest.Open(t, Chunks)
+	ormtest.Seed(t, ctx, Chunks,
+		&Chunk{Title: "Go web servers", Body: "net/http and routing", Embedding: orm.Vector{1, 0, 0}},
+		&Chunk{Title: "Rust in practice", Body: "a web server in Rust", Embedding: orm.Vector{0, 1, 0}},
+		&Chunk{Title: "Java streams", Body: "collections, not the web", Embedding: orm.Vector{0.9, 0.1, 0}},
+		&Chunk{Title: "Gardening", Body: "tomatoes", Embedding: orm.Vector{0, 0, 1}})
+	chunks, err := Chunks.OrderBy("id").All(ctx)
 	if err != nil {
 		t.Fatal(err)
 	}
-	return docs
+	return chunks
 }
 
 func docTitles(ds []Doc) []string {
@@ -60,15 +97,76 @@ func docTitles(ds []Doc) []string {
 	return out
 }
 
+func chunkTitles(cs []Chunk) []string {
+	out := make([]string, len(cs))
+	for i, c := range cs {
+		out[i] = c.Title
+	}
+	return out
+}
+
+// Note is a document every database searches: MySQL by its FULLTEXT
+// indexes, Postgres by the GIN index of its tsvector.
+type Note struct {
+	ID     int64
+	Title  string
+	Body   string
+	Search orm.TSVector `orm:"generated"`
+	Score  float64      `orm:"computed"`
+}
+
+func (Note) Generated() map[string]orm.Expr {
+	return map[string]orm.Expr{"Search": orm.SearchVector("title", "body").Config("english")}
+}
+
+func (Note) Indexes() []orm.Index {
+	return []orm.Index{orm.FullTextIndex("search"), orm.FullTextIndex("title", "body")}
+}
+
+var Notes = orm.For[Note]()
+
+func TestFullTextSearch(t *testing.T) {
+	ctx := ormtest.Open(t, Notes)
+	ormtest.Seed(t, ctx, Notes,
+		&Note{Title: "Go web servers", Body: "net/http and routing"},
+		&Note{Title: "Rust in practice", Body: "a web server in Rust"},
+		&Note{Title: "Java streams", Body: "collections, not the web"},
+		&Note{Title: "Gardening", Body: "tomatoes"})
+	doc, q := orm.SearchVector("title", "body"), orm.SearchQuery("web")
+	for _, c := range []struct {
+		q    orm.Cond
+		want []string
+	}{
+		{orm.Q{"search__search": "web -java"}, []string{"Go web servers", "Rust in practice"}},
+		{orm.Q{"title__search": `"in practice" or tomatoes`}, []string{"Rust in practice", "Gardening"}},
+		{orm.Match(doc, orm.SearchQuery("server rust")), []string{"Rust in practice"}},
+		{orm.Match(doc, q), []string{"Go web servers", "Rust in practice", "Java streams"}},
+	} {
+		got, err := Notes.Filter(c.q).OrderBy("id").Values[string]("title").All(ctx)
+		if err != nil || !slices.Equal(got, c.want) {
+			t.Errorf("%v: %v, %v", c.q, got, err)
+		}
+	}
+	ranked, err := Notes.Filter(orm.Match(doc, q)).Annotate("score", orm.SearchRank(doc, q)).OrderBy("-score", "id").All(ctx)
+	if err != nil || len(ranked) != 3 || ranked[2].Score <= 0 {
+		t.Fatalf("ranked %v, %v", ranked, err)
+	}
+}
+
 func TestTextSearch(t *testing.T) {
+	needs(t, "pg_trgm")
 	ctx := ormtest.Open(t, Docs)
 	ormtest.Seed(t, ctx, Docs,
 		&Doc{Title: "Go web servers", Body: "net/http and routing"},
 		&Doc{Title: "Rust in practice", Body: "a web server in Rust"},
 		&Doc{Title: "Java streams", Body: "collections, not the web"},
 		&Doc{Title: "Gardening", Body: "tomatoes"})
+	want := orm.TSVector("Rust in practice a web server in Rust")
+	if ormtest.Driver() == "postgres" {
+		want = "'practic':3A 'rust':1A,8B 'server':6B 'web':5B"
+	}
 	all, err := Docs.OrderBy("id").All(ctx)
-	if err != nil || all[1].Search != "Rust in practice a web server in Rust" {
+	if err != nil || all[1].Search != want {
 		t.Fatalf("the generated column: %q, %v", all[1].Search, err)
 	}
 	for _, c := range []struct {
@@ -92,7 +190,11 @@ func TestTextSearch(t *testing.T) {
 		t.Fatalf("ranked %v %v, %v", docTitles(ranked), ranked, err)
 	}
 	heads, err := Docs.Filter(orm.Q{"id": 3}).Annotate("head", orm.Headline("body", orm.SearchQuery("web"))).Values[string]("head").All(ctx)
-	if err != nil || !slices.Equal(heads, []string{"collections, not the web"}) {
+	head := "collections, not the web"
+	if ormtest.Driver() == "postgres" {
+		head = "collections, not the <b>web</b>"
+	}
+	if err != nil || !slices.Equal(heads, []string{head}) {
 		t.Fatalf("headline %v, %v", heads, err)
 	}
 	sim, err := Docs.Filter(orm.Q{"id": 4}).Annotate("sim", orm.Similarity("title", "gardenin")).Values[float64]("sim").All(ctx)
@@ -105,20 +207,21 @@ func TestTextSearch(t *testing.T) {
 }
 
 func TestVectorSearch(t *testing.T) {
-	docs := docOpen(t)
-	if !slices.Equal(docs[2].Embedding, orm.Vector{0.9, 0.1, 0}) {
-		t.Fatalf("read %v", docs[2].Embedding)
+	needs(t, "vector")
+	chunks := chunkOpen(t)
+	if !slices.Equal(chunks[2].Embedding, orm.Vector{0.9, 0.1, 0}) {
+		t.Fatalf("read %v", chunks[2].Embedding)
 	}
-	ctx := ormtest.Open(t, Docs)
-	for _, d := range docs {
-		d.ID = 0
-		if err := Docs.Create(ctx, &d); err != nil {
+	ctx := ormtest.Open(t, Chunks)
+	for _, c := range chunks {
+		c.ID = 0
+		if err := Chunks.Create(ctx, &c); err != nil {
 			t.Fatal(err)
 		}
 	}
-	near, err := Docs.Nearest("embedding", orm.Vector{1, 0, 0}, orm.Cosine).Limit(3).All(ctx)
-	if err != nil || !slices.Equal(docTitles(near), []string{"Go web servers", "Java streams", "Rust in practice"}) {
-		t.Fatalf("nearest %v, %v", docTitles(near), err)
+	near, err := Chunks.Nearest("embedding", orm.Vector{1, 0, 0}, orm.Cosine).Limit(3).All(ctx)
+	if err != nil || !slices.Equal(chunkTitles(near), []string{"Go web servers", "Java streams", "Rust in practice"}) {
+		t.Fatalf("nearest %v, %v", chunkTitles(near), err)
 	}
 	for _, c := range []struct {
 		e    orm.Expr
@@ -128,28 +231,26 @@ func TestVectorSearch(t *testing.T) {
 		{orm.CosineDistance("embedding", orm.Vector{2, 0, 0}), 0},
 		{orm.InnerProduct("embedding", orm.Vector{3, 0, 0}), -3},
 	} {
-		got, err := Docs.Filter(orm.Q{"title": "Go web servers"}).Annotate("d", c.e).Values[float64]("d").All(ctx)
+		got, err := Chunks.Filter(orm.Q{"title": "Go web servers"}).Annotate("d", c.e).Values[float64]("d").All(ctx)
 		if err != nil || math.Abs(got[0]-c.want) > 1e-6 {
 			t.Errorf("%v = %v, %v", c.e, got, err)
 		}
 	}
 	q := orm.SearchQuery("web")
 	doc := orm.SearchVector("title", "body")
-	hybrid, err := Docs.Filter(orm.Match(doc, q)).
+	hybrid, err := Chunks.Filter(orm.Match(doc, q)).
 		Annotate("rank", orm.SearchRank(orm.SearchVector("title").Weight("A").Add(orm.SearchVector("body")), q)).
 		Annotate("distance", orm.CosineDistance("embedding", orm.Vector{0, 1, 0})).
 		Annotate("score", orm.Fuse("-rank", "distance")).OrderBy("-score", "id").All(ctx)
-	if err != nil || !slices.Equal(docTitles(hybrid), []string{"Rust in practice", "Go web servers", "Java streams"}) {
-		t.Fatalf("hybrid %v %v, %v", docTitles(hybrid), hybrid, err)
+	if err != nil || !slices.Equal(chunkTitles(hybrid), []string{"Rust in practice", "Go web servers", "Java streams"}) {
+		t.Fatalf("hybrid %v %v, %v", chunkTitles(hybrid), hybrid, err)
 	}
 }
 
-var Vectors = orm.CreateExtension("vector")
-
 func TestSearchCheck(t *testing.T) {
 	_, stop, err := nexus.InProcess(config.Runtime{},
-		db.Bind[mainDB]("main", func() db.Config { return db.Config{Driver: db.SQLite, Database: ":memory:", LogLevel: "silent"} }, db.WithDefault()),
-		Vectors, orm.Schema{}.Check(Doc{}))
+		db.Bind[mainDB]("vectors", func() db.Config { return db.Config{Driver: db.SQLite, Database: ":memory:", LogLevel: "silent"} }, db.WithDefault()),
+		Vectors, orm.Schema{DB: "vectors"}.Check(Chunk{}))
 	if err != nil {
 		t.Fatalf("SQLite searches unindexed: %v", err)
 	}

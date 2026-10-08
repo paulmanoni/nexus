@@ -318,7 +318,11 @@ func TestSchemaWrites(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if want := (map[string]any{"email_address": "amina@x", "full_name": "Amina Said", "phone": "255-4", "is_active": int64(1), "team_ref": int64(2)}); !reflect.DeepEqual(rows, []map[string]any{want}) {
+	active := any(int64(1)) // a raw read gets the driver's value: Postgres has booleans
+	if ormtest.Driver() == "postgres" {
+		active = true
+	}
+	if want := (map[string]any{"email_address": "amina@x", "full_name": "Amina Said", "phone": "255-4", "is_active": active, "team_ref": int64(2)}); !reflect.DeepEqual(rows, []map[string]any{want}) {
 		t.Fatalf("written %v", rows)
 	}
 	if len(heard) != 2 || heard[1].Kind != orm.Updated {

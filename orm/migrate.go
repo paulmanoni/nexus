@@ -1,31 +1,32 @@
 package orm
 
 import (
-	"bytes"
+	"bufio"
+	"cmp"
 	"context"
-	"crypto/sha256"
 	"database/sql"
-	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
-	"io/fs"
-	"log/slog"
+	"io"
 	"os"
+	"reflect"
 	"regexp"
 	"slices"
-	"sort"
 	"strings"
 	"sync"
 	"time"
 
 	"github.com/paulmanoni/nexus/v2"
+	"github.com/paulmanoni/nexus/v2/config"
+	"github.com/paulmanoni/nexus/v2/db"
 
 	"github.com/paulmanoni/nexus/orm/internal/schema"
+	"github.com/paulmanoni/nexus/orm/migration"
 )
 
-// declared is every manager orm.For made and every extension
-// CreateExtension declared, for the migration planner: the models a
+// declared is every manager orm.For and orm.Of made and every extension
+// CreateExtension declared, for the migration autodetector: the models a
 // program links are the models of its schema.
 var declared struct {
 	mu   sync.Mutex
@@ -34,9 +35,12 @@ var declared struct {
 }
 
 type declaredModel struct {
+	t         reflect.Type
+	own       bool // the model's own manager: a For without Names
 	db        string
 	unmanaged bool
-	tables    func(Dialect) ([]schema.Table, error)
+	tables    func() ([]schema.Table, error)
+	madeOn    func(Dialect) error
 }
 
 type extension struct{ db, name string }
@@ -44,10 +48,10 @@ type extension struct{ db, name string }
 // CreateExtension declares a Postgres extension the database needs —
 // "vector" for Vector columns and vector indexes, "pg_trgm" for trigram
 // indexes — Django's CreateExtension: nexus makemigrations writes it into
-// the next migration (CreateTables makes it too). Declare it
-// package-level, beside the models, where the planner finds it; passed to
-// nexus.Boot as well, it fails boot while the database lacks it. Nothing
-// installs an extension otherwise. orm.On names the database.
+// the next migration (CreateTables makes it too, with the database's
+// models). Declare it package-level, beside the models, where the
+// autodetector finds it; passed to nexus.Boot as well, it fails boot
+// while the database lacks it. orm.On names the database.
 //
 //	var Vectors = orm.CreateExtension("vector")
 func CreateExtension(name string, opts ...ForOption) nexus.Option {
@@ -73,10 +77,6 @@ func declaredExtensions() []extension {
 	return slices.Clone(declared.exts)
 }
 
-func createExtension(d Dialect, name string) string {
-	return "CREATE EXTENSION IF NOT EXISTS " + d.Quote(name)
-}
-
 // missingExtensions fails, naming how to install them, when a Postgres
 // database lacks some of the extensions names.
 func missingExtensions(ctx context.Context, d *DB, names []string) error {
@@ -99,18 +99,10 @@ func missingExtensions(ctx context.Context, d *DB, names []string) error {
 	var errs []error
 	for _, n := range names {
 		if !have[n] {
-			errs = append(errs, fmt.Errorf("orm: the database lacks the extension %q: add orm.CreateExtension(%q) to a migration (declare it, then nexus makemigrations)", n, n))
+			errs = append(errs, fmt.Errorf("orm: the database lacks the extension %q: declare orm.CreateExtension(%q), then nexus makemigrations and nexus migrate", n, n))
 		}
 	}
 	return errors.Join(append(errs, rows.Err())...)
-}
-
-// snapshot is the schema a migration leaves: its tables and extensions.
-// One with no extensions is written as the list of its tables, as before
-// there were any.
-type snapshot struct {
-	Extensions []string       `json:"extensions"`
-	Tables     []schema.Table `json:"tables"`
 }
 
 func declare(d declaredModel) {
@@ -119,117 +111,80 @@ func declare(d declaredModel) {
 	declared.mu.Unlock()
 }
 
-// MigrationStep is one statement of a planned migration, and a note when
-// it needs a person (a drop that loses data, a change SQLite can't make;
-// a note alone when there is no statement to write).
-type MigrationStep struct {
-	SQL  string `json:"sql,omitempty"`
-	Note string `json:"note,omitempty"`
-}
-
-// MigrationPlan is the migration from a snapshot to the models a program
-// links: the statements, and the snapshot to keep for the next one.
-type MigrationPlan struct {
-	Steps    []MigrationStep `json:"steps"`
-	Snapshot json.RawMessage `json:"snapshot"`
-}
-
-// PlanMigration is the migration from snapshot (the schema the last one
-// left, empty for none) to the managed models of the databases dbs (""
-// the default) declared with orm.For in the program, written for driver
-// (postgres, mysql, sqlite). It is what nexus makemigrations runs; apps
-// don't call it.
-func PlanMigration(snap []byte, driver string, dbs ...string) (MigrationPlan, error) {
-	var old snapshot
-	if len(bytes.TrimSpace(snap)) > 0 {
-		var err error
-		if bytes.TrimSpace(snap)[0] == '[' {
-			err = json.Unmarshal(snap, &old.Tables)
-		} else {
-			err = json.Unmarshal(snap, &old)
-		}
-		if err != nil {
-			return MigrationPlan{}, fmt.Errorf("orm: reading the schema snapshot: %w", err)
-		}
-	}
-	if len(dbs) == 0 {
-		dbs = []string{""}
-	}
+// plannedModels is the managers the autodetector reads: every For and Of
+// the program made, and the own manager of each registered model with no
+// For of its own.
+func plannedModels() []declaredModel {
 	declared.mu.Lock()
-	list := append([]declaredModel(nil), declared.list...)
+	list := slices.Clone(declared.list)
 	declared.mu.Unlock()
-	dl := DialectFor(driver)
-	var cur snapshot
-	for _, e := range declaredExtensions() {
-		if slices.Contains(dbs, e.db) && !slices.Contains(cur.Extensions, e.name) {
-			cur.Extensions = append(cur.Extensions, e.name)
+	own := map[reflect.Type]bool{}
+	for _, d := range list {
+		own[d.t] = own[d.t] || d.own
+	}
+	for _, m := range registered() {
+		if d := m.declaration(); !own[d.t] {
+			list = append(list, d)
 		}
 	}
+	return list
+}
+
+// declaredState is the schema the program's managed models of the
+// databases dbs (orm.On names, "" the default) declare, and their
+// extensions; a model dialect can't make fails it.
+func declaredState(dbs []string, dialect string) (*migration.State, error) {
+	var tables []schema.Table
 	at := map[string]int{}
-	for _, m := range list {
+	for _, m := range plannedModels() {
 		if m.unmanaged || !slices.Contains(dbs, m.db) {
 			continue
 		}
-		ts, err := m.tables(dl)
+		if err := m.madeOn(DialectFor(dialect)); err != nil {
+			return nil, err
+		}
+		ts, err := m.tables()
 		if err != nil {
-			return MigrationPlan{}, err
+			return nil, err
 		}
 		for _, t := range ts {
 			i, ok := at[t.Name]
 			if !ok {
-				at[t.Name] = len(cur.Tables)
-				cur.Tables = append(cur.Tables, t)
+				at[t.Name] = len(tables)
+				tables = append(tables, t)
 				continue
 			}
-			if cur.Tables[i], err = mergeTable(cur.Tables[i], t); err != nil {
-				return MigrationPlan{}, err
+			if tables[i], err = mergeTable(tables[i], t); err != nil {
+				return nil, err
 			}
 		}
 	}
-	d := schema.Dialect{Name: dl.Name(), Quote: dl.Quote}
-	var plan MigrationPlan
-	for _, e := range cur.Extensions {
-		if !slices.Contains(old.Extensions, e) && dl.Name() == "postgres" {
-			plan.Steps = append(plan.Steps, MigrationStep{SQL: createExtension(dl, e)})
+	var exts []string
+	for _, e := range declaredExtensions() {
+		if slices.Contains(dbs, e.db) && !slices.Contains(exts, e.name) {
+			exts = append(exts, e.name)
 		}
 	}
-	for _, e := range old.Extensions {
-		if !slices.Contains(cur.Extensions, e) {
-			plan.Steps = append(plan.Steps, MigrationStep{Note: "the extension " + e + " is no longer declared: drop it by hand once nothing uses it"})
-		}
-	}
-	for _, s := range d.Diff(old.Tables, cur.Tables) {
-		plan.Steps = append(plan.Steps, MigrationStep{SQL: s.SQL, Note: s.Note})
-	}
-	cur.Tables = schema.Sort(cur.Tables)
-	var out any = cur
-	if len(cur.Extensions) == 0 {
-		out = cur.Tables
-	}
-	var err error
-	plan.Snapshot, err = json.MarshalIndent(out, "", "  ")
-	return plan, err
+	return migration.NewState(schema.Sort(tables), exts), nil
 }
 
-// mergeTable is one table two models map: the columns and foreign keys
-// of both, which must agree where they overlap.
+// mergeTable is one table two models map: the columns, constraints and
+// indexes of both, which must agree where they overlap.
 func mergeTable(a, b schema.Table) (schema.Table, error) {
-	cols := map[string]schema.Column{}
-	for _, c := range a.Columns {
-		cols[c.Name] = c
-	}
+	a.Columns = slices.Clone(a.Columns)
 	for _, c := range b.Columns {
-		if have, ok := cols[c.Name]; ok {
-			if have != c {
-				return a, fmt.Errorf("orm: two models map table %s and disagree on its column %s: make one orm.Unmanaged()", a.Name, c.Name)
-			}
+		have, ok := a.Column(c.Name)
+		if !ok {
+			a.Columns = append(a.Columns, c)
 			continue
 		}
-		a.Columns = append(a.Columns, c)
+		if !have.Same(c) {
+			return a, fmt.Errorf("orm: two models map table %s and disagree on its column %s: make one orm.Unmanaged()", a.Name, c.Name)
+		}
 	}
-	for _, fk := range b.FKs {
-		if !slices.Contains(a.FKs, fk) {
-			a.FKs = append(a.FKs, fk)
+	for _, k := range b.Constraints {
+		if !slices.ContainsFunc(a.Constraints, func(o schema.Constraint) bool { return o.Name == k.Name }) {
+			a.Constraints = append(a.Constraints, k)
 		}
 	}
 	for _, ix := range b.Indexes {
@@ -247,50 +202,72 @@ func mergeTable(a, b schema.Table) (schema.Table, error) {
 // MigrateOption tunes Migrate.
 type MigrateOption func(*migrateConfig)
 
-type migrateConfig struct{ db, dir string }
+type migrateConfig struct{ dbs []string }
 
-// MigrateOn applies the migrations to the database db.Bind registered as
-// name; the default database otherwise.
-func MigrateOn(name string) MigrateOption { return func(c *migrateConfig) { c.db = name } }
+// MigrateOn applies the migrations of the database db.Bind registered as
+// name ("" the default) only; repeat it for several. Every database with
+// migrations otherwise.
+func MigrateOn(name string) MigrateOption {
+	return func(c *migrateConfig) { c.dbs = append(c.dbs, name) }
+}
 
-// MigrateDir reads the migrations from dir within the file system; its
-// root otherwise.
-func MigrateDir(dir string) MigrateOption { return func(c *migrateConfig) { c.dir = dir } }
-
-// Migrate applies the migrations in fsys at boot, after the databases
-// connect and before the app serves: the NNNN_name.sql files nexus
-// makemigrations writes, each one not yet recorded in the database's
-// nexus_migrations table, in name order. A migration runs in a
-// transaction where the database can roll DDL back (Postgres, SQLite;
-// MySQL commits each statement). Replicas booting together take turns
-// under a lock (Postgres advisory, MySQL GET_LOCK).
+// Migrate applies the registered migrations at boot, after the databases
+// connect and before the app serves: those not yet recorded in each
+// database's nexus_migrations table, each after its dependencies. The
+// app's migrations package registers them: import it.
 //
-//	//go:embed migrations
-//	var migrations embed.FS
+//	import _ "example.com/shop/migrations"
 //
-//	nexus.Boot(db.BindFromConfig[DB]("main"), orm.Migrate(migrations, orm.MigrateDir("migrations")), Users)
-func Migrate(fsys fs.FS, opts ...MigrateOption) nexus.Option {
+//	nexus.Boot(db.BindFromConfig[DB]("main"), orm.Migrate())
+//
+// A migration runs in a transaction where the database can roll DDL back
+// (Postgres, SQLite; MySQL commits each statement). Replicas booting
+// together take turns under a lock (Postgres advisory, MySQL GET_LOCK).
+// nexus migrate applies them (or unapplies them, back to a migration) on
+// demand.
+func Migrate(opts ...MigrateOption) nexus.Option {
 	var c migrateConfig
 	for _, o := range opts {
 		o(&c)
 	}
 	return nexus.Setup(func(ctx context.Context, app *nexus.App) error {
-		d, err := waitConnected(ctx, &binding{app: app}, c.db)
+		ordered, err := migration.Ordered()
 		if err != nil {
 			return err
 		}
-		dir := fsys
-		if c.dir != "" {
-			if dir, err = fs.Sub(fsys, c.dir); err != nil {
-				return err
-			}
+		r := &migrator{
+			ordered: ordered,
+			open: func(ctx context.Context, name string) (*DB, error) {
+				return waitConnected(ctx, &binding{app: app}, name)
+			},
+			log: func(format string, args ...any) {
+				app.Logger().Info("orm: " + fmt.Sprintf(format, args...))
+			},
 		}
-		applied, err := ApplyMigrations(ctx, d, dir)
-		for _, name := range applied {
-			app.Logger().Info("orm: migration applied", "migration", name, "database", c.db)
-		}
-		return err
+		defer r.close()
+		return r.forwardAll(ctx, c.dbs)
 	})
+}
+
+// ApplyMigrations takes d through migrations (one database's) as nexus
+// migrate does: to target (a name, or its leading number), applying those
+// up to it and unapplying those after; "zero" unapplies them all, ""
+// applies them all. For tools and tests.
+func ApplyMigrations(ctx context.Context, d *DB, target string, migrations ...migration.Migration) error {
+	ordered, err := migration.Order(migrations)
+	if err != nil || len(ordered) == 0 {
+		return err
+	}
+	r := &migrator{
+		ordered: ordered,
+		open:    func(context.Context, string) (*DB, error) { return d, nil },
+		log:     func(string, ...any) {},
+	}
+	defer r.close()
+	if target == "" {
+		return r.forwardAll(ctx, nil)
+	}
+	return r.to(ctx, ordered[0].DB, target)
 }
 
 // waitConnected is the database name once it connects: databases connect
@@ -313,122 +290,234 @@ func waitConnected(ctx context.Context, b *binding, name string) (*DB, error) {
 // MigrateWait is how long Migrate waits for its database to connect.
 var MigrateWait = 30 * time.Second
 
-// migrationName is a migration file's name: NNNN_words.sql.
-var migrationName = regexp.MustCompile(`^\d+_[A-Za-z0-9_]+\.sql$`)
-
 const migrationsTable = "nexus_migrations"
 
-// ApplyMigrations applies the migrations in fsys (its top-level .sql
-// files) that db hasn't recorded, as Migrate does at boot, and returns
-// the names applied. For tools and tests.
-func ApplyMigrations(ctx context.Context, db *DB, fsys fs.FS) ([]string, error) {
-	entries, err := fs.ReadDir(fsys, ".")
-	if err != nil {
-		return nil, err
-	}
-	var names []string
-	for _, e := range entries {
-		if e.IsDir() || !strings.HasSuffix(e.Name(), ".sql") {
-			continue
-		}
-		if !migrationName.MatchString(e.Name()) {
-			return nil, fmt.Errorf("orm: migration %s: name it NNNN_words.sql", e.Name())
-		}
-		names = append(names, e.Name())
-	}
-	sort.Strings(names)
+// migrator applies migrations (ordered, every database's), a session per
+// database it touches.
+type migrator struct {
+	ordered  []migration.Migration
+	open     func(ctx context.Context, name string) (*DB, error)
+	log      func(format string, args ...any)
+	sessions map[string]*session
+}
 
-	c, err := db.sql.Conn(ctx)
-	if err != nil {
-		return nil, err
-	}
-	defer c.Close()
-	unlock, err := lockMigrations(ctx, c, db.dialect)
-	if err != nil {
-		return nil, err
-	}
-	defer unlock()
+// session is a database being migrated: a connection holding the lock,
+// and the migrations it has applied.
+type session struct {
+	name    string
+	db      *DB
+	c       *sql.Conn
+	unlock  func()
+	applied map[string]bool
+}
 
-	d := schema.Dialect{Name: db.dialect.Name(), Quote: db.dialect.Quote}
+func (r *migrator) session(ctx context.Context, name string) (*session, error) {
+	if s, ok := r.sessions[name]; ok {
+		return s, nil
+	}
+	d, err := r.open(ctx, name)
+	if err != nil {
+		return nil, err
+	}
+	c, err := d.sql.Conn(ctx)
+	if err != nil {
+		return nil, err
+	}
+	unlock, err := lockMigrations(ctx, c, d.dialect)
+	if err != nil {
+		c.Close()
+		return nil, err
+	}
+	s := &session{name: name, db: d, c: c, unlock: unlock, applied: map[string]bool{}}
+	if r.sessions == nil {
+		r.sessions = map[string]*session{}
+	}
+	r.sessions[name] = s
+	sd := schema.For(d.dialect.Name())
 	record := schema.Table{Name: migrationsTable, Columns: []schema.Column{
 		{Name: "name", Kind: schema.String, Size: 255, PK: true},
-		{Name: "checksum", Kind: schema.String, Size: 64},
 		{Name: "applied_at", Kind: schema.Time},
 	}}
-	if _, err := c.ExecContext(ctx, d.Create(record, true)[0]); err != nil {
+	if _, err := c.ExecContext(ctx, sd.Create(record, true)[0]); err != nil {
 		return nil, fmt.Errorf("orm: creating %s: %w", migrationsTable, err)
 	}
-	done := map[string]string{}
-	rows, err := c.QueryContext(ctx, "SELECT "+d.Quote("name")+", "+d.Quote("checksum")+" FROM "+d.Quote(migrationsTable))
+	rows, err := c.QueryContext(ctx, "SELECT "+sd.Quote("name")+" FROM "+sd.Quote(migrationsTable))
 	if err != nil {
 		return nil, err
 	}
+	defer rows.Close()
 	for rows.Next() {
-		var n, sum string
-		if err := rows.Scan(&n, &sum); err != nil {
-			rows.Close()
+		var n string
+		if err := rows.Scan(&n); err != nil {
 			return nil, err
 		}
-		done[n] = sum
+		s.applied[n] = true
 	}
-	rows.Close()
-	if err := rows.Err(); err != nil {
-		return nil, err
-	}
+	return s, rows.Err()
+}
 
-	var applied []string
-	for _, name := range names {
-		src, err := fs.ReadFile(fsys, name)
-		if err != nil {
-			return applied, err
+func (r *migrator) close() {
+	for _, s := range r.sessions {
+		s.unlock()
+		s.c.Close()
+	}
+}
+
+// forwardAll applies the pending migrations of the databases dbs (every
+// one with migrations for none), each after its dependencies, across
+// databases.
+func (r *migrator) forwardAll(ctx context.Context, dbs []string) error {
+	states := map[string]*migration.State{}
+	for _, mg := range r.ordered {
+		if len(dbs) > 0 && !slices.Contains(dbs, mg.DB) {
+			continue
 		}
-		h := sha256.Sum256(src)
-		sum := hex.EncodeToString(h[:])
-		if prev, ok := done[name]; ok {
-			if prev != sum {
-				slog.WarnContext(ctx, "orm: an applied migration was edited; the edit is not applied", "migration", name)
+		s, err := r.session(ctx, mg.DB)
+		if err != nil {
+			return err
+		}
+		st := states[mg.DB]
+		if st == nil {
+			st = migration.NewState(nil, nil)
+			states[mg.DB] = st
+		}
+		if s.applied[mg.Name] {
+			if err := mg.Apply(st); err != nil {
+				return err
 			}
 			continue
 		}
-		if err := applyOne(ctx, c, db.dialect, d, name, sum, splitSQL(string(src), db.dialect.Name() == "mysql")); err != nil {
-			return applied, err
-		}
-		applied = append(applied, name)
-	}
-	return applied, nil
-}
-
-func applyOne(ctx context.Context, c *sql.Conn, dl Dialect, d schema.Dialect, name, sum string, stmts []string) error {
-	type execer interface {
-		ExecContext(ctx context.Context, query string, args ...any) (sql.Result, error)
-	}
-	var run execer = c
-	var tx *sql.Tx
-	if dl.Name() != "mysql" {
-		var err error
-		if tx, err = c.BeginTx(ctx, nil); err != nil {
+		steps, err := mg.Forwards(s.db.dialect.Name(), st)
+		if err != nil {
 			return err
 		}
-		run = tx
-	}
-	fail := func(err error) error {
-		if tx != nil {
-			_ = tx.Rollback()
+		if err := s.run(ctx, mg, steps, true); err != nil {
+			return err
 		}
+		r.log("migration applied: %s", label(mg))
+	}
+	return nil
+}
+
+// to takes database name to target: its migrations up to target applied,
+// those after it unapplied (last first); "zero" unapplies them all.
+func (r *migrator) to(ctx context.Context, name, target string) error {
+	mine := migration.Of(r.ordered, name)
+	last := -1
+	if target != "zero" {
+		mg, err := migration.Find(r.ordered, name, target)
+		if err != nil {
+			return err
+		}
+		last = slices.IndexFunc(mine, func(o migration.Migration) bool { return o.Name == mg.Name })
+	}
+	s, err := r.session(ctx, name)
+	if err != nil {
 		return err
 	}
-	for _, s := range stmts {
-		if _, err := run.ExecContext(ctx, s); err != nil {
-			return fail(fmt.Errorf("orm: migration %s: %w\n%s", name, err, s))
+	before := make([]*migration.State, len(mine))
+	st := migration.NewState(nil, nil)
+	for i, mg := range mine {
+		before[i] = st.Clone()
+		if err := mg.Apply(st); err != nil {
+			return err
 		}
 	}
-	ins := "INSERT INTO " + d.Quote(migrationsTable) + " (" + d.Quote("name") + ", " + d.Quote("checksum") + ", " + d.Quote("applied_at") + ") VALUES (" + dl.Placeholder(1) + ", " + dl.Placeholder(2) + ", " + dl.Placeholder(3) + ")"
-	if _, err := run.ExecContext(ctx, ins, name, sum, time.Now().UTC()); err != nil {
-		return fail(fmt.Errorf("orm: recording migration %s: %w", name, err))
+	for i := len(mine) - 1; i > last; i-- {
+		if !s.applied[mine[i].Name] {
+			continue
+		}
+		steps, err := mine[i].Backwards(s.db.dialect.Name(), before[i])
+		if err != nil {
+			return err
+		}
+		if err := s.run(ctx, mine[i], steps, false); err != nil {
+			return err
+		}
+		r.log("migration unapplied: %s", label(mine[i]))
 	}
-	if tx != nil {
-		return tx.Commit()
+	for i := 0; i <= last; i++ {
+		if s.applied[mine[i].Name] {
+			continue
+		}
+		steps, err := mine[i].Forwards(s.db.dialect.Name(), before[i])
+		if err != nil {
+			return err
+		}
+		if err := s.run(ctx, mine[i], steps, true); err != nil {
+			return err
+		}
+		r.log("migration applied: %s", label(mine[i]))
 	}
+	return nil
+}
+
+func label(mg migration.Migration) string {
+	if mg.DB == "" {
+		return mg.Name
+	}
+	return mg.DB + ":" + mg.Name
+}
+
+// run runs a migration's steps and records it applied (or, back, not):
+// in one transaction where the database rolls DDL back, Go steps and the
+// ORM's queries on their ctx included. SQLite's foreign keys are off
+// while it rebuilds tables.
+func (s *session) run(ctx context.Context, mg migration.Migration, steps []migration.Step, forward bool) error {
+	dl := s.db.dialect
+	sd := schema.For(dl.Name())
+	if dl.Name() == "sqlite" {
+		var on bool
+		if err := s.c.QueryRowContext(ctx, "PRAGMA foreign_keys").Scan(&on); err != nil {
+			return err
+		}
+		if on {
+			if _, err := s.c.ExecContext(ctx, "PRAGMA foreign_keys = OFF"); err != nil {
+				return err
+			}
+			defer s.c.ExecContext(context.WithoutCancel(ctx), "PRAGMA foreign_keys = ON")
+		}
+	}
+	record := "DELETE FROM " + sd.Quote(migrationsTable) + " WHERE " + sd.Quote("name") + " = " + dl.Placeholder(1)
+	args := []any{mg.Name}
+	if forward {
+		record = "INSERT INTO " + sd.Quote(migrationsTable) + " (" + sd.Quote("name") + ", " + sd.Quote("applied_at") + ") VALUES (" + dl.Placeholder(1) + ", " + dl.Placeholder(2) + ")"
+		args = append(args, time.Now().UTC())
+	}
+	do := func(ctx context.Context, tx migration.Tx) error {
+		for _, st := range steps {
+			if st.Go != nil {
+				if err := st.Go(ctx, tx); err != nil {
+					return fmt.Errorf("orm: migration %s: %w", label(mg), err)
+				}
+				continue
+			}
+			for _, q := range splitSQL(st.SQL, dl.Name() == "mysql") {
+				if _, err := tx.ExecContext(ctx, q); err != nil {
+					return fmt.Errorf("orm: migration %s: %w\n%s", label(mg), err, q)
+				}
+			}
+		}
+		if _, err := tx.ExecContext(ctx, record, args...); err != nil {
+			return fmt.Errorf("orm: recording migration %s: %w", label(mg), err)
+		}
+		return nil
+	}
+	inner := WithDB(ctx, s.db)
+	if dl.Name() == "mysql" {
+		if err := do(inner, s.c); err != nil {
+			return err
+		}
+	} else {
+		tx, err := s.c.BeginTx(ctx, nil)
+		if err != nil {
+			return err
+		}
+		if err := inTx(inner, s.db.sql, tx, func(ctx context.Context) error { return do(ctx, tx) }); err != nil {
+			return err
+		}
+	}
+	s.applied[mg.Name] = forward
 	return nil
 }
 
@@ -548,72 +637,263 @@ var dollarRE = regexp.MustCompile(`^\$[A-Za-z_]*\$`)
 
 func dollarTag(s string) string { return dollarRE.FindString(s) }
 
-// MigrationFile is a planned migration as nexus makemigrations writes it:
-// the statements each ending with a semicolon, notes as comments.
-func MigrationFile(steps []MigrationStep) []byte {
-	var b strings.Builder
-	for _, s := range steps {
-		if s.Note != "" {
-			for _, line := range strings.Split(s.Note, "\n") {
-				b.WriteString("-- NOTE: " + line + "\n")
-			}
-		}
-		if s.SQL != "" {
-			b.WriteString(s.SQL + ";\n")
-		}
-		b.WriteString("\n")
-	}
-	return []byte(strings.TrimRight(b.String(), "\n") + "\n")
+// CLIEnv is the variable the nexus CLI sets to run an app as its
+// migration tool (makemigrations, migrate, showmigrations, sqlmigrate),
+// holding a JSON CLIRequest.
+const CLIEnv = "NEXUS_ORM"
+
+// CLIRequest is what the nexus CLI asks of an app run as its migration
+// tool.
+type CLIRequest struct {
+	Command string `json:"command"` // plan, migrate, show, sql
+	// DB is the migrations' database ("" the default).
+	DB string `json:"db"`
+	// Models is plan's: the databases (orm.On names) the models of DB's
+	// migrations are on: "" and the default's name for the default.
+	Models  []string `json:"models,omitempty"`
+	Dialect string   `json:"dialect,omitempty"` // plan, sql
+	// Number, Name, Package and Empty name and shape plan's migration;
+	// Interactive asks about renames on stdin.
+	Number      int    `json:"number,omitempty"`
+	Name        string `json:"name,omitempty"`
+	Package     string `json:"package,omitempty"`
+	Empty       bool   `json:"empty,omitempty"`
+	Interactive bool   `json:"interactive,omitempty"`
+	// Target is migrate's: the migration to take DB to ("zero" for
+	// none); every database's pending ones when empty. sql's: the
+	// migration to print.
+	Target    string `json:"target,omitempty"`
+	Backwards bool   `json:"backwards,omitempty"` // sql
+	// Conns is the nexus.toml [databases] block of each migrations
+	// database ("" the default's), for migrate and show to connect.
+	Conns map[string]string `json:"conns,omitempty"`
+	Out   string            `json:"out,omitempty"` // plan: the file its PlanResult goes to
 }
 
-// PlanEnv is the variable nexus makemigrations sets to run an app as its
-// planner, holding a JSON PlanRequest.
-const PlanEnv = "NEXUS_ORM_PLAN"
-
-// PlanRequest is what nexus makemigrations asks the planner: the snapshot
-// file (empty for none), the driver, the databases, and the file to write
-// the MigrationPlan to.
-type PlanRequest struct {
-	Snapshot string   `json:"snapshot"`
-	Driver   string   `json:"driver"`
-	DBs      []string `json:"dbs"`
-	Out      string   `json:"out"`
+// PlanResult is the migration plan wrote: its file's name and source,
+// what each operation does, and the notes beside them. No operations is
+// no changes.
+type PlanResult struct {
+	File   string   `json:"file,omitempty"`
+	Source []byte   `json:"source,omitempty"`
+	Ops    []string `json:"ops"`
+	Notes  []string `json:"notes,omitempty"`
 }
 
-// ServePlan makes the program nexus makemigrations' planner when PlanEnv
-// is set: it writes the plan of the models the program links and exits,
-// before main runs. The CLI calls it from an init it overlays into the
-// app's main package; apps don't.
-func ServePlan() {
-	raw := os.Getenv(PlanEnv)
+// ServeCLI makes the program the nexus CLI's migration tool when CLIEnv
+// is set: it does what the request asks and exits, before main runs. The
+// CLI calls it from an init it overlays into the app's main package; apps
+// don't.
+func ServeCLI() {
+	raw := os.Getenv(CLIEnv)
 	if raw == "" {
 		return
 	}
-	err := func() error {
-		var r PlanRequest
-		if err := json.Unmarshal([]byte(raw), &r); err != nil {
-			return err
-		}
-		var snap []byte
-		if r.Snapshot != "" {
-			var err error
-			if snap, err = os.ReadFile(r.Snapshot); err != nil && !errors.Is(err, fs.ErrNotExist) {
-				return err
-			}
-		}
-		plan, err := PlanMigration(snap, r.Driver, r.DBs...)
-		if err != nil {
-			return err
-		}
-		out, err := json.Marshal(plan)
-		if err != nil {
-			return err
-		}
-		return os.WriteFile(r.Out, out, 0o600)
-	}()
-	if err != nil {
+	if err := serveCLI(context.Background(), raw, os.Stdin, os.Stdout, os.Stderr); err != nil {
 		fmt.Fprintln(os.Stderr, err)
 		os.Exit(1)
 	}
 	os.Exit(0)
+}
+
+func serveCLI(ctx context.Context, raw string, stdin io.Reader, stdout, stderr io.Writer) error {
+	var req CLIRequest
+	if err := json.Unmarshal([]byte(raw), &req); err != nil {
+		return err
+	}
+	switch req.Command {
+	case "plan":
+		res, err := plan(req, bufio.NewReader(stdin), stderr)
+		if err != nil {
+			return err
+		}
+		out, err := json.Marshal(res)
+		if err != nil {
+			return err
+		}
+		return os.WriteFile(req.Out, out, 0o600)
+	case "sql":
+		return printSQL(req, stdout)
+	}
+	if _, err := config.Load(cmp.Or(os.Getenv("NEXUS_CONFIG"), config.DefaultPath)); err != nil {
+		return err
+	}
+	ordered, err := migration.Ordered()
+	if err != nil {
+		return err
+	}
+	r := &migrator{
+		ordered: ordered,
+		open:    func(ctx context.Context, name string) (*DB, error) { return openConfigured(req.Conns, name) },
+		log:     func(format string, args ...any) { fmt.Fprintf(stdout, "  "+format+"\n", args...) },
+	}
+	defer r.close()
+	switch req.Command {
+	case "migrate":
+		if req.Target == "" {
+			return r.forwardAll(ctx, nil)
+		}
+		return r.to(ctx, req.DB, req.Target)
+	case "show":
+		return show(ctx, r, stdout)
+	}
+	return fmt.Errorf("orm: no command %q", req.Command)
+}
+
+// openConfigured opens migrations database name by its nexus.toml block.
+func openConfigured(conns map[string]string, name string) (*DB, error) {
+	block, ok := conns[name]
+	if !ok {
+		return nil, fmt.Errorf("orm: nexus.toml has no [databases] block for %s", dbLabel(name))
+	}
+	cfg, err := db.ConfigFor(block)
+	if err != nil {
+		return nil, err
+	}
+	cfg.LogLevel = "silent"
+	m, err := db.Open(cfg)
+	if err != nil {
+		return nil, err
+	}
+	s, err := m.GetDB().DB()
+	if err != nil {
+		return nil, err
+	}
+	return Open(s, string(m.Driver())), nil
+}
+
+func dbLabel(name string) string {
+	if name == "" {
+		return "the default database"
+	}
+	return "database " + name
+}
+
+// plan is the next migration of req.DB: the operations from its
+// migrations' state to its models', written as a Go file.
+func plan(req CLIRequest, stdin *bufio.Reader, stderr io.Writer) (PlanResult, error) {
+	ordered, err := migration.Ordered()
+	if err != nil {
+		return PlanResult{}, err
+	}
+	from, err := migration.Replay(ordered, req.DB)
+	if err != nil {
+		return PlanResult{}, err
+	}
+	to, err := declaredState(req.Models, req.Dialect)
+	if err != nil {
+		return PlanResult{}, err
+	}
+	ask := func(q string) bool {
+		if !req.Interactive {
+			return false
+		}
+		fmt.Fprintf(stderr, "%s [y/N] ", q)
+		line, _ := stdin.ReadString('\n')
+		return strings.HasPrefix(strings.ToLower(strings.TrimSpace(line)), "y")
+	}
+	ops, notes := migration.Diff(from, to, ask)
+	if req.Empty {
+		ops, notes = []migration.Operation{migration.RunGo{}}, nil
+	}
+	res := PlanResult{Notes: notes}
+	for _, op := range ops {
+		res.Ops = append(res.Ops, migration.Describe(op))
+	}
+	if len(ops) == 0 {
+		return res, nil
+	}
+	name := req.Name
+	if name == "" {
+		name = autoName(ops, len(migration.Of(ordered, req.DB)) == 0)
+	}
+	mg := migration.Migration{Name: fmt.Sprintf("%04d_%s", req.Number, name), DB: req.DB, Dependencies: migration.Leaves(ordered, req.DB), Operations: ops}
+	if _, err := mg.Forwards(req.Dialect, from); err != nil {
+		return res, err
+	}
+	res.File = mg.Name + ".go"
+	res.Source, err = migration.Source(req.Package, mg, notes)
+	return res, err
+}
+
+var nameRE = regexp.MustCompile(`[^a-z0-9]+`)
+
+// autoName names a migration after what it does: initial, its one
+// operation (add_field_users_email), the one table it changes, else
+// auto.
+func autoName(ops []migration.Operation, first bool) string {
+	switch {
+	case first:
+		return "initial"
+	case len(ops) == 1:
+		return strings.Trim(nameRE.ReplaceAllString(strings.ToLower(migration.Describe(ops[0])), "_"), "_")
+	}
+	return "auto"
+}
+
+// show prints each database's migrations, [X] applied and [ ] not.
+func show(ctx context.Context, r *migrator, w io.Writer) error {
+	var dbs []string
+	for _, mg := range r.ordered {
+		if !slices.Contains(dbs, mg.DB) {
+			dbs = append(dbs, mg.DB)
+		}
+	}
+	if len(dbs) == 0 {
+		fmt.Fprintln(w, "No migrations: does the app import its migrations package?")
+	}
+	for _, name := range dbs {
+		s, err := r.session(ctx, name)
+		if err != nil {
+			return err
+		}
+		fmt.Fprintln(w, strings.ToUpper(dbLabel(name)[:1])+dbLabel(name)[1:])
+		for _, mg := range migration.Of(r.ordered, name) {
+			mark := " "
+			if s.applied[mg.Name] {
+				mark = "X"
+			}
+			fmt.Fprintf(w, " [%s] %s\n", mark, mg.Name)
+		}
+	}
+	return nil
+}
+
+// printSQL prints the SQL a migration runs on req.Dialect, forwards or
+// back.
+func printSQL(req CLIRequest, w io.Writer) error {
+	ordered, err := migration.Ordered()
+	if err != nil {
+		return err
+	}
+	mg, err := migration.Find(ordered, req.DB, req.Target)
+	if err != nil {
+		return err
+	}
+	st := migration.NewState(nil, nil)
+	for _, m := range migration.Of(ordered, req.DB) {
+		if m.Name == mg.Name {
+			break
+		}
+		if err := m.Apply(st); err != nil {
+			return err
+		}
+	}
+	var steps []migration.Step
+	if req.Backwards {
+		steps, err = mg.Backwards(req.Dialect, st)
+	} else {
+		steps, err = mg.Forwards(req.Dialect, st)
+	}
+	if err != nil {
+		return err
+	}
+	for _, s := range steps {
+		if s.Go != nil {
+			fmt.Fprintln(w, "-- Go code (RunGo)")
+			continue
+		}
+		fmt.Fprintln(w, strings.TrimRight(s.SQL, ";\n ")+";")
+	}
+	return nil
 }

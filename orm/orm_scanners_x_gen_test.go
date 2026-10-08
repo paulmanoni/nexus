@@ -12,8 +12,16 @@ func init() {
 	orm.RegisterScanner[Author]([]string{"id", "name", "profile_id"}, func() orm.RowScanner[Author] { return new(ormScanAuthor) })
 	orm.RegisterScanner[AuthorStats]([]string{"id", "name"}, func() orm.RowScanner[AuthorStats] { return new(ormScanAuthorStats) })
 	orm.RegisterScanner[Book]([]string{"id", "title", "author_id", "published"}, func() orm.RowScanner[Book] { return new(ormScanBook) })
-	orm.RegisterScanner[Doc]([]string{"id", "title", "body", "search", "embedding"}, func() orm.RowScanner[Doc] { return new(ormScanDoc) })
+	orm.RegisterScanner[Chunk]([]string{"id", "title", "body", "embedding"}, func() orm.RowScanner[Chunk] { return new(ormScanChunk) })
+	orm.Register[Customer]()
+	orm.RegisterScanner[Customer]([]string{"id", "email", "visits", "updated_at"}, func() orm.RowScanner[Customer] { return new(ormScanCustomer) })
+	orm.RegisterScanner[Doc]([]string{"id", "title", "body", "search"}, func() orm.RowScanner[Doc] { return new(ormScanDoc) })
+	orm.Register[Group]()
+	orm.RegisterScanner[Group]([]string{"id", "name"}, func() orm.RowScanner[Group] { return new(ormScanGroup) })
 	orm.RegisterScanner[Member]([]string{"group_id", "user_id"}, func() orm.RowScanner[Member] { return new(ormScanMember) })
+	orm.RegisterScanner[Note]([]string{"id", "title", "body", "search"}, func() orm.RowScanner[Note] { return new(ormScanNote) })
+	orm.Register[Order]()
+	orm.RegisterScanner[Order]([]string{"id", "customer_id", "total"}, func() orm.RowScanner[Order] { return new(ormScanOrder) })
 	orm.RegisterScanner[Post]([]string{"id", "headline", "author_id"}, func() orm.RowScanner[Post] { return new(ormScanPost) })
 	orm.RegisterScanner[Profile]([]string{"id", "bio"}, func() orm.RowScanner[Profile] { return new(ormScanProfile) })
 	orm.RegisterScanner[Settings]([]string{"id", "account_id", "theme"}, func() orm.RowScanner[Settings] { return new(ormScanSettings) })
@@ -21,6 +29,8 @@ func init() {
 	orm.RegisterScanner[User]([]string{"id", "created_at", "updated_at", "name", "email", "age", "bio", "active"}, func() orm.RowScanner[User] { return new(ormScanUser) })
 	orm.RegisterScanner[UserStats]([]string{"id", "name"}, func() orm.RowScanner[UserStats] { return new(ormScanUserStats) })
 	orm.RegisterScanner[UserTier]([]string{"id", "name", "age", "active"}, func() orm.RowScanner[UserTier] { return new(ormScanUserTier) })
+	orm.Register[Visit]()
+	orm.RegisterScanner[Visit]([]string{"id", "path"}, func() orm.RowScanner[Visit] { return new(ormScanVisit) })
 	orm.RegisterScanner[benchUser]([]string{"id", "created_at", "name", "email", "age", "active"}, func() orm.RowScanner[benchUser] { return new(ormScanbenchUser) })
 }
 
@@ -225,18 +235,125 @@ func (s BookFieldSet) Tags() TagFieldSet {
 	return TagFieldSet{}.Under(s.p + "tags__")
 }
 
+type ormScanChunk struct {
+	c0   orm.Cell[int64]
+	c1   orm.Cell[string]
+	c2   orm.Cell[string]
+	c3   orm.Cell[orm.Vector]
+	dest []any
+}
+
+func (s *ormScanChunk) Dest() []any {
+	if s.dest == nil {
+		s.dest = []any{&s.c0, &s.c1, &s.c2, &s.c3}
+	}
+	return s.dest
+}
+
+func (s *ormScanChunk) Bind(r *Chunk) {
+	s.c0.P = &r.ID
+	s.c1.P = &r.Title
+	s.c2.P = &r.Body
+	s.c3.P = &r.Embedding
+}
+
+func (s *ormScanChunk) Values(r *Chunk, dst []any) []any {
+	return append(dst[:0], r.ID, r.Title, r.Body, r.Embedding)
+}
+
+// ChunkFields is Chunk's fields as typed lookups.
+var ChunkFields = ChunkFieldSet{}.Under("")
+
+// ChunkFieldSet is Chunk's fields as typed lookups: ChunkFields from the model itself, Under from a model related to it.
+type ChunkFieldSet struct {
+	p         string
+	ID        orm.Field[int64]
+	Title     orm.TextField[string]
+	Body      orm.TextField[string]
+	Embedding orm.Field[orm.Vector]
+}
+
+// Under is the set through a relation path, such as "author__".
+func (s ChunkFieldSet) Under(prefix string) ChunkFieldSet {
+	return ChunkFieldSet{
+		p:         prefix,
+		ID:        orm.FieldAt[int64](prefix + "id"),
+		Title:     orm.TextFieldAt[string](prefix + "title"),
+		Body:      orm.TextFieldAt[string](prefix + "body"),
+		Embedding: orm.FieldAt[orm.Vector](prefix + "embedding"),
+	}
+}
+
+type ormScanCustomer struct {
+	c0   orm.Cell[int64]
+	c1   orm.Cell[string]
+	c2   orm.Cell[int]
+	c3   orm.Cell[time.Time]
+	dest []any
+}
+
+func (s *ormScanCustomer) Dest() []any {
+	if s.dest == nil {
+		s.dest = []any{&s.c0, &s.c1, &s.c2, &s.c3}
+	}
+	return s.dest
+}
+
+func (s *ormScanCustomer) Bind(r *Customer) {
+	s.c0.P = &r.ID
+	s.c1.P = &r.Email
+	s.c2.P = &r.Visits
+	s.c3.P = &r.UpdatedAt
+}
+
+func (s *ormScanCustomer) Values(r *Customer, dst []any) []any {
+	return append(dst[:0], r.ID, r.Email, r.Visits, r.UpdatedAt)
+}
+
+// CustomerFields is Customer's fields as typed lookups.
+var CustomerFields = CustomerFieldSet{}.Under("")
+
+// CustomerFieldSet is Customer's fields as typed lookups: CustomerFields from the model itself, Under from a model related to it.
+type CustomerFieldSet struct {
+	p         string
+	ID        orm.Field[int64]
+	Email     orm.TextField[string]
+	Visits    orm.Field[int]
+	UpdatedAt orm.Field[time.Time]
+}
+
+// Under is the set through a relation path, such as "author__".
+func (s CustomerFieldSet) Under(prefix string) CustomerFieldSet {
+	return CustomerFieldSet{
+		p:         prefix,
+		ID:        orm.FieldAt[int64](prefix + "id"),
+		Email:     orm.TextFieldAt[string](prefix + "email"),
+		Visits:    orm.FieldAt[int](prefix + "visits"),
+		UpdatedAt: orm.FieldAt[time.Time](prefix + "updated_at"),
+	}
+}
+
+// Groups is the fields of Customer's Groups, for lookups across the relation.
+func (s CustomerFieldSet) Groups() GroupFieldSet {
+	return GroupFieldSet{}.Under(s.p + "groups__")
+}
+
+// Orders is the fields of Customer's Orders, for lookups across the relation.
+func (s CustomerFieldSet) Orders() OrderFieldSet {
+	return OrderFieldSet{}.Under(s.p + "orders__")
+}
+
 type ormScanDoc struct {
 	c0   orm.Cell[int64]
 	c1   orm.Cell[string]
 	c2   orm.Cell[string]
 	c3   orm.Cell[string]
-	c4   orm.Cell[orm.Vector]
 	dest []any
 }
 
 func (s *ormScanDoc) Dest() []any {
 	if s.dest == nil {
-		s.dest = []any{&s.c0, &s.c1, &s.c2, &s.c3, &s.c4}
+		s.dest = []any{&s.c0, &s.c1, &s.c2, &s.c3}
 	}
 	return s.dest
 }
@@ -246,11 +363,10 @@ func (s *ormScanDoc) Bind(r *Doc) {
 	s.c1.P = &r.Title
 	s.c2.P = &r.Body
 	s.c3.P = (*string)(&r.Search)
-	s.c4.P = &r.Embedding
 }
 
 func (s *ormScanDoc) Values(r *Doc, dst []any) []any {
-	return append(dst[:0], r.ID, r.Title, r.Body, r.Search, r.Embedding)
+	return append(dst[:0], r.ID, r.Title, r.Body, r.Search)
 }
 
 // DocFields is Doc's fields as typed lookups.
@@ -258,23 +374,62 @@ var DocFields = DocFieldSet{}.Under("")
 
 // DocFieldSet is Doc's fields as typed lookups: DocFields from the model itself, Under from a model related to it.
 type DocFieldSet struct {
-	p         string
-	ID        orm.Field[int64]
-	Title     orm.TextField[string]
-	Body      orm.TextField[string]
-	Search    orm.TextField[orm.TSVector]
-	Embedding orm.Field[orm.Vector]
+	p      string
+	ID     orm.Field[int64]
+	Title  orm.TextField[string]
+	Body   orm.TextField[string]
+	Search orm.TextField[orm.TSVector]
 }
 
 // Under is the set through a relation path, such as "author__".
 func (s DocFieldSet) Under(prefix string) DocFieldSet {
 	return DocFieldSet{
-		p:         prefix,
-		ID:        orm.FieldAt[int64](prefix + "id"),
-		Title:     orm.TextFieldAt[string](prefix + "title"),
-		Body:      orm.TextFieldAt[string](prefix + "body"),
-		Search:    orm.TextFieldAt[orm.TSVector](prefix + "search"),
-		Embedding: orm.FieldAt[orm.Vector](prefix + "embedding"),
+		p:      prefix,
+		ID:     orm.FieldAt[int64](prefix + "id"),
+		Title:  orm.TextFieldAt[string](prefix + "title"),
+		Body:   orm.TextFieldAt[string](prefix + "body"),
+		Search: orm.TextFieldAt[orm.TSVector](prefix + "search"),
+	}
+}
+
+type ormScanGroup struct {
+	c0   orm.Cell[int64]
+	c1   orm.Cell[string]
+	dest []any
+}
+
+func (s *ormScanGroup) Dest() []any {
+	if s.dest == nil {
+		s.dest = []any{&s.c0, &s.c1}
+	}
+	return s.dest
+}
+
+func (s *ormScanGroup) Bind(r *Group) {
+	s.c0.P = &r.ID
+	s.c1.P = &r.Name
+}
+
+func (s *ormScanGroup) Values(r *Group, dst []any) []any {
+	return append(dst[:0], r.ID, r.Name)
+}
+
+// GroupFields is Group's fields as typed lookups.
+var GroupFields = GroupFieldSet{}.Under("")
+
+// GroupFieldSet is Group's fields as typed lookups: GroupFields from the model itself, Under from a model related to it.
+type GroupFieldSet struct {
+	p    string
+	ID   orm.Field[int64]
+	Name orm.TextField[string]
+}
+
+// Under is the set through a relation path, such as "author__".
+func (s GroupFieldSet) Under(prefix string) GroupFieldSet {
+	return GroupFieldSet{
+		p:    prefix,
+		ID:   orm.FieldAt[int64](prefix + "id"),
+		Name: orm.TextFieldAt[string](prefix + "name"),
 	}
 }
 
@@ -317,6 +472,105 @@ func (s MemberFieldSet) Under(prefix string) MemberFieldSet {
 		GroupID: orm.FieldAt[int64](prefix + "group_id"),
 		UserID:  orm.FieldAt[int64](prefix + "user_id"),
 	}
+}
+
+type ormScanNote struct {
+	c0   orm.Cell[int64]
+	c1   orm.Cell[string]
+	c2   orm.Cell[string]
+	c3   orm.Cell[string]
+	dest []any
+}
+
+func (s *ormScanNote) Dest() []any {
+	if s.dest == nil {
+		s.dest = []any{&s.c0, &s.c1, &s.c2, &s.c3}
+	}
+	return s.dest
+}
+
+func (s *ormScanNote) Bind(r *Note) {
+	s.c0.P = &r.ID
+	s.c1.P = &r.Title
+	s.c2.P = &r.Body
+	s.c3.P = (*string)(&r.Search)
+}
+
+func (s *ormScanNote) Values(r *Note, dst []any) []any {
+	return append(dst[:0], r.ID, r.Title, r.Body, r.Search)
+}
+
+// NoteFields is Note's fields as typed lookups.
+var NoteFields = NoteFieldSet{}.Under("")
+
+// NoteFieldSet is Note's fields as typed lookups: NoteFields from the model itself, Under from a model related to it.
+type NoteFieldSet struct {
+	p      string
+	ID     orm.Field[int64]
+	Title  orm.TextField[string]
+	Body   orm.TextField[string]
+	Search orm.TextField[orm.TSVector]
+}
+
+// Under is the set through a relation path, such as "author__".
+func (s NoteFieldSet) Under(prefix string) NoteFieldSet {
+	return NoteFieldSet{
+		p:      prefix,
+		ID:     orm.FieldAt[int64](prefix + "id"),
+		Title:  orm.TextFieldAt[string](prefix + "title"),
+		Body:   orm.TextFieldAt[string](prefix + "body"),
+		Search: orm.TextFieldAt[orm.TSVector](prefix + "search"),
+	}
+}
+
+type ormScanOrder struct {
+	c0   orm.Cell[int64]
+	c1   orm.Cell[int64]
+	c2   orm.Cell[int]
+	dest []any
+}
+
+func (s *ormScanOrder) Dest() []any {
+	if s.dest == nil {
+		s.dest = []any{&s.c0, &s.c1, &s.c2}
+	}
+	return s.dest
+}
+
+func (s *ormScanOrder) Bind(r *Order) {
+	s.c0.P = &r.ID
+	s.c1.P = &r.CustomerID
+	s.c2.P = &r.Total
+}
+
+func (s *ormScanOrder) Values(r *Order, dst []any) []any {
+	return append(dst[:0], r.ID, r.CustomerID, r.Total)
+}
+
+// OrderFields is Order's fields as typed lookups.
+var OrderFields = OrderFieldSet{}.Under("")
+
+// OrderFieldSet is Order's fields as typed lookups: OrderFields from the model itself, Under from a model related to it.
+type OrderFieldSet struct {
+	p          string
+	ID         orm.Field[int64]
+	CustomerID orm.Field[int64]
+	Total      orm.Field[int]
+}
+
+// Under is the set through a relation path, such as "author__".
+func (s OrderFieldSet) Under(prefix string) OrderFieldSet {
+	return OrderFieldSet{
+		p:          prefix,
+		ID:         orm.FieldAt[int64](prefix + "id"),
+		CustomerID: orm.FieldAt[int64](prefix + "customer_id"),
+		Total:      orm.FieldAt[int](prefix + "total"),
+	}
+}
+
+// Customer is the fields of Order's Customer, for lookups across the relation.
+func (s OrderFieldSet) Customer() CustomerFieldSet {
+	return CustomerFieldSet{}.Under(s.p + "customer__")
 }
 
 type ormScanPost struct {
@@ -653,6 +907,47 @@ func (s UserTierFieldSet) Under(prefix string) UserTierFieldSet {
 		Name:   orm.TextFieldAt[string](prefix + "name"),
 		Age:    orm.FieldAt[int](prefix + "age"),
 		Active: orm.FieldAt[bool](prefix + "active"),
+	}
+}
+
+type ormScanVisit struct {
+	c0   orm.Cell[int64]
+	c1   orm.Cell[string]
+	dest []any
+}
+
+func (s *ormScanVisit) Dest() []any {
+	if s.dest == nil {
+		s.dest = []any{&s.c0, &s.c1}
+	}
+	return s.dest
+}
+
+func (s *ormScanVisit) Bind(r *Visit) {
+	s.c0.P = &r.ID
+	s.c1.P = &r.Path
+}
+
+func (s *ormScanVisit) Values(r *Visit, dst []any) []any {
+	return append(dst[:0], r.ID, r.Path)
+}
+
+// VisitFields is Visit's fields as typed lookups.
+var VisitFields = VisitFieldSet{}.Under("")
+
+// VisitFieldSet is Visit's fields as typed lookups: VisitFields from the model itself, Under from a model related to it.
+type VisitFieldSet struct {
+	p    string
+	ID   orm.Field[int64]
+	Path orm.TextField[string]
+}
+
+// Under is the set through a relation path, such as "author__".
+func (s VisitFieldSet) Under(prefix string) VisitFieldSet {
+	return VisitFieldSet{
+		p:    prefix,
+		ID:   orm.FieldAt[int64](prefix + "id"),
+		Path: orm.TextFieldAt[string](prefix + "path"),
 	}
 }
 

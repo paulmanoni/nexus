@@ -1,6 +1,7 @@
 package orm
 
 import (
+	"cmp"
 	"context"
 	"errors"
 	"fmt"
@@ -29,6 +30,7 @@ type Manager[T any] struct {
 	meta      *model
 	err       error // what is wrong with the model, reported at boot
 	dbName    string
+	names     string
 	mirror    string
 	unmanaged bool
 	bound     atomic.Pointer[binding]
@@ -63,16 +65,50 @@ func Names(set string) ForOption { return func(c *forConfig) { c.names = set } }
 
 // For is the manager of the model T. Declare it once, package-level, and
 // pass it to nexus.Boot (or a module) so the model finds its database and
-// a model the ORM can't map fails boot.
+// a model the ORM can't map fails boot. Its options win over the model's
+// Meta. The first For of a model without Names is its own manager, the
+// one Objects and its rows' writes use.
 func For[T any](opts ...ForOption) *Manager[T] {
 	var c forConfig
 	for _, o := range opts {
 		o(&c)
 	}
-	m := &Manager[T]{dbName: c.db, mirror: c.mirror, unmanaged: c.unmanaged}
+	m := newManager[T](c, madeByFor)
+	if c.names == "" {
+		t := reflect.TypeFor[T]()
+		// A For replaces the manager Objects made before it ran (Objects
+		// called during another package's init).
+		if v, loaded := homes.LoadOrStore(t, homeEntry{m: m}); loaded && v.(homeEntry).made {
+			homes.CompareAndSwap(t, v, homeEntry{m: m})
+		}
+	}
+	return m
+}
+
+// madeBy is what made a manager: For, Of, or Objects for a model with no
+// For of its own.
+type madeBy int
+
+const (
+	madeByFor madeBy = iota
+	madeByOf
+	madeByObjects
+)
+
+func newManager[T any](c forConfig, by madeBy) *Manager[T] {
+	m := &Manager[T]{mirror: c.mirror, names: c.names}
 	m.meta, m.err = modelOf(reflect.TypeFor[T](), c.names, c.table)
+	var meta Meta
+	if m.meta != nil {
+		meta = m.meta.meta
+	}
+	m.dbName, m.unmanaged = cmp.Or(c.db, meta.DB), c.unmanaged || meta.Unmanaged
 	m.QuerySet = QuerySet[T]{m: m, q: query{m: m.meta}}
-	declare(declaredModel{db: c.db, unmanaged: c.unmanaged, tables: m.tables})
+	if by != madeByObjects {
+		d := m.declaration()
+		d.own = by == madeByFor && c.names == ""
+		declare(d)
+	}
 	m.Option = nexus.Invoke(func(app *nexus.App, lc nexus.Lifecycle) error {
 		if m.err != nil {
 			return m.err
@@ -85,6 +121,17 @@ func For[T any](opts ...ForOption) *Manager[T] {
 		return nil
 	})
 	return m
+}
+
+func (m *Manager[T]) option() nexus.Option { return m.Option }
+
+func (m *Manager[T]) declaration() declaredModel {
+	return declaredModel{t: reflect.TypeFor[T](), db: m.dbName, unmanaged: m.unmanaged, tables: m.tables, madeOn: m.madeOn}
+}
+
+// schema is the schema the manager queries.
+func (m *Manager[T]) schema() Schema {
+	return Schema{DB: m.dbName, Names: m.names, Unmanaged: m.unmanaged}
 }
 
 // Schema is a database the models are queried on and the names they have
@@ -131,57 +178,66 @@ func Of[T any](s Schema) *Manager[T] {
 	if v, ok := schemaManagers.Load(k); ok {
 		return v.(*Manager[T])
 	}
-	opts := []ForOption{On(s.DB), Names(s.Names)}
-	if s.Unmanaged {
-		opts = append(opts, Unmanaged())
-	}
-	v, _ := schemaManagers.LoadOrStore(k, For[T](opts...))
+	c := forConfig{db: s.DB, names: s.Names, unmanaged: s.Unmanaged}
+	v, _ := schemaManagers.LoadOrStore(k, newManager[T](c, madeByOf))
 	return v.(*Manager[T])
 }
 
 // Check fails boot when one of the models (values or pointers of their
-// types) doesn't map onto the schema: a tag naming no field, a relation
-// to a model by no field of it, a column read through no relation, two
-// relations claiming one inverse name; and, once its database connects,
-// a column, index or generated column it can't make (a vector on MySQL),
-// or an extension it lacks. Pass it after orm.Migrate, which may install
-// them.
+// types) doesn't map onto the schema, as Verify finds; once its database
+// connects, boot waits for it. Pass it after orm.Migrate, which may
+// install what it checks for.
 //
 //	nexus.Boot(…, Legacy.Check(User{}, Profile{}, Group{}))
 func (s Schema) Check(models ...any) nexus.Option {
 	return nexus.Setup(func(ctx context.Context, app *nexus.App) error {
-		var errs []error
-		var ms []*model
-		for _, v := range models {
-			t := reflect.TypeOf(v)
-			for t.Kind() == reflect.Pointer {
-				t = t.Elem()
-			}
-			m, err := modelOf(t, s.Names, "")
-			if err != nil {
-				errs = append(errs, err)
-				continue
-			}
-			ms = append(ms, m)
-			errs = append(errs, m.check()...)
-		}
-		d, err := waitConnected(ctx, &binding{app: app}, s.DB)
-		switch {
-		case errors.Is(err, nexus.Unavailable):
-			errs = append(errs, err)
-		case err == nil:
-			var exts []string
-			for _, m := range ms {
-				if _, err := m.tables(d.dialect); err != nil {
-					errs = append(errs, err)
-				}
-				exts = append(exts, m.extensions()...)
-			}
-			slices.Sort(exts)
-			errs = append(errs, missingExtensions(ctx, d, slices.Compact(exts)))
-		}
-		return errors.Join(errs...)
+		return s.Verify(ctx, app, models...)
 	})
+}
+
+// Verify is what Check checks, for a schema an app picks at run time:
+// that the models (values or pointers of their types) map onto it — no
+// tag naming no field, relation to a model by no field of it, column read
+// through no relation, or two relations claiming one inverse name — and,
+// once its database answers (it waits for it to connect, as Migrate
+// does), that the database can make their columns, indexes and generated
+// columns (a vector on MySQL can't be) and has their extensions.
+//
+//	nexus.Setup(func(ctx context.Context, app *nexus.App, cfg *Config) error {
+//		return schemaFor(cfg).Verify(ctx, app, User{}, Group{})
+//	})
+func (s Schema) Verify(ctx context.Context, app *nexus.App, models ...any) error {
+	var errs []error
+	var ms []*model
+	for _, v := range models {
+		t := reflect.TypeOf(v)
+		for t.Kind() == reflect.Pointer {
+			t = t.Elem()
+		}
+		m, err := modelOf(t, s.Names, "")
+		if err != nil {
+			errs = append(errs, err)
+			continue
+		}
+		ms = append(ms, m)
+		errs = append(errs, m.check()...)
+	}
+	d, err := waitConnected(ctx, &binding{app: app}, s.DB)
+	switch {
+	case errors.Is(err, nexus.Unavailable):
+		errs = append(errs, err)
+	case err == nil:
+		var exts []string
+		for _, m := range ms {
+			if err := m.madeOn(d.dialect); err != nil {
+				errs = append(errs, err)
+			}
+			exts = append(exts, m.extensions()...)
+		}
+		slices.Sort(exts)
+		errs = append(errs, missingExtensions(ctx, d, slices.Compact(exts)))
+	}
+	return errors.Join(errs...)
 }
 
 // TableName is the model's table.

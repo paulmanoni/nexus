@@ -32,8 +32,9 @@ const prefetchChunk = 1000
 
 // prefetch loads specs' relations into parents (addressable structs of
 // m), each relation in one query per prefetchChunk keys, nested paths
-// (posts__comments) on the rows loaded.
-func prefetch(ctx context.Context, c conn, m *model, parents []reflect.Value, specs []PrefetchSpec) error {
+// (posts__comments) on the rows loaded; the rows are loaded from the
+// parents' schema s.
+func prefetch(ctx context.Context, c conn, m *model, s Schema, parents []reflect.Value, specs []PrefetchSpec) error {
 	if len(parents) == 0 {
 		return nil
 	}
@@ -67,15 +68,15 @@ func prefetch(ctx context.Context, c conn, m *model, parents []reflect.Value, sp
 		if !ok {
 			return fmt.Errorf("orm: PrefetchRelated: %s has no relation %q", m.Name, name)
 		}
-		s := steps[name]
-		if err := fetchRelated(ctx, c, m, r, parents, s.custom, s.nested); err != nil {
+		st := steps[name]
+		if err := fetchRelated(ctx, c, m, s, r, parents, st.custom, st.nested); err != nil {
 			return err
 		}
 	}
 	return nil
 }
 
-func fetchRelated(ctx context.Context, c conn, m *model, r *relation, parents []reflect.Value, custom *query, nested []PrefetchSpec) error {
+func fetchRelated(ctx context.Context, c conn, m *model, s Schema, r *relation, parents []reflect.Value, custom *query, nested []PrefetchSpec) error {
 	if err := r.held(m); err != nil {
 		return err
 	}
@@ -92,7 +93,7 @@ func fetchRelated(ctx context.Context, c conn, m *model, r *relation, parents []
 		base.limit, base.offset = 0, 0
 	}
 	base.prefetch = append(base.prefetch, nested...)
-	byKey, err := related(ctx, c, r, base, distinctKeys(parents, r.local))
+	byKey, err := related(ctx, c, s, r, base, distinctKeys(parents, r.local))
 	if err != nil {
 		return err
 	}
@@ -108,10 +109,10 @@ func fetchRelated(ctx context.Context, c conn, m *model, r *relation, parents []
 	return nil
 }
 
-// related is a relation's rows (pointers), read by base, a query of the
-// related model, by the key of the parent holding them: keys, values of
-// the parents' r.local.
-func related(ctx context.Context, c conn, r *relation, base query, keys []any) (map[any][]reflect.Value, error) {
+// related is a relation's rows (pointers, loaded from schema s), read by
+// base, a query of the related model, by the key of the parent holding
+// them: keys, values of the parents' r.local.
+func related(ctx context.Context, c conn, s Schema, r *relation, base query, keys []any) (map[any][]reflect.Value, error) {
 	_, rf, err := r.ends()
 	if err != nil {
 		return nil, err
@@ -134,7 +135,7 @@ func related(ctx context.Context, c conn, r *relation, base query, keys []any) (
 	for chunk := range slices.Chunk(keys, prefetchChunk) {
 		q := base.clone()
 		q.where = append(q.where, Q{rf.Name + "__in": chunk})
-		rows, err := q.all(ctx, c)
+		rows, err := q.all(ctx, c, s)
 		if err != nil {
 			return nil, err
 		}

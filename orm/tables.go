@@ -6,25 +6,34 @@ import (
 	"database/sql"
 	"database/sql/driver"
 	"fmt"
+	"maps"
 	"reflect"
 	"slices"
 	"strconv"
 	"strings"
 
+	"github.com/paulmanoni/nexus/v2"
+
 	"github.com/paulmanoni/nexus/orm/internal/schema"
 )
 
-// Model is a model's manager, as CreateTables and the migrations take it.
-type Model interface {
-	tables(d Dialect) ([]schema.Table, error)
+// AnyManager is a manager of any model, as CreateTables and ormtest take
+// it.
+type AnyManager interface {
+	tables() ([]schema.Table, error)
+	madeOn(d Dialect) error
 	conn(ctx context.Context) (conn, error)
+	database() string
+	option() nexus.Option
+	declaration() declaredModel
 }
 
 // CreateTables creates the models' tables, and the tables between their
-// many-to-many relations, where they are not already: for tests and
+// many-to-many relations, where they are not already, and the extensions
+// CreateExtension declared for the models' databases: for tests and
 // tools. Foreign keys are made between the tables it makes only. A
 // deployed schema changes through migrations (orm.Migrate).
-func CreateTables(ctx context.Context, models ...Model) error {
+func CreateTables(ctx context.Context, models ...AnyManager) error {
 	if len(models) == 0 {
 		return nil
 	}
@@ -32,9 +41,13 @@ func CreateTables(ctx context.Context, models ...Model) error {
 	if err != nil {
 		return err
 	}
-	if c.d.Name() == "postgres" {
-		for _, e := range declaredExtensions() {
-			if _, err := c.exec(ctx, createExtension(c.d, e.name), nil); err != nil {
+	d := schema.For(c.d.Name())
+	for _, e := range declaredExtensions() {
+		if !slices.ContainsFunc(models, func(m AnyManager) bool { return m.database() == e.db }) {
+			continue
+		}
+		for _, s := range d.CreateExtension(e.name) {
+			if _, err := c.exec(ctx, s, nil); err != nil {
 				return err
 			}
 		}
@@ -42,7 +55,10 @@ func CreateTables(ctx context.Context, models ...Model) error {
 	var all []schema.Table
 	seen := map[string]bool{}
 	for _, m := range models {
-		ts, err := m.tables(c.d)
+		if err := m.madeOn(c.d); err != nil {
+			return err
+		}
+		ts, err := m.tables()
 		if err != nil {
 			return err
 		}
@@ -56,15 +72,13 @@ func CreateTables(ctx context.Context, models ...Model) error {
 	// A foreign key to a table the call doesn't make is left out: it may
 	// not exist, and these tables are for tests and tools.
 	for i := range all {
-		fks := all[i].FKs[:0]
-		for _, fk := range all[i].FKs {
-			if seen[fk.Table] {
-				fks = append(fks, fk)
+		all[i].Columns = slices.Clone(all[i].Columns)
+		for j, col := range all[i].Columns {
+			if col.FK != nil && !seen[col.FK.Table] {
+				all[i].Columns[j].FK = nil
 			}
 		}
-		all[i].FKs = fks
 	}
-	d := schema.Dialect{Name: c.d.Name(), Quote: c.d.Quote}
 	for _, t := range schema.Sort(all) {
 		for _, s := range d.Create(t, true) {
 			if _, err := c.exec(ctx, s, nil); err != nil {
@@ -75,54 +89,78 @@ func CreateTables(ctx context.Context, models ...Model) error {
 	return nil
 }
 
-func (m *Manager[T]) tables(d Dialect) ([]schema.Table, error) {
+func (m *Manager[T]) database() string { return m.dbName }
+
+func (m *Manager[T]) tables() ([]schema.Table, error) {
 	if m.err != nil {
 		return nil, m.err
 	}
-	return m.meta.tables(d)
+	return m.meta.tables()
 }
 
-// tables is the model's table on dialect d, its indexes and generated
-// columns written for it, and the tables between its many-to-many
-// relations.
-func (m *model) tables(d Dialect) ([]schema.Table, error) {
+func (m *Manager[T]) madeOn(d Dialect) error {
+	if m.err != nil {
+		return m.err
+	}
+	return m.meta.madeOn(d)
+}
+
+// tables is the model's table, its generated columns and indexes written
+// for each dialect that can make them (madeOn says what one can't), and
+// the tables between its many-to-many relations.
+func (m *model) tables() ([]schema.Table, error) {
 	t := schema.Table{Name: m.Table}
-	b := newBuilder(d, m)
-	b.ddl = true
+	together := map[string][]string{} // a unique index's columns, by its name
+	for _, f := range m.Fields {
+		if f.UniqueIdx != "" {
+			together[f.UniqueIdx] = append(together[f.UniqueIdx], f.Column)
+		}
+	}
 	for _, f := range m.Fields {
 		c := columnOf(f)
 		if f != m.PK {
 			c.Auto = false
 		}
-		switch {
-		case f.Type == vectorType && d.Name() == "mysql":
-			return nil, fmt.Errorf("orm: %s.%s: MySQL has no vector type nexus can search (its VECTOR distances are HeatWave's only)", m.Name, f.Name)
-		case f.Type == vectorType && d.Name() == "postgres":
-			c.Type = "vector"
-			if f.Dims > 0 {
-				c.Type += "(" + strconv.Itoa(f.Dims) + ")"
-			}
-		case f.Type == tsvectorType && d.Name() == "postgres":
-			c.Type = "tsvector"
+		if len(together[f.UniqueIdx]) > 1 {
+			c.Unique = false
+		}
+		switch f.Type {
+		case vectorType:
+			c.Vector = cmp.Or(f.Dims, -1)
+		case tsvectorType:
+			c.TSVector = true
 		}
 		if f.Gen != nil {
-			s, err := f.Gen.exprSQL(b)
-			if err != nil {
-				return nil, fmt.Errorf("orm: %s.%s: %w", m.Name, f.Name, err)
+			c.Nullable = true
+			for _, name := range schema.Names {
+				b := newBuilder(DialectFor(name), m)
+				b.ddl = true
+				s, err := f.Gen.exprSQL(b)
+				if len(*b.joins) > 0 || len(b.args()) > 0 {
+					return nil, fmt.Errorf("orm: %s: a generated column reads the row's own columns, and takes no arguments", m.Name)
+				}
+				if err == nil {
+					c.Generated = c.Generated.Set(name, s)
+				}
 			}
-			c.Generated, c.Nullable = s, true
 		}
 		t.Columns = append(t.Columns, c)
 	}
-	if len(*b.joins) > 0 || len(b.args()) > 0 {
-		return nil, fmt.Errorf("orm: %s: a generated column reads the row's own columns, and takes no arguments", m.Name)
+	names := slices.Sorted(maps.Keys(together))
+	for _, name := range names {
+		if cols := together[name]; len(cols) > 1 {
+			t.Constraints = append(t.Constraints, schema.Constraint{Name: name, Columns: cols})
+		}
 	}
 	for n, ix := range m.indexes {
-		si, err := m.index(d, ix, n)
-		if err != nil {
-			return nil, err
+		si := schema.Index{}
+		for _, name := range schema.Names {
+			idx, stmt, err := m.index(DialectFor(name), ix, n)
+			if err == nil {
+				si.Name, si.SQL = idx, si.SQL.Set(name, stmt)
+			}
 		}
-		if si.SQL != "" {
+		if si.Name != "" {
 			t.Indexes = append(t.Indexes, si)
 		}
 	}
@@ -137,23 +175,43 @@ func (m *model) tables(d Dialect) ([]schema.Table, error) {
 		}
 		switch r.Kind {
 		case relFK:
-			out[0].FKs = append(out[0].FKs, schema.ForeignKey{Column: r.local.Column, Table: target.Table, Ref: rf.Column, OnDelete: r.OnDelete})
+			c, _ := out[0].Column(r.local.Column)
+			c.FK = &schema.ForeignKey{Table: target.Table, Ref: rf.Column, OnDelete: r.OnDelete}
 		case relM2M:
 			local, remote := columnOf(r.local), columnOf(rf)
 			local.Name, remote.Name = r.ThroughLocal, r.ThroughRemote
 			local.Auto, remote.Auto = false, false
 			local.Unique, remote.Unique = false, false
-			out = append(out, schema.Table{
-				Name:    r.Through,
-				Columns: []schema.Column{local, remote},
-				FKs: []schema.ForeignKey{
-					{Column: r.ThroughLocal, Table: m.Table, Ref: r.local.Column, OnDelete: "cascade"},
-					{Column: r.ThroughRemote, Table: target.Table, Ref: rf.Column, OnDelete: "cascade"},
-				},
-			})
+			local.PK, remote.PK = false, false
+			local.FK = &schema.ForeignKey{Table: m.Table, Ref: r.local.Column, OnDelete: "cascade"}
+			remote.FK = &schema.ForeignKey{Table: target.Table, Ref: rf.Column, OnDelete: "cascade"}
+			out = append(out, schema.Table{Name: r.Through, Columns: []schema.Column{local, remote}})
 		}
 	}
 	return out, nil
+}
+
+// madeOn is what keeps d from making the model: a vector on MySQL, an
+// index kind or a generated expression d has none of.
+func (m *model) madeOn(d Dialect) error {
+	for _, f := range m.Fields {
+		if f.Type == vectorType && d.Name() == "mysql" {
+			return fmt.Errorf("orm: %s.%s: MySQL has no vector type nexus can search (its VECTOR distances are HeatWave's only)", m.Name, f.Name)
+		}
+		if f.Gen != nil {
+			b := newBuilder(d, m)
+			b.ddl = true
+			if _, err := f.Gen.exprSQL(b); err != nil {
+				return fmt.Errorf("orm: %s.%s: %w", m.Name, f.Name, err)
+			}
+		}
+	}
+	for n, ix := range m.indexes {
+		if _, _, err := m.index(d, ix, n); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 // Index is an index a model declares in its Indexes() method, Django's
@@ -226,8 +284,9 @@ func (i Index) Trigram() Index { i.trigram = true; return i }
 // Config is a FullTextIndex's text search configuration on Postgres.
 func (i Index) Config(c string) Index { i.config = c; return i }
 
-// index is the model's n-th declared index on dialect d: none on SQLite.
-func (m *model) index(d Dialect, ix Index, n int) (schema.Index, error) {
+// index is the model's n-th declared index on dialect d: its name, and
+// the statement making it (none on SQLite).
+func (m *model) index(d Dialect, ix Index, n int) (name, stmt string, err error) {
 	b := newBuilder(d, m)
 	b.ddl = true
 	var fields, names []string
@@ -237,7 +296,12 @@ func (m *model) index(d Dialect, ix Index, n int) (schema.Index, error) {
 		}
 	}
 	on := ix.on
-	if ix.kind == "fulltext" && d.Name() == "postgres" {
+	// TSVector fields are tsvectors already: indexed as they are.
+	tsv := !slices.ContainsFunc(fields, func(f string) bool {
+		h, ok := m.field(f)
+		return !ok || h.Type != tsvectorType
+	})
+	if ix.kind == "fulltext" && d.Name() == "postgres" && !tsv {
 		on = []any{SearchVector(fields...).Config(cmp.Or(ix.config, "simple"))}
 	}
 	var parts []string
@@ -254,7 +318,7 @@ func (m *model) index(d Dialect, ix Index, n int) (schema.Index, error) {
 			err = fmt.Errorf("an index is of field names and Exprs, not %T", o)
 		}
 		if err != nil {
-			return schema.Index{}, fmt.Errorf("orm: %s's index: %w", m.Name, err)
+			return "", "", fmt.Errorf("orm: %s's index: %w", m.Name, err)
 		}
 		switch {
 		case ix.trigram:
@@ -265,24 +329,23 @@ func (m *model) index(d Dialect, ix Index, n int) (schema.Index, error) {
 		parts = append(parts, s)
 	}
 	if len(*b.joins) > 0 || len(b.args()) > 0 {
-		return schema.Index{}, fmt.Errorf("orm: %s's index: an index is of the table's own columns, and takes no arguments", m.Name)
+		return "", "", fmt.Errorf("orm: %s's index: an index is of the table's own columns, and takes no arguments", m.Name)
 	}
 	if len(names) == 0 {
 		names = []string{strconv.Itoa(n)}
 	}
-	si := schema.Index{Name: cmp.Or(ix.name, m.Table+"_"+strings.Join(names, "_")+"_"+ix.kind)}
+	name = cmp.Or(ix.name, m.Table+"_"+strings.Join(names, "_")+"_"+ix.kind)
 	q := d.Quote
 	switch {
 	case d.Name() == "sqlite":
-		return schema.Index{}, nil
+		return name, "", nil
 	case d.Name() == "mysql" && ix.kind != "fulltext":
-		return schema.Index{}, fmt.Errorf("orm: %s: MySQL has no %s index", m.Name, ix.kind)
+		return "", "", fmt.Errorf("orm: %s: MySQL has no %s index", m.Name, ix.kind)
 	case d.Name() == "mysql":
-		si.SQL = "CREATE FULLTEXT INDEX " + q(si.Name) + " ON " + q(m.Table) + " (" + strings.Join(parts, ", ") + ")"
-		return si, nil
+		return name, "CREATE FULLTEXT INDEX " + q(name) + " ON " + q(m.Table) + " (" + strings.Join(parts, ", ") + ")", nil
 	}
 	using := cmp.Or(map[string]string{"fulltext": "gin"}[ix.kind], ix.kind)
-	si.SQL = "CREATE INDEX " + q(si.Name) + " ON " + q(m.Table) + " USING " + using + " (" + strings.Join(parts, ", ") + ")"
+	stmt = "CREATE INDEX " + q(name) + " ON " + q(m.Table) + " USING " + using + " (" + strings.Join(parts, ", ") + ")"
 	var with []string
 	for k, v := range map[string]int{"m": ix.m, "ef_construction": ix.ef, "lists": ix.lists} {
 		if v > 0 {
@@ -291,9 +354,9 @@ func (m *model) index(d Dialect, ix Index, n int) (schema.Index, error) {
 	}
 	if len(with) > 0 {
 		slices.Sort(with)
-		si.SQL += " WITH (" + strings.Join(with, ", ") + ")"
+		stmt += " WITH (" + strings.Join(with, ", ") + ")"
 	}
-	return si, nil
+	return name, stmt, nil
 }
 
 // extensions is the Postgres extensions the model's columns and indexes

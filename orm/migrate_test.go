@@ -5,110 +5,222 @@ import (
 	"slices"
 	"strings"
 	"testing"
-	"testing/fstest"
 
 	"github.com/paulmanoni/nexus/v2"
 	"github.com/paulmanoni/nexus/v2/config"
 	"github.com/paulmanoni/nexus/v2/db"
 
 	"github.com/paulmanoni/nexus/orm"
+	m "github.com/paulmanoni/nexus/orm/migration"
 	"github.com/paulmanoni/nexus/orm/ormtest"
 )
 
-func TestMigrations(t *testing.T) {
-	ctx := ormtest.Open(t)
-	db, _ := orm.DBFrom(ctx)
-	driver := db.Dialect().Name()
-
-	plan, err := orm.PlanMigration(nil, driver)
-	if err != nil {
-		t.Fatal(err)
-	}
-	src := string(orm.MigrationFile(plan.Steps))
-	for _, want := range []string{"CREATE TABLE", "users", "book_tags"} {
-		if !strings.Contains(src, want) {
-			t.Fatalf("initial migration lacks %q:\n%s", want, src)
-		}
-	}
-	fsys := fstest.MapFS{"0001_initial.sql": {Data: []byte(src)}}
-	applied, err := orm.ApplyMigrations(ctx, db, fsys)
-	if err != nil || !slices.Equal(applied, []string{"0001_initial.sql"}) {
-		t.Fatalf("applied %v, %v", applied, err)
-	}
-	if err := Users.Create(ctx, &User{Name: "Ali", Email: "ali@x"}); err != nil {
-		t.Fatal(err)
-	}
-	if applied, err = orm.ApplyMigrations(ctx, db, fsys); err != nil || len(applied) != 0 {
-		t.Fatalf("applied twice: %v, %v", applied, err)
-	}
-
-	again, err := orm.PlanMigration(plan.Snapshot, driver)
-	if err != nil || len(again.Steps) != 0 {
-		t.Fatalf("a plan from the models' own snapshot: %+v, %v", again.Steps, err)
-	}
-
-	fsys["0002_bad.sql"] = &fstest.MapFile{Data: []byte("CREATE TABLE extra (id INTEGER PRIMARY KEY);\nSELECT * FROM nothing_here;")}
-	if _, err := orm.ApplyMigrations(ctx, db, fsys); err == nil || !strings.Contains(err.Error(), "0002_bad.sql") {
-		t.Fatalf("a failing migration: %v", err)
-	}
-	// MySQL commits DDL as it runs: the table the failed attempt made stays.
-	fsys["0002_bad.sql"] = &fstest.MapFile{Data: []byte("CREATE TABLE IF NOT EXISTS extra (id INTEGER PRIMARY KEY);")}
-	if applied, err = orm.ApplyMigrations(ctx, db, fsys); err != nil || len(applied) != 1 {
-		t.Fatalf("after fixing it: %v, %v", applied, err)
-	}
-	fsys["2_x.sql"] = &fstest.MapFile{Data: []byte("--")}
-	fsys["bad name.sql"] = &fstest.MapFile{Data: []byte("--")}
-	if _, err := orm.ApplyMigrations(ctx, db, fsys); err == nil {
-		t.Fatal("took a migration named outside NNNN_words.sql")
-	}
+// Visit lives on database "visits", made by the migration this file
+// registers, which TestMigrateAtBoot applies.
+type Visit struct {
+	orm.Model[Visit]
+	ID   int64
+	Path string
 }
 
+func (Visit) Meta() orm.Meta { return orm.Meta{DB: "visits"} }
+
+func init() {
+	m.Register(m.Migration{Name: "0001_initial", DB: "visits", Operations: []m.Operation{
+		m.CreateModel{Table: "visits", Fields: []m.NamedField{m.F("id", m.BigAuto()), m.F("path", m.Text())}},
+	}})
+}
+
+type visitsDB struct{ *db.Manager }
+
 func TestMigrateAtBoot(t *testing.T) {
-	plan, err := orm.PlanMigration(nil, "sqlite")
-	if err != nil {
-		t.Fatal(err)
-	}
-	fsys := fstest.MapFS{"migrations/0001_initial.sql": {Data: orm.MigrationFile(plan.Steps)}}
 	_, stop, err := nexus.InProcess(config.Runtime{},
-		db.Bind[mainDB]("main", func() db.Config { return db.Config{Driver: db.SQLite, Database: ":memory:", LogLevel: "silent"} }, db.WithDefault()),
-		orm.Migrate(fsys, orm.MigrateDir("migrations")),
-		Users,
+		db.Bind[visitsDB]("visits", func() db.Config { return db.Config{Driver: db.SQLite, Database: ":memory:", LogLevel: "silent"} }),
+		orm.Migrate(orm.MigrateOn("visits")),
 	)
 	if err != nil {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { _ = stop(context.Background()) })
-	if err := Users.Create(context.Background(), &User{Name: "Ali", Email: "ali@x"}); err != nil {
+	ctx := context.Background()
+	if err := (&Visit{Path: "/"}).Save(ctx); err != nil {
 		t.Fatalf("the migrated table: %v", err)
+	}
+	names, err := orm.Raw[string](ctx, orm.Schema{DB: "visits"}, "SELECT name FROM nexus_migrations")
+	if err != nil || !slices.Equal(names, []string{"0001_initial"}) {
+		t.Fatalf("recorded %v, %v", names, err)
 	}
 }
 
-// TestSearchMigrations plans Doc's generated column, vector and indexes,
-// and the extension declared for them (search_test.go).
-func TestSearchMigrations(t *testing.T) {
-	plan, err := orm.PlanMigration(nil, "postgres")
-	if err != nil || plan.Steps[0].SQL != `CREATE EXTENSION IF NOT EXISTS "vector"` || !strings.Contains(string(plan.Snapshot), `"extensions": [`) {
-		t.Fatalf("plan %v, %v", plan.Steps, err)
+// library is three migrations of authors and books, the second with a
+// data migration, applied and unapplied on a real database.
+func library(log *[]string) []m.Migration {
+	return []m.Migration{
+		{Name: "0001_initial", Operations: []m.Operation{
+			m.CreateModel{Table: "authors", Fields: []m.NamedField{m.F("id", m.BigAuto()), m.F("name", m.Varchar(100).Unique())}},
+			m.CreateModel{Table: "books", Fields: []m.NamedField{
+				m.F("id", m.BigAuto()),
+				m.F("author_id", m.BigInt().FK("authors", "id").OnDelete(m.Cascade)),
+				m.F("title", m.Varchar(200)),
+			}, Constraints: []m.Constraint{m.Unique("books_author_title", "author_id", "title")}},
+		}},
+		{Name: "0002_books", Dependencies: []string{"0001_initial"}, Operations: []m.Operation{
+			m.AddField{Table: "books", Name: "pages", Field: m.Int().Default(0)},
+			m.RenameField{Table: "books", Old: "title", New: "name"},
+			m.AlterField{Table: "authors", Name: "name", Field: m.Varchar(200).Unique()},
+			m.AddField{Table: "authors", Name: "bio", Field: m.Text().Null()},
+			m.AddField{Table: "authors", Name: "country", Field: m.Varchar(2).Null().Index()},
+			m.RunGo{
+				Forward: func(ctx context.Context, tx m.Tx) error {
+					if _, err := tx.ExecContext(ctx, "INSERT INTO authors (name, bio) VALUES ('Ali', 'a poet')"); err != nil {
+						return err
+					}
+					// The ORM's queries on ctx run in the migration.
+					n, err := orm.Raw[int64](ctx, orm.Schema{}, "SELECT COUNT(*) FROM authors")
+					*log = append(*log, "forward", strings.Repeat("x", int(n[0])))
+					return err
+				},
+				Backward: func(ctx context.Context, tx m.Tx) error {
+					*log = append(*log, "backward")
+					_, err := tx.ExecContext(ctx, "DELETE FROM authors WHERE name = 'Ali'")
+					return err
+				},
+			},
+		}},
+		{Name: "0003_tidy", Dependencies: []string{"0002_books"}, Operations: []m.Operation{
+			m.RemoveField{Table: "books", Name: "pages"},
+			m.RemoveConstraint{Table: "books", Name: "books_author_title"},
+			m.AddConstraint{Table: "authors", Constraint: m.Check("authors_name_set", "name <> ''")},
+			m.RenameModel{Old: "books", New: "volumes"},
+		}},
 	}
-	src := string(orm.MigrationFile(plan.Steps))
-	for _, want := range []string{`"search" tsvector GENERATED ALWAYS AS`, `"embedding" vector(3)`, `USING hnsw ("embedding" vector_cosine_ops)`} {
-		if !strings.Contains(src, want) {
-			t.Fatalf("migration lacks %q", want)
-		}
-	}
-	if again, err := orm.PlanMigration(plan.Snapshot, "postgres"); err != nil || len(again.Steps) != 0 {
-		t.Fatalf("again %+v, %v", again.Steps, err)
-	}
-	lite, err := orm.PlanMigration(nil, "sqlite")
-	if err != nil || strings.Contains(string(orm.MigrationFile(lite.Steps)), "EXTENSION") {
-		t.Fatalf("sqlite %v", err)
-	}
+}
+
+func TestApplyMigrations(t *testing.T) {
 	ctx := ormtest.Open(t)
-	db, _ := orm.DBFrom(ctx)
-	if _, err := orm.ApplyMigrations(ctx, db, fstest.MapFS{"0001_initial.sql": {Data: orm.MigrationFile(lite.Steps)}}); err != nil {
+	d, _ := orm.DBFrom(ctx)
+	var log []string
+	migs := library(&log)
+	exec := func(q string) error { _, err := orm.Exec(ctx, orm.Schema{}, q); return err }
+	applied := func() []string {
+		t.Helper()
+		names, err := orm.Raw[string](ctx, orm.Schema{}, "SELECT name FROM nexus_migrations ORDER BY name")
+		if err != nil {
+			t.Fatal(err)
+		}
+		return names
+	}
+
+	if err := orm.ApplyMigrations(ctx, d, "", migs...); err != nil {
 		t.Fatal(err)
 	}
-	if err := Docs.Create(ctx, &Doc{Title: "a", Body: "b"}); err != nil {
-		t.Fatalf("the migrated table: %v", err)
+	if got := applied(); !slices.Equal(got, []string{"0001_initial", "0002_books", "0003_tidy"}) {
+		t.Fatalf("applied %v", got)
+	}
+	if !slices.Equal(log, []string{"forward", "x"}) {
+		t.Fatalf("the data migration: %v", log)
+	}
+	for _, q := range []string{
+		"INSERT INTO volumes (author_id, name) VALUES (1, 'Poems')",
+		"INSERT INTO volumes (author_id, name) VALUES (1, 'Poems')", // no longer unique together
+		"UPDATE authors SET country = 'TZ', bio = NULL",
+	} {
+		if err := exec(q); err != nil {
+			t.Fatalf("%s: %v", q, err)
+		}
+	}
+	if err := orm.ApplyMigrations(ctx, d, "", migs...); err != nil {
+		t.Fatalf("again, nothing to do: %v", err)
+	}
+
+	// Back to 0001: books as they were, the data migration undone.
+	if err := exec("DELETE FROM volumes"); err != nil {
+		t.Fatal(err)
+	}
+	if err := orm.ApplyMigrations(ctx, d, "0001", migs...); err != nil {
+		t.Fatal(err)
+	}
+	if got := applied(); !slices.Equal(got, []string{"0001_initial"}) || !slices.Equal(log, []string{"forward", "x", "backward"}) {
+		t.Fatalf("applied %v, log %v", got, log)
+	}
+	if err := exec("INSERT INTO authors (name) VALUES ('Neema')"); err != nil {
+		t.Fatal(err)
+	}
+	if err := exec("INSERT INTO books (author_id, title) VALUES (2, 'Go')"); err != nil {
+		t.Fatalf("books after unapplying: %v", err)
+	}
+	if err := exec("INSERT INTO books (author_id, title) VALUES (2, 'Go')"); err == nil {
+		t.Fatal("unique together again after unapplying, yet a duplicate went in")
+	}
+	if err := exec("UPDATE authors SET bio = 'x'"); err == nil {
+		t.Fatal("authors.bio outlived its migration")
+	}
+
+	// Zero, and forwards again.
+	if err := orm.ApplyMigrations(ctx, d, "zero", migs...); err != nil {
+		t.Fatal(err)
+	}
+	if err := exec("SELECT 1 FROM authors"); err == nil {
+		t.Fatal("authors outlived zero")
+	}
+	if err := orm.ApplyMigrations(ctx, d, "0002", migs...); err != nil {
+		t.Fatal(err)
+	}
+	if got := applied(); !slices.Equal(got, []string{"0001_initial", "0002_books"}) {
+		t.Fatalf("to 0002: %v", got)
+	}
+
+	// A data migration with no Backward can't be unapplied.
+	oneWay := append(migs, m.Migration{Name: "0004_one_way", Dependencies: []string{"0003_tidy"}, Operations: []m.Operation{
+		m.RunGo{Forward: func(context.Context, m.Tx) error { return nil }},
+	}})
+	if err := orm.ApplyMigrations(ctx, d, "", oneWay...); err != nil {
+		t.Fatal(err)
+	}
+	if err := orm.ApplyMigrations(ctx, d, "0003", oneWay...); err == nil || !strings.Contains(err.Error(), "irreversible") {
+		t.Fatalf("unapplying a one-way migration: %v", err)
+	}
+	// A failing step rolls its migration back (MySQL aside: it commits DDL).
+	bad := append(oneWay, m.Migration{Name: "0005_bad", Dependencies: []string{"0004_one_way"}, Operations: []m.Operation{
+		m.RunSQL{SQL: "SELECT * FROM nothing_here;", ReverseSQL: m.Noop},
+	}})
+	if err := orm.ApplyMigrations(ctx, d, "", bad...); err == nil || !strings.Contains(err.Error(), "0005_bad") {
+		t.Fatalf("a failing migration: %v", err)
+	}
+	if got := applied(); slices.Contains(got, "0005_bad") {
+		t.Fatalf("recorded a failed migration: %v", got)
+	}
+}
+
+// TestApplySearchMigration makes the search models' kind of schema: an
+// extension, a generated tsvector, and GIN indexes of it and of trigrams.
+func TestApplySearchMigration(t *testing.T) {
+	needs(t, "pg_trgm")
+	ctx := ormtest.Open(t)
+	d, _ := orm.DBFrom(ctx)
+	migs := []m.Migration{{Name: "0001_trgm", Operations: []m.Operation{m.CreateExtension{Name: "pg_trgm"}}}, {Name: "0002_pages", Dependencies: []string{"0001_trgm"}, Operations: []m.Operation{
+		m.CreateModel{Table: "pages", Fields: []m.NamedField{
+			m.F("id", m.BigAuto()),
+			m.F("title", m.Text()),
+			m.F("search", m.TSVector().Null().Generated(m.Dialects{
+				Postgres: `to_tsvector('simple', COALESCE("title", ''))`,
+				SQLite:   `COALESCE("title", '')`,
+			})),
+		}},
+		m.AddIndex{Table: "pages", Index: m.Index{Name: "pages_search_gin", SQL: m.Dialects{Postgres: `CREATE INDEX "pages_search_gin" ON "pages" USING gin ("search")`}}},
+		m.AddIndex{Table: "pages", Index: m.Index{Name: "pages_title_gin", SQL: m.Dialects{Postgres: `CREATE INDEX "pages_title_gin" ON "pages" USING gin ("title" gin_trgm_ops)`}}},
+	}}}
+	if err := orm.ApplyMigrations(ctx, d, "", migs...); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := orm.Exec(ctx, orm.Schema{}, "INSERT INTO pages (title) VALUES ('go')"); err != nil {
+		t.Fatal(err)
+	}
+	// Back to 0001: the extension stays, other tables may need it.
+	if err := orm.ApplyMigrations(ctx, d, "0001", migs...); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := orm.Exec(ctx, orm.Schema{}, "SELECT 1 FROM pages"); err == nil {
+		t.Fatal("pages outlived its migration")
 	}
 }

@@ -3,7 +3,171 @@
 package orm
 
 func init() {
+	Register[archived]()
+	RegisterScanner[archived]([]string{"id"}, func() RowScanner[archived] { return new(ormScanarchived) })
+	Register[gadget]()
+	RegisterScanner[gadget]([]string{"id", "name"}, func() RowScanner[gadget] { return new(ormScangadget) })
+	Register[ledger]()
+	RegisterScanner[ledger]([]string{"id", "amount"}, func() RowScanner[ledger] { return new(ormScanledger) })
+	Register[routed]()
+	RegisterScanner[routed]([]string{"id"}, func() RowScanner[routed] { return new(ormScanrouted) })
 	RegisterScanner[sqlUser]([]string{"id", "name", "age"}, func() RowScanner[sqlUser] { return new(ormScansqlUser) })
+}
+
+type ormScanarchived struct {
+	c0   Cell[int64]
+	dest []any
+}
+
+func (s *ormScanarchived) Dest() []any {
+	if s.dest == nil {
+		s.dest = []any{&s.c0}
+	}
+	return s.dest
+}
+
+func (s *ormScanarchived) Bind(r *archived) {
+	s.c0.P = &r.ID
+}
+
+func (s *ormScanarchived) Values(r *archived, dst []any) []any {
+	return append(dst[:0], r.ID)
+}
+
+// archivedFields is archived's fields as typed lookups.
+var archivedFields = archivedFieldSet{}.Under("")
+
+// archivedFieldSet is archived's fields as typed lookups: archivedFields from the model itself, Under from a model related to it.
+type archivedFieldSet struct {
+	p  string
+	ID Field[int64]
+}
+
+// Under is the set through a relation path, such as "author__".
+func (s archivedFieldSet) Under(prefix string) archivedFieldSet {
+	return archivedFieldSet{
+		p:  prefix,
+		ID: FieldAt[int64](prefix + "id"),
+	}
+}
+
+type ormScangadget struct {
+	c0   Cell[int64]
+	c1   Cell[string]
+	dest []any
+}
+
+func (s *ormScangadget) Dest() []any {
+	if s.dest == nil {
+		s.dest = []any{&s.c0, &s.c1}
+	}
+	return s.dest
+}
+
+func (s *ormScangadget) Bind(r *gadget) {
+	s.c0.P = &r.ID
+	s.c1.P = &r.Name
+}
+
+func (s *ormScangadget) Values(r *gadget, dst []any) []any {
+	return append(dst[:0], r.ID, r.Name)
+}
+
+// gadgetFields is gadget's fields as typed lookups.
+var gadgetFields = gadgetFieldSet{}.Under("")
+
+// gadgetFieldSet is gadget's fields as typed lookups: gadgetFields from the model itself, Under from a model related to it.
+type gadgetFieldSet struct {
+	p    string
+	ID   Field[int64]
+	Name TextField[string]
+}
+
+// Under is the set through a relation path, such as "author__".
+func (s gadgetFieldSet) Under(prefix string) gadgetFieldSet {
+	return gadgetFieldSet{
+		p:    prefix,
+		ID:   FieldAt[int64](prefix + "id"),
+		Name: TextFieldAt[string](prefix + "name"),
+	}
+}
+
+type ormScanledger struct {
+	c0   Cell[int64]
+	c1   Cell[int64]
+	dest []any
+}
+
+func (s *ormScanledger) Dest() []any {
+	if s.dest == nil {
+		s.dest = []any{&s.c0, &s.c1}
+	}
+	return s.dest
+}
+
+func (s *ormScanledger) Bind(r *ledger) {
+	s.c0.P = &r.ID
+	s.c1.P = &r.Amount
+}
+
+func (s *ormScanledger) Values(r *ledger, dst []any) []any {
+	return append(dst[:0], r.ID, r.Amount)
+}
+
+// ledgerFields is ledger's fields as typed lookups.
+var ledgerFields = ledgerFieldSet{}.Under("")
+
+// ledgerFieldSet is ledger's fields as typed lookups: ledgerFields from the model itself, Under from a model related to it.
+type ledgerFieldSet struct {
+	p      string
+	ID     Field[int64]
+	Amount Field[int64]
+}
+
+// Under is the set through a relation path, such as "author__".
+func (s ledgerFieldSet) Under(prefix string) ledgerFieldSet {
+	return ledgerFieldSet{
+		p:      prefix,
+		ID:     FieldAt[int64](prefix + "id"),
+		Amount: FieldAt[int64](prefix + "amount"),
+	}
+}
+
+type ormScanrouted struct {
+	c0   Cell[int64]
+	dest []any
+}
+
+func (s *ormScanrouted) Dest() []any {
+	if s.dest == nil {
+		s.dest = []any{&s.c0}
+	}
+	return s.dest
+}
+
+func (s *ormScanrouted) Bind(r *routed) {
+	s.c0.P = &r.ID
+}
+
+func (s *ormScanrouted) Values(r *routed, dst []any) []any {
+	return append(dst[:0], r.ID)
+}
+
+// routedFields is routed's fields as typed lookups.
+var routedFields = routedFieldSet{}.Under("")
+
+// routedFieldSet is routed's fields as typed lookups: routedFields from the model itself, Under from a model related to it.
+type routedFieldSet struct {
+	p  string
+	ID Field[int64]
+}
+
+// Under is the set through a relation path, such as "author__".
+func (s routedFieldSet) Under(prefix string) routedFieldSet {
+	return routedFieldSet{
+		p:  prefix,
+		ID: FieldAt[int64](prefix + "id"),
+	}
 }
 
 type ormScansqlUser struct {

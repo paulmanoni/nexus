@@ -64,6 +64,16 @@ func (q query) whereSQL(b *builder) (string, error) {
 	return " WHERE " + s, nil
 }
 
+// ordered is q in the model's Meta Ordering when it sets no order of its
+// own (OrderBy() with no field sets none, Meta's included): rows read for
+// their own sake, never counts, aggregates or subqueries.
+func (q query) ordered() query {
+	if q.order == nil && q.m != nil {
+		q.order = q.m.meta.Ordering
+	}
+	return q
+}
+
 func (q query) orderSQL(b *builder) (string, error) {
 	if len(q.order) == 0 {
 		return "", nil
@@ -212,9 +222,9 @@ func (q query) columns(b *builder, plans []relPlan) (string, error) {
 }
 
 // scan runs the query and reads each row into a value newRow makes (an
-// addressable struct), by reflection, related rows included; each gets
-// the rows until it returns false.
-func (q query) scan(ctx context.Context, c conn, newRow func() reflect.Value, each func(reflect.Value) bool) error {
+// addressable struct), by reflection, related rows included (loaded from
+// schema s); each gets the rows until it returns false.
+func (q query) scan(ctx context.Context, c conn, s Schema, newRow func() reflect.Value, each func(reflect.Value) bool) error {
 	b := q.builder(c.d)
 	plans, err := q.relatedPlans(b)
 	if err != nil {
@@ -224,11 +234,11 @@ func (q query) scan(ctx context.Context, c conn, newRow func() reflect.Value, ea
 	if err != nil {
 		return err
 	}
-	s, err := q.selectSQL(b, cols)
+	sel, err := q.selectSQL(b, cols)
 	if err != nil {
 		return err
 	}
-	rows, err := c.query(ctx, s, b.args())
+	rows, err := c.query(ctx, sel, b.args())
 	if err != nil {
 		return err
 	}
@@ -272,6 +282,7 @@ func (q query) scan(ctx context.Context, c conn, newRow func() reflect.Value, ea
 			if peek(tmps[j].Elem(), p.b.m.PK.Index, p.b.m.PK.Type).IsZero() {
 				continue // no related row: the LEFT JOIN found none
 			}
+			p.b.m.adopt(tmps[j].Elem(), s)
 			parent := row
 			if p.parent >= 0 {
 				parent = tmps[p.parent].Elem()
@@ -290,10 +301,12 @@ func (q query) scan(ctx context.Context, c conn, newRow func() reflect.Value, ea
 	return rows.Err()
 }
 
-// all is the query's rows of its model, as pointers, prefetches done.
-func (q query) all(ctx context.Context, c conn) ([]reflect.Value, error) {
+// all is the query's rows of its model, as pointers loaded from schema
+// s, prefetches done.
+func (q query) all(ctx context.Context, c conn, s Schema) ([]reflect.Value, error) {
 	var out []reflect.Value
-	err := q.scan(ctx, c, func() reflect.Value { return reflect.New(q.m.Type).Elem() }, func(v reflect.Value) bool {
+	err := q.ordered().scan(ctx, c, s, func() reflect.Value { return reflect.New(q.m.Type).Elem() }, func(v reflect.Value) bool {
+		q.m.adopt(v, s)
 		out = append(out, v.Addr())
 		return true
 	})
@@ -305,7 +318,7 @@ func (q query) all(ctx context.Context, c conn) ([]reflect.Value, error) {
 		for i, p := range out {
 			parents[i] = p.Elem()
 		}
-		if err := prefetch(ctx, c, q.m, parents, q.prefetch); err != nil {
+		if err := prefetch(ctx, c, q.m, s, parents, q.prefetch); err != nil {
 			return nil, err
 		}
 	}

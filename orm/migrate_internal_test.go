@@ -1,8 +1,19 @@
 package orm
 
 import (
+	"context"
+	"encoding/json"
+	"fmt"
+	"io"
+	"os"
+	"path/filepath"
 	"slices"
+	"strings"
 	"testing"
+
+	"github.com/paulmanoni/nexus/v2/db"
+
+	"github.com/paulmanoni/nexus/orm/migration"
 )
 
 func TestSplitSQL(t *testing.T) {
@@ -39,5 +50,111 @@ func TestPlaceholders(t *testing.T) {
 	}
 	if _, _, err := placeholders(DialectFor("sqlite"), "SELECT ?", nil); err == nil {
 		t.Fatal("a ? with no argument")
+	}
+}
+
+// TestMigrateDatabases applies migrations of two databases, one depending
+// on the other's, in dependency order.
+func TestMigrateDatabases(t *testing.T) {
+	dbs := map[string]*DB{}
+	for _, name := range []string{"", "other"} {
+		mgr, err := db.Open(db.Config{Driver: db.SQLite, Database: ":memory:", LogLevel: "silent"})
+		if err != nil {
+			t.Fatal(err)
+		}
+		t.Cleanup(mgr.Stop)
+		s, _ := mgr.GetDB().DB()
+		dbs[name] = Open(s, "sqlite")
+	}
+	table := func(name string) migration.Operation {
+		return migration.CreateModel{Table: name, Fields: []migration.NamedField{migration.F("id", migration.BigAuto())}}
+	}
+	ordered, err := migration.Order([]migration.Migration{
+		{Name: "0002_c", Dependencies: []string{"0001_a", "other:0001_b"}, Operations: []migration.Operation{table("c")}},
+		{Name: "0001_b", DB: "other", Dependencies: []string{":0001_a"}, Operations: []migration.Operation{table("b")}},
+		{Name: "0001_a", Operations: []migration.Operation{table("a")}},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var log []string
+	r := &migrator{
+		ordered: ordered,
+		open:    func(_ context.Context, name string) (*DB, error) { return dbs[name], nil },
+		log:     func(format string, args ...any) { log = append(log, fmt.Sprintf(format, args...)) },
+	}
+	err = r.forwardAll(context.Background(), nil)
+	r.close()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if want := []string{"migration applied: 0001_a", "migration applied: other:0001_b", "migration applied: 0002_c"}; !slices.Equal(log, want) {
+		t.Fatalf("order %q", log)
+	}
+	for name, want := range map[string]string{"": "a", "other": "b"} {
+		if _, err := dbs[name].sql.Exec("SELECT id FROM " + want); err != nil {
+			t.Fatalf("%q has no %s: %v", name, want, err)
+		}
+	}
+}
+
+// TestSearchPlan plans the search models (search_test.go) from nothing:
+// their extensions, generated column, vector and indexes, and nothing
+// once replayed.
+func TestSearchPlan(t *testing.T) {
+	to, err := declaredState([]string{"search", "vectors"}, "postgres")
+	if err != nil {
+		t.Fatal(err)
+	}
+	from := migration.NewState(nil, nil)
+	ops, _ := migration.Diff(from, to, func(string) bool { return false })
+	mg := migration.Migration{Name: "0001_initial", Operations: ops}
+	steps, err := mg.Forwards("postgres", from.Clone())
+	if err != nil {
+		t.Fatal(err)
+	}
+	var all []string
+	for _, s := range steps {
+		all = append(all, s.SQL)
+	}
+	src := strings.Join(all, "\n")
+	for _, want := range []string{`CREATE EXTENSION IF NOT EXISTS "pg_trgm"`, `CREATE EXTENSION IF NOT EXISTS "vector"`, `"search" tsvector GENERATED ALWAYS AS`, `"embedding" vector(3)`, `USING hnsw ("embedding" vector_cosine_ops)`, `USING gin ("title" gin_trgm_ops)`} {
+		if !strings.Contains(src, want) {
+			t.Fatalf("the migration lacks %q:\n%s", want, src)
+		}
+	}
+	if err := mg.Apply(from); err != nil {
+		t.Fatal(err)
+	}
+	if again, _ := migration.Diff(from, to, func(string) bool { return false }); len(again) != 0 {
+		t.Fatalf("again: %v", again)
+	}
+	lite, err := mg.Forwards("sqlite", migration.NewState(nil, nil))
+	if err != nil || slices.ContainsFunc(lite, func(s migration.Step) bool { return strings.Contains(s.SQL, "EXTENSION") }) {
+		t.Fatalf("sqlite: %v", err)
+	}
+	if _, err := declaredState([]string{"vectors"}, "mysql"); err == nil || !strings.Contains(err.Error(), "MySQL has no vector") {
+		t.Fatalf("vectors on MySQL: %v", err)
+	}
+}
+
+// TestServePlan runs the planner as nexus makemigrations does, for the
+// models of database ledgers (model_internal_test.go).
+func TestServePlan(t *testing.T) {
+	isolate(t)
+	Register[ledger]()
+	out := filepath.Join(t.TempDir(), "plan.json")
+	req, _ := json.Marshal(CLIRequest{Command: "plan", DB: "ledgers", Models: []string{"ledgers"}, Dialect: "sqlite", Number: 1, Package: "ledgers", Out: out})
+	if err := serveCLI(context.Background(), string(req), strings.NewReader(""), io.Discard, io.Discard); err != nil {
+		t.Fatal(err)
+	}
+	raw, _ := os.ReadFile(out)
+	var res PlanResult
+	if err := json.Unmarshal(raw, &res); err != nil {
+		t.Fatal(err)
+	}
+	src := string(res.Source)
+	if res.File != "0001_initial.go" || !strings.Contains(src, "package ledgers") || !strings.Contains(src, `DB:   "ledgers"`) || !strings.Contains(src, `Table: "ledger_rows"`) {
+		t.Fatalf("%s\n%s", res.File, src)
 	}
 }

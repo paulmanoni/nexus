@@ -6,6 +6,8 @@ import (
 	"os"
 
 	"github.com/spf13/cobra"
+
+	"github.com/paulmanoni/nexus/cmd/nexus/v2/internal/handlergen"
 )
 
 // handlerKeywords is the //nexus: directive set `nexus generate handlers` consumes.
@@ -89,8 +91,14 @@ func runGenerateHandlers(opts handlersOptions, stdout, stderr io.Writer) error {
 	if err != nil {
 		return fmt.Errorf("nexus generate handlers: %w", err)
 	}
+	return writeGenerated(results, opts.Check, "handlers", stdout, stderr)
+}
 
-	if opts.Check {
+// writeGenerated writes generated files to disk (byte-equal ones left
+// alone, so a watcher sees no fresh mtime), or with check, fails naming
+// the ones out of date. what names the generator: nexus generate <what>.
+func writeGenerated(results []handlergen.Result, check bool, what string, stdout, stderr io.Writer) error {
+	if check {
 		var drift []string
 		for _, r := range results {
 			cur, err := os.ReadFile(r.Path)
@@ -99,29 +107,26 @@ func runGenerateHandlers(opts handlersOptions, stdout, stderr io.Writer) error {
 			}
 		}
 		if len(drift) == 0 {
-			fmt.Fprintf(stdout, "ok: handler codegen up to date (%d package(s))\n", len(results))
+			fmt.Fprintf(stdout, "ok: %s codegen up to date (%d file(s))\n", what, len(results))
 			return nil
 		}
-		fmt.Fprintln(stderr, "drift — run `nexus generate handlers`:")
+		fmt.Fprintf(stderr, "drift — run `nexus generate %s`:\n", what)
 		for _, d := range drift {
 			fmt.Fprintf(stderr, "  %s\n", d)
 		}
-		return fmt.Errorf("handler codegen drift: %d file(s) out of date", len(drift))
+		return fmt.Errorf("%s codegen drift: %d file(s) out of date", what, len(drift))
 	}
-
 	written := 0
 	for _, r := range results {
-		// Byte-equal write is a no-op: skip so an IDE/CI watcher doesn't see a
-		// fresh mtime on every run (mirrors `nexus generate frontend`).
 		if cur, err := os.ReadFile(r.Path); err == nil && string(cur) == string(r.Content) {
 			continue
 		}
 		if err := os.WriteFile(r.Path, r.Content, 0o644); err != nil {
-			return fmt.Errorf("nexus generate handlers: write %s: %w", r.Path, err)
+			return fmt.Errorf("nexus generate %s: write %s: %w", what, r.Path, err)
 		}
 		written++
 		fmt.Fprintf(stdout, "  %s\n", r.Path)
 	}
-	fmt.Fprintf(stdout, "handler codegen: %d written, %d package(s) with registrations\n", written, len(results))
+	fmt.Fprintf(stdout, "%s codegen: %d written, %d file(s) in all\n", what, written, len(results))
 	return nil
 }

@@ -744,7 +744,8 @@ func buildDevOverlay(root, distStubRoot string, views bool) (overlayPath string,
 }
 
 // buildOverlay assembles the overlay: handler registrations, the ORM's
-// row scanners (those of test files too with tests), the dist stubs
+// model registrations and row scanners (those of test files too with
+// tests), the dist stubs
 // (dev), and, with views, the compiled .templ views (nexus build) — so a
 // fresh clone builds without generated files in the tree.
 func buildOverlay(root, distStubRoot string, views, tests bool) (overlayPath string, cleanup func(), err error) {
@@ -834,9 +835,9 @@ func buildOverlay(root, distStubRoot string, views, tests bool) (overlayPath str
 	return overlayPath, cleanup, nil
 }
 
-// ormArtifacts is the ORM's generated row scanners, when the project uses
-// the ORM (its go.mod requires it): nil otherwise, at the cost of reading
-// go.mod.
+// ormArtifacts is the ORM's generated code (model registrations, row
+// scanners), when the project uses the ORM (its go.mod requires it): nil
+// otherwise, at the cost of reading go.mod.
 func ormArtifacts(root string, tests bool) ([]handlergen.Result, error) {
 	mod, err := os.ReadFile(filepath.Join(root, "go.mod"))
 	if err != nil || !bytes.Contains(mod, []byte("github.com/paulmanoni/nexus/orm ")) {

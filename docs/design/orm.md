@@ -331,32 +331,36 @@ Code outside a request uses the app the manager was last bound to.
 
 - **Managed models only.** Models marked `orm.Unmanaged()` (every legacy table) are
   never touched.
-- **One schema description.** `orm/internal/schema` describes tables, columns,
-  indexes and foreign keys. It renders `CREATE`/`ALTER` per dialect and diffs two
-  table lists (`Diff`), with a note on each step that needs a person (a drop, a
-  NOT NULL column added to rows that exist, a change SQLite can't make).
-  `CreateTables` and the migrations both use it.
+- **One schema description.** `orm/internal/schema` describes tables, columns
+  (named constraints, foreign keys), unique and check constraints, and declared
+  indexes once for every dialect (what differs, a generated expression or an index,
+  is SQL per dialect), and renders each change per dialect: `ALTER` where the
+  database can, a table rebuild on SQLite where it can't. `CreateTables` and the
+  migrations both use it.
+- **Migrations are Go** (`orm/migration`, Django's): each file of the app's
+  migrations package registers a `Migration` of operations from its `init`. An
+  operation mutates the replayed state and writes its SQL forwards and back from the
+  states around it, so constraint names are a function of history (given when a
+  column comes to have one) and never appear in the files.
 - **Generating.** `nexus makemigrations` asks the app itself:
-  - **The planner:** it overlays `0_nexus_orm_plan.go` into the main package, an
-    `init` calling `orm.ServePlan()`, and builds the app with the usual overlay.
-  - **The run:** with `NEXUS_ORM_PLAN` set, the binary writes the plan and exits
-    before `main`. Every package-level `orm.For` has run by then (package
-    initialisation), so the schema is the one the app links, read through the same
-    reflection the runtime uses. No second, static reading of the models can
-    drift from it.
-  - **The output:** the diff from `migrations/schema.json` goes into
-    `NNNN_name.sql`, and the snapshot is updated. `--check` is the CI gate.
-- **Applying.** `orm.Migrate(fsys)` is a `nexus.Setup` step:
-  - **Order:** it waits for the database to connect, then applies the pending files
-    in name order.
-  - **Locking:** on one connection, under a Postgres advisory lock or MySQL
-    `GET_LOCK`.
+  - **The tool:** it overlays `0_nexus_orm_tool.go` into the main package, an `init`
+    calling `orm.ServeCLI()` that imports the migrations packages, and builds the
+    app with the usual overlay (the model registrations among it).
+  - **The run:** with `NEXUS_ORM` set, the binary replays the registered migrations,
+    diffs the state with the models it declares (the autodetector, asking about
+    renames on the CLI's terminal), writes the next file's source and exits before
+    `main`. Every package-level `orm.For` and `orm.Register` has run by then, so the
+    schema is the one the app links, read through the same reflection the runtime
+    uses.
+- **Applying.** `orm.Migrate()` is a `nexus.Setup` step; `nexus migrate` runs the
+  same code through the tool, connecting with nexus.toml's blocks:
+  - **Order:** every registered migration after its dependencies, across databases.
+  - **Locking:** on one connection per database, under a Postgres advisory lock or
+    MySQL `GET_LOCK`.
   - **Transactions:** each migration runs in one where the database supports DDL
-    in transactions.
-  - **Recording:** each is recorded with its checksum in `nexus_migrations`.
-  - **Splitting:** statements split on semicolons outside quotes, comments and
-    dollar quotes.
-- **Why plain SQL:** reviewable in a PR, runnable without nexus.
+    in transactions, `RunGo`'s ORM queries included.
+  - **Recording:** each is recorded in its database's `nexus_migrations`;
+    unapplying removes the record.
 
 ## Phases
 
@@ -369,7 +373,8 @@ All done:
    subqueries.
 4. **Codegen:** generated scanners and insert writers, typed field sets, and
    `nexus lsp` serving them.
-5. **Migrations:** `nexus makemigrations` and `orm.Migrate`.
+5. **Migrations:** Go migration files, `nexus makemigrations`, `orm.Migrate()`, `nexus
+   migrate`/`showmigrations`/`sqlmigrate`.
 
 ## Open questions
 

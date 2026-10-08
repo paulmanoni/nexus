@@ -55,7 +55,8 @@ type Tags struct {
 // agree on the columns.
 func Parse(name string, tag reflect.StructTag, isTime bool) Tags {
 	var t Tags
-	if v, ok := tag.Lookup("orm"); ok {
+	v, tagged := tag.Lookup("orm")
+	if tagged {
 		if v == "-" {
 			t.Skip = true
 			return t
@@ -118,7 +119,9 @@ func Parse(name string, tag reflect.StructTag, isTime bool) Tags {
 			k, val, _ := strings.Cut(strings.TrimSpace(part), ":")
 			switch strings.ToLower(k) {
 			case "-":
-				t.Skip = true
+				// GORM's alone: a field the ORM is told about by its own
+				// tag (a column, a path read through a relation) stays.
+				t.Skip = !tagged
 			case "column":
 				if t.Column == "" {
 					t.Column = val

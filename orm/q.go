@@ -57,7 +57,11 @@ func (g group) sql(b *builder) (string, error) {
 		if err != nil {
 			return "", err
 		}
-		parts = append(parts, s)
+		// An empty condition (Q{}, And()) is no condition, as Django's
+		// Q(): it drops out of the combination.
+		if s != "" {
+			parts = append(parts, s)
+		}
 	}
 	return join(parts, " "+g.op+" "), nil
 }

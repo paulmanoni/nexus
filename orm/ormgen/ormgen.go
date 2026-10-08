@@ -1,8 +1,10 @@
 // Package ormgen writes the row scanners the ORM uses instead of
-// reflection: one orm_scanners_gen.go per package that declares a model
-// some orm.For[T]() names. nexus dev, build and test overlay its output
-// (nothing lands in the tree); the ormgen command writes it to disk for a
-// go:generate build.
+// reflection, and registers the models embedding orm.Model: one
+// orm_scanners_gen.go per package that declares a model some orm.For[T]()
+// names or that embeds orm.Model[T], its init calling orm.Register[T]()
+// for the latter. nexus dev, build, test, vet, lsp and makemigrations
+// overlay its output (nothing lands in the tree); nexus generate models
+// and the ormgen command write it to disk for a plain go build.
 package ormgen
 
 import (
@@ -47,7 +49,7 @@ type Config struct {
 const ormPath = "github.com/paulmanoni/nexus/orm"
 
 // Generate is the scanner files of the models the packages under dir name
-// with orm.For, by path.
+// with orm.For or declare embedding orm.Model, by path.
 func Generate(dir string, c Config) (map[string][]byte, error) {
 	patterns := c.Patterns
 	if len(patterns) == 0 {
@@ -66,8 +68,16 @@ func Generate(dir string, c Config) (map[string][]byte, error) {
 		return nil, err
 	}
 	models := map[*types.Named]bool{}
+	registered := map[*types.Named]bool{}
 	var order []*types.Named
 	declFile := map[*types.Named]string{}
+	add := func(p *packages.Package, named *types.Named) {
+		if !models[named] {
+			models[named] = true
+			order = append(order, named)
+			declFile[named] = p.Fset.Position(named.Obj().Pos()).Filename
+		}
+	}
 	for _, p := range pkgs {
 		for _, e := range p.Errors {
 			// Type errors don't stop generation: code naming the field
@@ -94,13 +104,20 @@ func Generate(dir string, c Config) (map[string][]byte, error) {
 				if obj == nil || obj.Pkg() == nil || obj.Pkg().Path() != ormPath || obj.Name() != "For" {
 					return true
 				}
-				if named, ok := inst.TypeArgs.At(0).(*types.Named); ok && !models[named] {
-					models[named] = true
-					order = append(order, named)
-					declFile[named] = p.Fset.Position(named.Obj().Pos()).Filename
+				if named, ok := inst.TypeArgs.At(0).(*types.Named); ok {
+					add(p, named)
 				}
 				return true
 			})
+		}
+		scope := p.Types.Scope()
+		for _, name := range scope.Names() {
+			if tn, ok := scope.Lookup(name).(*types.TypeName); ok && !tn.IsAlias() {
+				if named, ok := tn.Type().(*types.Named); ok && EmbedsModel(named) {
+					add(p, named)
+					registered[named] = true
+				}
+			}
 		}
 	}
 	// A package's models declared in test files go in a test file of
@@ -177,7 +194,7 @@ func Generate(dir string, c Config) (map[string][]byte, error) {
 	if len(pkgs) > 0 {
 		fset = pkgs[0].Fset
 	}
-	g := &gen{models: models, fset: fset, skipped: c.Skipped}
+	g := &gen{models: models, registered: registered, fset: fset, skipped: c.Skipped}
 	out := map[string][]byte{}
 	for path, t := range byTarget {
 		src, err := g.file(t.pkg, byPath[path])
@@ -234,14 +251,59 @@ func callers(dir string, tests bool) ([]string, error) {
 	return out, err
 }
 
-// callsFor reports whether a file may call orm.For: it imports the orm
-// package (under any name) and names a For[…]. Type-checking decides.
+// callsFor reports whether a file may call orm.For or embed orm.Model: it
+// imports the orm package (under any name) and names a For[…] or
+// Model[…]. Type-checking decides.
 func callsFor(src []byte) bool {
-	return bytes.Contains(src, []byte(`"`+ormPath+`"`)) && bytes.Contains(src, []byte("For["))
+	return bytes.Contains(src, []byte(`"`+ormPath+`"`)) && (bytes.Contains(src, []byte("For[")) || bytes.Contains(src, []byte("Model[")))
+}
+
+// EmbedsModel is whether n is a model of its own orm.Model: a struct
+// embedding orm.Model[n], directly or through embedded structs (by
+// pointer or twice too: Register then fails boot saying why). A struct
+// holding another model's orm.Model (one embedding a model to add
+// fields) isn't one.
+func EmbedsModel(n *types.Named) bool {
+	if n.TypeParams().Len() > 0 {
+		return false
+	}
+	var walk func(st *types.Struct, seen map[*types.Struct]bool) bool
+	walk = func(st *types.Struct, seen map[*types.Struct]bool) bool {
+		if seen[st] {
+			return false
+		}
+		seen[st] = true
+		for i := range st.NumFields() {
+			f := st.Field(i)
+			if !f.Anonymous() {
+				continue
+			}
+			t := f.Type()
+			if p, ok := t.(*types.Pointer); ok {
+				t = p.Elem()
+			}
+			e, ok := t.(*types.Named)
+			if !ok {
+				continue
+			}
+			if o := e.Origin().Obj(); o.Pkg() != nil && o.Pkg().Path() == ormPath && o.Name() == "Model" {
+				if e.TypeArgs().Len() == 1 && types.Identical(e.TypeArgs().At(0), n) {
+					return true
+				}
+				continue
+			}
+			if sub, ok := e.Underlying().(*types.Struct); ok && walk(sub, seen) {
+				return true
+			}
+		}
+		return false
+	}
+	st, ok := n.Underlying().(*types.Struct)
+	return ok && walk(st, map[*types.Struct]bool{})
 }
 
 // Packages is the patterns (./dir) of the packages under dir that may
-// declare managers with orm.For: what nexus makemigrations imports.
+// declare models with orm.For or orm.Model.
 func Packages(dir string) ([]string, error) { return callers(dir, false) }
 
 // forIdent is the For of a call orm.For[T](…), else nil.
@@ -418,9 +480,10 @@ func writerValues(cols []column, o string) ([]string, bool) {
 // relations reach models of other packages), and the file set to tell a
 // declaration of the app's from one of a file this wrote.
 type gen struct {
-	models  map[*types.Named]bool
-	fset    *token.FileSet
-	skipped func(model, reason string)
+	models     map[*types.Named]bool
+	registered map[*types.Named]bool // the models embedding orm.Model
+	fset       *token.FileSet
+	skipped    func(model, reason string)
 }
 
 // declared is whether pkg declares name outside the files ormgen writes:
@@ -472,6 +535,9 @@ func (g *gen) file(pkg *types.Package, models []*types.Named) ([]byte, error) {
 	var body bytes.Buffer
 	var inits bytes.Buffer
 	for _, n := range models {
+		if g.registered[n] {
+			fmt.Fprintf(&inits, "\t%sRegister[%s]()\n", o, n.Obj().Name())
+		}
 		st, ok := n.Underlying().(*types.Struct)
 		if !ok {
 			continue

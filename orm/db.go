@@ -124,9 +124,16 @@ func AtomicOn(ctx context.Context, db *DB, fn func(ctx context.Context) error) (
 	if err != nil {
 		return err
 	}
+	return inTx(ctx, db.sql, tx, fn)
+}
+
+// inTx runs fn in tx, a transaction on db the queries of fn's ctx take
+// part in: committed when fn returns nil, then what its writes asked to
+// run after a commit; rolled back when it returns an error or panics.
+func inTx(ctx context.Context, db *sql.DB, tx *sql.Tx, fn func(ctx context.Context) error) (err error) {
 	var after []func(context.Context)
 	state := &txState{tx: tx, depth: new(atomic.Int64), after: &after}
-	inner := context.WithValue(ctx, txKey{db.sql}, state)
+	inner := context.WithValue(ctx, txKey{db}, state)
 	defer func() {
 		if p := recover(); p != nil {
 			_ = tx.Rollback()

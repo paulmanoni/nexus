@@ -60,6 +60,22 @@ func BindFromConfig[T any](name string, opts ...BindOption) nexus.Option {
 	return bindOption[T](name, build, optsFn)
 }
 
+// ConfigFor is the Config nexus.toml's [databases.<name>] block connects
+// with, as BindFromConfig reads it, for tools that open a database outside
+// an app (nexus migrate): load the file first (config.Load).
+func ConfigFor(name string) (Config, error) {
+	spec, ok := config.DatabaseSpecFor(name)
+	if !ok {
+		return Config{}, fmt.Errorf("db: no [databases.%s] block in nexus.toml", name)
+	}
+	switch Driver(spec.Driver) {
+	case Postgres, MySQL, SQLite:
+	default:
+		return Config{}, fmt.Errorf("db: [databases.%s].driver = %q is not one of postgres/mysql/sqlite", name, spec.Driver)
+	}
+	return configFor(spec, func(k string) string { return config.Get[string](k) }), nil
+}
+
 // resolveSpec looks up a [databases.<name>] block via the nexus core's
 // spec registry and validates its driver, panicking with a clear message
 // on a missing block or an unsupported driver. Called lazily (from the fx

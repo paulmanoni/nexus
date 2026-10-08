@@ -37,7 +37,7 @@ func (m *Manager[T]) GraphRelation[C any](name string) nexus.Option {
 		if err != nil {
 			return nil, err
 		}
-		related, err := relatedByKey(ctx, c, r, keys)
+		related, err := relatedByKey(ctx, c, m.schema(), r, keys)
 		if err != nil {
 			return nil, err
 		}
@@ -63,9 +63,10 @@ func lowerFirst(s string) string {
 	return strings.ToLower(s[:1]) + s[1:]
 }
 
-// relatedByKey is a relation's rows (pointers) for the keys of the
-// parents asking: their values of the relation's local field.
-func relatedByKey(ctx context.Context, c conn, r *relation, keys []any) (map[any][]reflect.Value, error) {
+// relatedByKey is a relation's rows (pointers, loaded from schema s) for
+// the keys of the parents asking: their values of the relation's local
+// field.
+func relatedByKey(ctx context.Context, c conn, s Schema, r *relation, keys []any) (map[any][]reflect.Value, error) {
 	t, _, err := r.ends()
 	if err != nil {
 		return nil, err
@@ -76,7 +77,7 @@ func relatedByKey(ctx context.Context, c conn, r *relation, keys []any) (map[any
 			clean = append(clean, k)
 		}
 	}
-	out, err := related(ctx, c, r, query{m: t}, clean)
+	out, err := related(ctx, c, s, r, query{m: t}, clean)
 	if err != nil {
 		return nil, err
 	}

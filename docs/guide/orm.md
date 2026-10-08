@@ -38,20 +38,115 @@ The connection stays with [`db.Bind`](/guide/resources): the ORM reads and write
 through the database bound with `db.WithDefault()`, or the one `orm.On("name")`
 names.
 
+## orm.Model
+
+A model that embeds `orm.Model[T]` (of its own type) is a Django model: its rows save,
+refresh and delete themselves, and it has its manager with no package-level variable.
+
+```go
+type User struct {
+    orm.Model[User]
+    ID    int64  `gorm:"column:id;primaryKey"`
+    Email string `gorm:"column:email"`
+    Roles []Role `gorm:"many2many:user_roles;joinForeignKey:user_id;joinReferences:role_id"`
+    Posts []Post
+}
+
+func (User) Meta() orm.Meta {
+    return orm.Meta{Table: "accounts", Ordering: []string{"email"}}
+}
+
+u := User{Email: "ali@example.com"}
+err := u.Save(ctx)                        // INSERT: u.ID is set, u is loaded
+u.Email = "ali@example.org"
+err = u.Save(ctx)                         // UPDATE of every field
+err = u.SaveFields(ctx, "email")          // UPDATE of email (and auto_now fields)
+err = u.Add(ctx, "roles", admin, editor)  // user_roles rows
+err = u.Load(ctx, "roles", "posts")       // prefetched onto u
+
+admins, err := User{}.Objects().Filter(orm.Q{"roles__name": "admin"}).All(ctx)
+drafts, err := orm.Related[Post](&u, "posts").Filter(orm.Q{"draft": true}).All(ctx)
+```
+
+| Django | nexus |
+| --- | --- |
+| `class User(models.Model)` | `type User struct { orm.Model[User]; … }` |
+| `User.objects` | `User{}.Objects()` or `orm.Objects[User]()` |
+| `User.objects.using("legacy")` | `User{}.Objects(Legacy)`, `orm.Of[User](Legacy)` |
+| `u.save()` | `u.Save(ctx)`: INSERT when new, UPDATE when loaded |
+| `u.save(update_fields=["email"])` | `u.SaveFields(ctx, "email")` |
+| `u.save(using="legacy")` | `u.Using(Legacy).Save(ctx)` |
+| `u.refresh_from_db()` | `u.Refresh(ctx)` |
+| `u.delete()` | `u.Delete(ctx)` |
+| `u._state.adding` | unexported: rows read or written are loaded |
+| `prefetch_related_objects([u], "roles")` | `u.Load(ctx, "roles")` |
+| `u.roles.add(r)` / `remove` / `set` | `u.Add(ctx, "roles", r)` / `Remove` / `Set` |
+| `u.posts.all()` | `orm.Related[Post](&u, "posts")` |
+| `class Meta: db_table, ordering, indexes, managed` | `func (User) Meta() orm.Meta` |
+
+- **Loaded rows:** a row read through a QuerySet, `Get`, `First`, `Raw` or
+  `GetOrCreate`, written by `Create` or `Save`, or loaded as a related row
+  (`SelectRelated`, `PrefetchRelated`, `Load`) is loaded, and remembers the schema it
+  came from: `Save` updates it there. A new row is inserted, on the model's own schema
+  unless bound with `Using`. A row bound to a schema other than its own is new there,
+  so `Save` copies it. After `Delete` a row is new again.
+- **The manager:** `Objects()` is the model's own manager, the same one its rows write
+  through: its package-level `orm.For[T]()` (without `orm.Names`) when it has one, so
+  `OnChange`, `Mirror` and nexus.toml's routes apply, else one made from its `Meta`.
+  `Objects(schema)` is `orm.Of[T](schema)`. Queries stay on the manager.
+- **Many-to-many links:** `Add`, `Remove` and `Set` take rows of the related model,
+  pointers to them, or their keys. `Add` skips links that exist; `Set` removes the
+  others and adds the missing ones in one transaction. The row must be loaded.
+- **`orm.Related[R](row, relation)`** is a QuerySet of R: a foreign key's row, the rows
+  holding its key, or those linked many-to-many, inverses included, on the row's schema.
+- **Embedding:** embed `orm.Model[T]` once, by value, in `T`, directly or through an
+  embedded struct of your own (`type Base[T any] struct { orm.Model[T]; ID int64 }`).
+  Twice, through a pointer, or `orm.Model[X]` inside a type other than X fails boot with
+  the reason. A struct embedding a model to add fields (`type UserRow struct { User;
+  Posts int }`) is a `Values` target, not a model. GORM and JSON ignore the embedded
+  state: it is unexported.
+- **Registration:** `nexus dev`, `build`, `test`, `vet`, `lsp` and `makemigrations`
+  generate an `orm.Register[T]()` for every type embedding `orm.Model[T]` in the
+  packages the app links. A registered model is bound to the app's database and checked
+  at boot without being passed to `nexus.Boot`, and `makemigrations` plans it with no
+  `orm.For`. `nexus generate models` writes the code to disk for a plain `go build`
+  (`--check` in CI); without it, `Objects` registers a model on first use.
+
+### Meta
+
+`func (T) Meta() orm.Meta` declares what Django's `class Meta` does:
+
+| Field | |
+| --- | --- |
+| `Table` | the table |
+| `DB` | the database `db.Bind` registered (as `orm.On`) |
+| `Unmanaged` | never created or migrated (as `orm.Unmanaged()`) |
+| `Indexes` | the indexes (as an `Indexes()` method) |
+| `Ordering` | the order of a query that sets none, as `OrderBy` takes it |
+
+**Precedence:** `orm.For`'s options (`orm.Table`, `orm.On`, `orm.Unmanaged`) win over
+`Meta`, which wins over the model's `TableName()` and `Indexes()`. Under a names set,
+`<Names>TableName()` (`LegacyTableName`) still names the table. `Ordering` orders rows
+read for their own sake (`All`, `Iter`, `First`, `Values`, related rows); counts,
+aggregates, grouped `Values` and subqueries are never ordered by it, and `OrderBy()`
+with no field drops it.
+
 ## Models
 
 - **Columns:** each field's column comes from its `orm:"column:…"` tag, else `db:"…"`,
   else GORM's `column:`, else the field name in snake_case. GORM's `primaryKey`, `-`,
   `embedded` and `autoCreateTime` are honoured too, so models written for GORM need no
-  new tags.
+  new tags. A field with an `orm:` tag of its own (a column, a path read through a
+  relation) is the ORM's even when `gorm:"-"` hides it from GORM, so one field can serve
+  GORM and every schema: `gorm:"-" orm:"profile__first_name" legacy:"name"`.
 - **Embedded structs** are flattened into the table, by value or as a pointer (`*Base`
   is allocated while scanning). An outer field shadows an embedded one of the same name.
-- **Table:** `orm.For[T](orm.Table("…"))`, else the model's `TableName()`, else the
-  type's name, plural and in snake_case.
+- **Table:** `orm.For[T](orm.Table("…"))`, else `Meta().Table`, else the model's
+  `TableName()`, else the type's name, plural and in snake_case.
 - **Not columns:** relation fields like `Posts []Post`, unexported fields, and fields
   tagged `orm:"-"`.
-- **Legacy tables:** `orm.For[T](orm.Unmanaged())` marks a table the ORM must never
-  create or migrate. NULLs read as zero values.
+- **Legacy tables:** `orm.For[T](orm.Unmanaged())` (or `Meta().Unmanaged`) marks a table
+  the ORM must never create or migrate. NULLs read as zero values.
 
 ## Queries
 
@@ -75,7 +170,9 @@ r, err := Users.Aggregate(ctx, orm.Count("id"), orm.Avg("age"))  // r.Float("age
 - **Lookups:** `exact` (the default), `iexact`, `contains`, `icontains`, `startswith`,
   `istartswith`, `endswith`, `iendswith`, `in`, `gt`, `gte`, `lt`, `lte`, `range`,
   `isnull`. A nil value with `exact` means `IS NULL`.
-- **Conditions** combine with `orm.Or`, `orm.Not` and `orm.And`.
+- **Conditions** combine with `orm.Or`, `orm.Not` and `orm.And`. An empty one
+  (`orm.Q{}`, `orm.And()`) is no condition, as Django's `Q()`: it drops out of the
+  combination.
 - **A misspelt field** is an error on the first call, never SQL that silently
   matches nothing.
 
@@ -436,7 +533,17 @@ users, err := orm.Of[User](Legacy).Filter(orm.Q{"groups__name": "staff"}).OrderB
 - **Check:** `nexus.Boot(…, Legacy.Check(User{}, Profile{}, Group{}))` fails boot when a
   model doesn't map onto the schema: a tag naming no field, a relation to a model by no
   field of it, a column read through no relation, two relations claiming one inverse
-  name.
+  name; and, once the schema's database connects (boot waits for it), a column, index
+  or extension it can't make.
+- **Verify:** `schema.Verify(ctx, app, models…)` is the check as a function, for an app
+  that picks its schema at run time and mustn't wait at boot for a database it doesn't
+  use:
+
+  ```go
+  nexus.Setup(func(ctx context.Context, app *nexus.App, cfg *Config) error {
+      return schemaFor(cfg).Verify(ctx, app, User{}, Group{})
+  })
+  ```
 
 A model with no tag of a set reads the same under it as under the default names.
 
@@ -526,7 +633,9 @@ Posts.Annotate("sim", orm.Similarity("title", "postgress")).OrderBy("-sim")
   `-word`): on Postgres `to_tsvector(field) @@ websearch_to_tsquery(…)`, or the
   generated `TSVector` column holding a `SearchVector` of the field when the model has
   one (so `title__search` above searches the indexed `search` column); MySQL's
-  `MATCH … AGAINST` (it needs a `FullTextIndex`); elsewhere a `LIKE` per word.
+  `MATCH … AGAINST` in boolean mode (it needs a `FullTextIndex`; a word InnoDB doesn't
+  index, shorter than 3 letters or a stopword, isn't required); elsewhere a `LIKE` per
+  word.
 - **`__trigram_similar`** is pg_trgm's `%`, the same similarity (0.3) on SQLite, and a
   `LIKE` on MySQL.
 - **Expressions:** `SearchVector(fields…)` with `Weight`, `Config` and `Add`;
@@ -559,20 +668,21 @@ The schema side:
 - **Indexes:** `GinIndex(fields or expressions…)` and `GistIndex` (with `.Trigram()` for
   pg_trgm's operator classes), `FullTextIndex(fields…)` (MySQL's FULLTEXT; on Postgres a
   GIN index of their tsvector by `.Config`, which `__search` of a field indexed alone
-  uses), `HnswIndex(field)` and `IvfflatIndex(field)` with `.Ops(orm.Cosine|orm.L2|orm.IP)`,
+  uses, or of a `TSVector` field itself), `HnswIndex(field)` and `IvfflatIndex(field)` with `.Ops(orm.Cosine|orm.L2|orm.IP)`,
   `.M`, `.EfConstruction`, `.Lists`; `.Name` names any of them. A `SearchVector` in an
   index or a generated column needs a `Config`.
 - **Generated columns** are stored: a `tsvector` on Postgres, the fields' text elsewhere
   (MySQL can index it with a `FullTextIndex`). Create and Save skip them; Update refuses
-  them. SQLite can't add one to an existing table: rebuild it.
+  them. On SQLite, a migration adding one rebuilds the table.
 - **Where an index can't be made:** MySQL makes `FullTextIndex` only, and a model with
   another kind, or a `Vector`, doesn't map onto it; SQLite makes none, its searches
   unindexed.
 - **Extensions are explicit:** `orm.CreateExtension("vector")` (or `"pg_trgm"`),
-  package-level, has `nexus makemigrations` write `CREATE EXTENSION` into the next
+  package-level, has `nexus makemigrations` write `m.CreateExtension` into the next
   migration; passed to `nexus.Boot` it also fails boot while the database lacks it.
-  Nothing installs one otherwise.
-- **`Schema.Check`** (after `orm.Migrate`) fails boot when its database can't hold a
+  `CreateTables` makes the ones declared for its models' database (`orm.On`). Nothing
+  installs one otherwise.
+- **`Schema.Check`** (after `orm.Migrate()`) fails boot when its database can't hold a
   model's columns or indexes, or lacks an extension they need, with the hint to add it.
 
 ## Subqueries
@@ -656,43 +766,99 @@ Users.OnChange(func(ctx context.Context, c orm.Change[User]) {
 
 ## Migrations
 
+Migrations are Django's: Go files in the app's `migrations` package, each registering
+the operations that take the schema one step on, written by `nexus makemigrations` and
+yours to edit. The schema a database has is the replay of its migrations: no snapshot
+is kept beside them.
+
 ```bash
-nexus makemigrations            # writes migrations/0001_initial.sql + schema.json
-nexus makemigrations add_age    # the next one, named
-nexus makemigrations --check    # CI: fail when the models changed without a migration
+nexus makemigrations              # writes migrations/0001_initial.go
+nexus makemigrations add_age      # the next one, named
+nexus makemigrations --check      # CI: fail when the models changed without a migration
+nexus makemigrations --empty seed # a migration with an empty RunGo, for data
+nexus migrate                     # apply every database's pending migrations
+nexus migrate 0002                # take the default database to 0002 (later ones undone)
+nexus migrate zero --db legacy    # unapply all of database legacy's
+nexus showmigrations              # [X] applied, [ ] not, per database
+nexus sqlmigrate 0002 --backwards # the SQL a migration runs
 ```
-
-`makemigrations` builds the app with a planner in its main package. It runs that
-binary (main never runs), compares the models it declares with the snapshot the last
-migration left, and writes the difference as plain SQL.
-
-- **Dialect:** from the database's `[databases.<name>]` block (`--dialect` overrides).
-- **Other databases:** `--db` targets one and writes to `migrations/<name>`.
-- **Unmanaged tables:** `orm.Unmanaged()` keeps a model's table out.
-- **Review before committing.** A rename shows as a drop and an add, and steps that
-  need a person are marked `-- NOTE:`.
-
-Apply the migrations at boot:
 
 ```go
-//go:embed migrations
-var migrations embed.FS
+// migrations/0002_add_field_users_age.go
+package migrations
 
-nexus.Boot(db.BindFromConfig[DB]("main"), Users, Posts,
-    orm.Migrate(migrations, orm.MigrateDir("migrations")))
+import m "github.com/paulmanoni/nexus/orm/migration"
+
+func init() {
+    m.Register(m.Migration{
+        Name:         "0002_add_field_users_age",
+        Dependencies: []string{"0001_initial"},
+        Operations: []m.Operation{
+            // NOTE: adds the NOT NULL column users.age: give the rows that exist a value with .Default(v)
+            m.AddField{Table: "users", Name: "age", Field: m.Int().Default(0)},
+        },
+    })
+}
 ```
 
-- **When:** after the database connects and before the app serves, in name order.
-- **Recording:** each applied migration is recorded in `nexus_migrations`.
+- **How it plans:** `makemigrations` builds the app with a tool in its main package and
+  runs it (main never does). It replays the migrations the app's migrations packages
+  register, compares the result with the models the app declares (types embedding
+  `orm.Model`, and `orm.For` managers; managed ones, of the database), and writes the
+  operations between. `--dry-run` prints the file.
+- **Renames:** a column (or table) gone where one alike appeared may have been renamed.
+  On a terminal it asks, `Did you rename users.mail to users.email? [y/N]`; yes writes
+  `m.RenameField`, keeping the data. `--noinput`, or no terminal, writes a removal and
+  an addition with a `// NOTE:` saying so.
+- **Operations:** `CreateModel` (fields, `Constraints`, `Indexes`), `DeleteModel`,
+  `RenameModel` (`AlterModelTable`), `AddField`, `RemoveField`, `AlterField`,
+  `RenameField`, `AddIndex`/`RemoveIndex`, `AddConstraint`/`RemoveConstraint`
+  (`m.Unique(name, cols…)`, `m.Check(name, expr)`), `CreateExtension`, `RunSQL{SQL,
+  ReverseSQL, Dialect}` and `RunGo{Forward, Backward}`. Each writes its SQL for the
+  database's dialect, forwards and back.
+- **Fields:** `m.BigAuto()`, `m.Auto()`, `m.BigInt()`, `m.Int()`, `m.Float()`,
+  `m.Bool()`, `m.Text()`, `m.Varchar(n)`, `m.Time()`, `m.Bytes()`, `m.Custom()`,
+  `m.Vector(n)`, `m.TSVector()`, with `.Null()`, `.PK()`, `.Unique()`, `.Index()`,
+  `.Type(sql)`, `.Default(v)`, `.Generated(m.Dialects{…})`, `.FK(table, column)` and
+  `.OnDelete(m.Cascade)`. Declared indexes and generated expressions are SQL per
+  dialect (`m.Dialects{Postgres: …, MySQL: …, SQLite: …}`): a dialect with none for an
+  index makes none (SQLite's searches are unindexed).
+- **Defaults and checks are the migrations':** models don't declare them, so
+  `makemigrations` keeps a `.Default` or `m.Check` you wrote.
+- **Data migrations:** `m.RunGo` runs in the migration's transaction. `tx` runs SQL in
+  it, and the ORM's queries on its `ctx` do too. It sees the schema the operations
+  before it leave, so prefer SQL, or models that match that schema. A `RunGo` without
+  `Backward`, or a `RunSQL` without `ReverseSQL` (`m.Noop` for nothing to undo), can't
+  be unapplied.
+- **SQLite** can't alter a column or a constraint: the migration rebuilds the table
+  (made again, rows copied, the old one dropped), foreign keys off meanwhile.
+- **Other databases:** `--db legacy` writes `migrations/legacy` (`DB: "legacy"`).
+  A dependency on another database's migration is `"legacy:0001_initial"`.
+- **Unmanaged tables:** `orm.Unmanaged()` or `Meta().Unmanaged` keeps a model out.
+
+Apply them at boot: import the migrations package, and pass `orm.Migrate()`.
+
+```go
+import _ "example.com/shop/migrations"
+
+nexus.Boot(db.BindFromConfig[DB]("main"), orm.Migrate())
+```
+
+- **When:** after the databases connect and before the app serves, each migration after
+  its dependencies, across databases. `orm.MigrateOn("legacy")` applies one database's.
+- **Recording:** each applied migration is recorded in its database's
+  `nexus_migrations`; `nexus migrate <target>` unapplies by the operations' reverses and
+  removes the record.
 - **Transactions:** each migration runs in one on Postgres and SQLite. MySQL commits
   DDL as it goes, so a migration that fails halfway there needs fixing by hand.
 - **Replicas** booting together take turns under a lock (a Postgres advisory lock,
   MySQL `GET_LOCK`).
-- **Editing an applied migration** logs a warning and is not re-run: write a new
-  migration instead.
+- **The commands** run the app the same way: `nexus migrate`, `showmigrations` and
+  `sqlmigrate` connect with nexus.toml's `[databases]` blocks, and the app must link
+  its driver.
 
 For tests and tools, `orm.CreateTables(ctx, Users, Posts)` creates the tables
-directly.
+directly, and `orm.ApplyMigrations(ctx, db, target, migrations…)` applies a list.
 
 ## Moving a table to another database
 
@@ -743,8 +909,17 @@ func TestUsers(t *testing.T) {
 ```
 
 `ormtest` runs on in-memory SQLite. Set `ORMTEST_DRIVER=postgres` (or `mysql`) and
-`ORMTEST_DSN` to run the same tests on a real server: each test gets a schema or
-database of its own, dropped when the test ends.
+`ORMTEST_DSN` to run the same tests on a real server: each test gets a schema (in the
+DSN's Postgres database) or a MySQL database of its own, named `orm_test_…`, dropped
+when the test ends. The ORM's own suite runs this way too:
+
+```sh
+ORMTEST_DRIVER=postgres ORMTEST_DSN='postgres://postgres:secret@localhost:5432/orm_test?sslmode=disable' go test ./...
+ORMTEST_DRIVER=mysql ORMTEST_DSN='root:secret@tcp(127.0.0.1:3306)/' go test ./...
+```
+
+Its search tests skip on MySQL, and on a Postgres without pgvector or pg_trgm to
+install.
 
 ## Dashboard
 
