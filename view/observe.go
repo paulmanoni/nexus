@@ -74,6 +74,27 @@ func (d *liveDef) observedEvent(ctx context.Context, in *instance, ev liveEvent,
 	return reply
 }
 
+// span starts a trace of its own for socket work that isn't a browser
+// event — a patch, a broadcast — so it isn't counted with every other
+// message the connection has carried since its upgrade request.
+func (d *liveDef) span(ctx context.Context, op string) (context.Context, func(error)) {
+	typ := strings.TrimPrefix(d.t.String(), "*")
+	ctx, _, finish := trace.NewRootSpan(ctx, typ+"."+op, typ, typ+"."+op, "live")
+	return ctx, func(err error) {
+		status := 200
+		if err != nil {
+			status = 500
+		}
+		finish(status, err)
+	}
+}
+
+func (d *liveDef) inform(ctx context.Context, in *instance, msg Message, send func(liveReply) bool) bool {
+	ctx, done := d.span(ctx, "Info")
+	defer done(nil)
+	return in.inform(ctx, msg, send)
+}
+
 type errString string
 
 func (e errString) Error() string { return string(e) }

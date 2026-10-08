@@ -1034,7 +1034,9 @@ func (d *liveDef) serve(ctx context.Context, rq liveRequest, lc *liveConn, in *i
 		in.url = u
 		props, err := in.routedProps(param, u)
 		if err == nil {
-			err = in.update(withPageURL(ctx, u), props)
+			uctx, done := d.span(ctx, "Update")
+			err = in.update(withPageURL(uctx, u), props)
+			done(err)
 		}
 		if err != nil {
 			return false, send(liveReply{Ref: ref, Error: nexus.ErrorOf(err).Error()})
@@ -1064,11 +1066,11 @@ func (d *liveDef) serve(ctx context.Context, rq liveRequest, lc *liveConn, in *i
 			}
 		case msg := <-sock.inbox:
 			// Handle every message already waiting, then render once.
-			failed := in.inform(ctx, msg, send)
+			failed := d.inform(ctx, in, msg, send)
 			for drained := false; !drained && !failed; {
 				select {
 				case more := <-sock.inbox:
-					failed = in.inform(ctx, more, send)
+					failed = d.inform(ctx, in, more, send)
 				default:
 					drained = true
 				}

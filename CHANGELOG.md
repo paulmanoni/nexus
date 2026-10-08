@@ -6,6 +6,15 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [2.27.4] - 2026-10-08
+
+### Fixed
+
+- A live page's patches (a link's `?query` change, `PushPatch`) and broadcasts (`Info`) ran
+  inside the trace of the socket's upgrade request, so the ORM's N+1 warning added up every
+  patch since the page opened and warned of repeats that were really separate visits. Each
+  now runs as a trace of its own, like a browser event.
+
 ## [2.27.3] - 2026-10-08
 
 ### Security

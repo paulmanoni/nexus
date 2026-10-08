@@ -78,3 +78,39 @@ func TestLiveEventIsTraced(t *testing.T) {
 	}
 	t.Fatalf("no live.Add span among %v", seen)
 }
+
+// A patch is its own trace too, not part of the long-gone upgrade request:
+// two patches on one socket are two traces.
+func TestLivePatchIsItsOwnTrace(t *testing.T) {
+	app, stop, err := nexus.InProcess(config.Runtime{TraceCapacity: 100},
+		nexus.Supply(&greeter{greeting: "hi"}),
+		Live[*counterLive]("/count/:name").Provide(newCounterLive),
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer stop(context.Background())
+	srv := httptest.NewServer(app)
+	defer srv.Close()
+
+	conn := dialLive(t, srv, "/count/ana/_live")
+	reply(t, conn)
+	for i, u := range []string{"/count/ana?mode=a", "/count/ana?mode=b"} {
+		if err := conn.WriteJSON(liveEvent{Ref: i + 1, Event: "__nav", URL: u}); err != nil {
+			t.Fatal(err)
+		}
+		reply(t, conn)
+	}
+
+	traces := map[string]bool{}
+	for deadline := time.Now().Add(2 * time.Second); len(traces) < 2 && time.Now().Before(deadline); time.Sleep(20 * time.Millisecond) {
+		for _, e := range app.Bus().Recent() {
+			if e.Endpoint == "view.counterLive.Update" {
+				traces[e.TraceID] = true
+			}
+		}
+	}
+	if len(traces) != 2 {
+		t.Fatalf("patches ran in %d traces, want 2", len(traces))
+	}
+}
