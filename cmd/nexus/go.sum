@@ -67,10 +67,10 @@ github.com/mattn/go-isatty v0.0.20 h1:xfD0iDuEKnDkl03q4limB+vH+GxLEtL/jb4xVJSWWE
 github.com/mattn/go-isatty v0.0.20/go.mod h1:W+V8PltTTMOvKvAeJH7IuucS94S2C6jfK/D7dTCTo3Y=
 github.com/paulmanoni/deco v0.20.0 h1:OvFbb9gzkQhNIi4WgaZ2w/nlLGT9aiewWFR7KX7L/ww=
 github.com/paulmanoni/deco v0.20.0/go.mod h1:TiUaLgiglpNGYzqmmdPoK8oXu02y8+y9P1LCVAZ+6mY=
-github.com/paulmanoni/nexus/orm v0.6.1 h1:6XYQW0qERiNOEdX7yXddLOH9UYNS0wdfJI5no2/WkpQ=
-github.com/paulmanoni/nexus/orm v0.6.1/go.mod h1:H9HaiNsm/D+Mp3P0GUmtG8rZKhK1VhD57PgPyxmXrFc=
-github.com/paulmanoni/nexus/v2 v2.31.1 h1:wwa7uIVHLc2RkS+mgJnnSEmZrqRxtYae1Dm9mbTOJHM=
-github.com/paulmanoni/nexus/v2 v2.31.1/go.mod h1:UsuieSe4I3FZXiKCGfE6EqRciF74TCxd6W+4W9psSQc=
+github.com/paulmanoni/nexus/orm v0.7.0 h1:4T9x6PY39TX7bsohjxWeiDqKJ2142nqD2UMSGh7uE28=
+github.com/paulmanoni/nexus/orm v0.7.0/go.mod h1:fzxZpZzsSn1dF4dxNtFOWf3zYYCL5SCVsJM64R7JO6Y=
+github.com/paulmanoni/nexus/v2 v2.32.0 h1:QXTHcrwfJ10dt9HXASzw2XGw7Huj6rD/sgNHVr3QJp8=
+github.com/paulmanoni/nexus/v2 v2.32.0/go.mod h1:UsuieSe4I3FZXiKCGfE6EqRciF74TCxd6W+4W9psSQc=
 github.com/pelletier/go-toml/v2 v2.3.1 h1:MYEvvGnQjeNkRF1qUuGolNtNExTDwct51yp7olPtrEc=
 github.com/pelletier/go-toml/v2 v2.3.1/go.mod h1:2gIqNv+qfxSVS7cM2xJQKtLSTLUE9V8t9Stt+h56mCY=
 github.com/pmezard/go-difflib v1.0.0 h1:4DBwDE0NGyQoBHbLQYPwSUPoCMWR5BEzIk/f1lZbAQM=
