@@ -54,6 +54,11 @@ features:
     details: Bind Postgres, MySQL or SQLite, a memory or Redis cache, local or S3 storage and SMTP mail from nexus.toml. Each is injected and shown on the dashboard.
     link: /guide/resources
     linkText: Databases & caches
+  - icon: '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" width="26" height="26" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.3-4.3"/></svg>'
+    title: A Django-style ORM
+    details: Plain structs with relations both ways, lazy QuerySets with Django's lookups, values and raw SQL, full-text and vector search. One set of models can query a legacy schema and a new one side by side while you migrate.
+    link: /guide/orm
+    linkText: ORM
   - icon: '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" width="26" height="26" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><path d="M22 12h-2.48a2 2 0 0 0-1.93 1.46l-2.35 8.36a.25.25 0 0 1-.48 0L9.24 2.18a.25.25 0 0 0-.48 0l-2.35 8.36A2 2 0 0 1 4.49 12H2"/></svg>'
     title: Live dashboard
     details: /__nexus draws your modules, endpoints, resources, workers and crons, and streams traffic over a WebSocket. It is locked down by default in production.

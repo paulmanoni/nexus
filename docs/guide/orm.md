@@ -79,6 +79,36 @@ r, err := Users.Aggregate(ctx, orm.Count("id"), orm.Avg("age"))  // r.Float("age
 - **A misspelt field** is an error on the first call, never SQL that silently
   matches nothing.
 
+### Values
+
+`Values[R](names…)` reads some fields instead of whole rows, as Django's `values()` and
+`values_list()` do. A name is a field, an annotation, or a path through relations,
+joined in the same query:
+
+```go
+emails, _ := Users.OrderBy("id").Values[string]("email").All(ctx)          // a scalar
+teams, _ := Users.Values[string]("team__name").All(ctx)                    // through a foreign key
+rows, _ := Users.Values[map[string]any]("email", "roles__name").All(ctx)   // values(): keyed as written
+rows, _ := Users.Values[[]any]("email", "team__name").All(ctx)            // values_list(): in order
+
+type UserRow struct {
+    Email string
+    Team  string `orm:"team__name"` // the path this field takes
+}
+rows, _ := Users.Values[UserRow]().All(ctx) // no names: the struct's fields say what is read
+
+// An aggregate among the names groups by the others.
+perTeam, _ := Users.Annotate("n", orm.Count("id")).Values[[]any]("team__name", "n").All(ctx)
+```
+
+- **Targets:** a scalar for one name, a struct (fields matched by `orm:"path"` tag,
+  name or column), `map[string]any` keyed by the names as written, or `[]any` in
+  their order. A NULL is `nil` in a map or a list.
+- **Through rows held by many** (`roles__name`), there is a row per related row, and
+  one with `nil` when there is none, as in Django.
+- **Grouping:** listing an annotation that is an aggregate (`orm.Count`, `orm.Sum`, …,
+  `orm.AggOf`) groups the rows by the other names.
+
 ## Writes
 
 ```go
@@ -203,10 +233,16 @@ A field holding another model is a relation. By convention:
 - `Author *User` beside an `AuthorID` column is a **foreign key**.
 - `Posts []Post` is the **reverse** of `Post`'s foreign key to this model.
 
-Tags name what the convention can't: `gorm:"foreignKey:WriterID"`, `orm:"fk:writer_id"`,
-`orm:"rel:writer_id"` for the reverse side (the related rows' column), and `orm:"m2m:book_tags"` for a
-**many-to-many** through a table (its columns default to `<model>_id`;
-`m2m:book_tags,book_id,tag_id` spells them out).
+Tags name what the convention can't, GORM's or the ORM's own:
+
+- **GORM's relation tags**, all of them, by Go field names as GORM reads them:
+  `foreignKey` and `references` on a belongs-to (`foreignKey:WriterID;references:Code`:
+  this row's `WriterID` holds the author's `Code`), a has-one and a has-many (the related
+  rows' field holding the key, and this model's field it refers to); `many2many:book_tags`
+  with `joinForeignKey` and `joinReferences` for the columns of the table between.
+- **The ORM's:** `orm:"fk:writer_id"`, `orm:"rel:writer_id"` for the reverse side (the
+  related rows' column), and `orm:"m2m:book_tags"` for a **many-to-many** through a table
+  (its columns default to `<model>_id`; `m2m:book_tags,book_id,tag_id` spells them out).
 
 ```go
 type Book struct {
@@ -248,6 +284,43 @@ authors, _ = Authors.PrefetchRelated(
 - **`PrefetchRelated`** runs one `IN (…)` query per relation and level, in chunks of
   1,000 keys. A relation with no rows becomes an empty slice, not nil.
 
+### Inverses
+
+Every foreign key and many-to-many declared on a model implies its inverse on the
+related model, as Django's reverse relations do, with nothing declared there:
+
+```go
+type Post struct {
+    ID       int64
+    AuthorID int64
+    Author   *User `gorm:"foreignKey:AuthorID"`                 // User gets "posts"
+    Tags     []Tag `gorm:"many2many:post_tags"`                 // Tag gets "posts"
+}
+type Profile struct {
+    ID     int64
+    UserID int64 `gorm:"uniqueIndex"`
+    User   *User `gorm:"foreignKey:UserID" orm:"related:profile"` // one-to-one: User gets "profile"
+}
+
+Users.Filter(orm.Q{"posts__title__icontains": "go"})
+Tags.Filter(orm.Q{"posts__author__email": e})
+Users.SelectRelated("profile").OrderBy("profile__city")
+```
+
+- **Name:** `orm:"related:<name>"` on the forward relation, else the declaring model's
+  name in snake_case, plural (`posts`), or singular for a foreign key unique by itself
+  (one-to-one).
+- **Where it works:** `Filter`, `Exclude`, `OrderBy` and `Values` paths, and
+  `PrefetchRelated`; `SelectRelated` for a one-to-one.
+- **Loading:** prefetched rows land in a field of the inverse's name when the model
+  declares one (`Posts []Post`, `Profile *Profile`), with no tag. Without such a field
+  the inverse is queryable but not loadable, and prefetching it is an error.
+- **Declared both ways:** a has-many the related model declares itself over the same
+  columns (`Posts []Post gorm:"foreignKey:AuthorID"`) is the inverse, not a second
+  relation.
+- **Clashes:** two relations to one model with the same inverse name (`From` and `To`
+  both `*Team`) need `related:` names apart; `Schema.Check` fails boot naming them.
+
 ### GraphQL
 
 `GraphRelation` adds a batched field to a model's GraphQL type: one query per level of
@@ -265,6 +338,189 @@ nexus.Boot(…, Books, Authors,
 Under `nexus dev`, a query shape run 5 times in one request (`orm.RepeatWarn`) logs a
 warning naming the `SelectRelated` or `PrefetchRelated` that fixes it. The warning is
 also marked on the request's trace.
+
+## Schemas
+
+One set of models, relations declared on them, can be queried on several database
+schemas that name things apart: a legacy database and its replacement, say. A schema
+picks a **names set**, and each field's tag of that key overrides its default naming
+there:
+
+```go
+var Legacy = orm.Schema{DB: "legacy", Names: "legacy", Unmanaged: true}
+
+type User struct {
+    ID        int64
+    Email     string   `legacy:"email_address"`        // the column there
+    Bio       string   `legacy:"-"`                    // no such column there
+    Phone     string   `gorm:"-" legacy:"tel_no"`      // a column there only
+    FirstName string   `legacy:"profile__first_name"`  // read through a relation there
+    Profile   *Profile                                 // the inverse of Profile.User
+    Groups    []Group  `gorm:"many2many:user_groups" legacy:"many2many:auth_user_groups;joinReferences:group_id"`
+}
+
+func (User) LegacyTableName() string { return "auth_user" }
+
+users, err := orm.Of[User](Legacy).Filter(orm.Q{"groups__name": "staff"}).OrderBy("first_name").All(ctx)
+```
+
+- **Of:** `orm.Of[T](schema)` is the model's manager on that schema, made once per model
+  and schema. It finds its database as `For`'s managers do (`Schema.DB` names the
+  `db.Bind`). `orm.For[T](orm.Names("legacy"))` declares one package-level.
+- **Names:** under a set, a field's tag of that key is its column, `-` for no such
+  field, relation keys (`many2many`, `joinForeignKey`, `joinReferences`, `foreignKey`,
+  `references`, `related`) merged over its default tags, or a path through a relation.
+  The table is `<Names>TableName()` (`LegacyTableName`), else `TableName()`.
+- **Queries don't change:** they name Go fields, default names and relation paths; the
+  ORM writes them in the schema's names.
+- **Read through a relation** (`legacy:"profile__first_name"`): the query joins it (one
+  join, shared with `SelectRelated` on the same path), and `Filter`, `OrderBy` and
+  `Values` use the joined column. It is read-only there: `Create` and `Save` skip it, and
+  `Update(orm.Set{"first_name": …})` fails, naming the model to write.
+- **Writes and change signals** use the schema's columns: `Columns`, `ColumnValues` and
+  `PKColumn` of an `Of` manager are the schema's, so a feed of a legacy table's changes
+  keeps its columns.
+- **Check:** `nexus.Boot(…, Legacy.Check(User{}, Profile{}, Group{}))` fails boot when a
+  model doesn't map onto the schema: a tag naming no field, a relation to a model by no
+  field of it, a column read through no relation, two relations claiming one inverse
+  name.
+
+A model with no tag of a set reads the same under it as under the default names.
+
+## Raw SQL
+
+When a query is beyond the QuerySet, write the SQL, as Django's `Manager.raw()` and
+`cursor.execute()` allow:
+
+```go
+// Rows of a model: each column fills the field of that column under the manager's names set.
+users, err := orm.Of[User](Legacy).Raw("SELECT * FROM auth_user WHERE tel_no LIKE ?", "255%").
+    PrefetchRelated("groups").All(ctx)
+u, err := Users.Raw("SELECT * FROM users WHERE email = ?", e).First(ctx) // nexus.NotFound for none
+
+// Any shape, read as Values reads it: a scalar, a struct, map[string]any or []any.
+ids, err := orm.Raw[int64](ctx, orm.Schema{}, "SELECT id FROM users WHERE age > ?", 18)
+rows, err := orm.Raw[map[string]any](ctx, Legacy, "SELECT tel_no, email_address FROM auth_user")
+for row, err := range orm.RawIter[[]any](ctx, Legacy, "SELECT …") { … }
+
+// Writes and DDL.
+changed, err := orm.Exec(ctx, Legacy, "UPDATE auth_user SET is_active = ? WHERE last_login < ?", false, cutoff)
+```
+
+- **Placeholders:** `?` marks each argument on every database (written `$1, $2…` for
+  Postgres); `??` is a literal `?`. Marks inside quotes and comments are left alone.
+- **Like the ORM's own queries,** raw SQL runs inside the context's transaction, is
+  traced, and counts toward the N+1 warning.
+- **The SQL is the schema's:** written for the tables and columns of the schema you
+  pass, not translated.
+- **Raw writes are the database's alone:** `OnChange` hears nothing of them and no
+  mirror repeats them.
+- **Columns of a model** with no field are dropped.
+
+## Search
+
+Full-text, trigram and vector search, as Django's `contrib.postgres.search` and
+pgvector's Django package have them, written for the database the query runs on.
+Postgres does all of it (pg_trgm and pgvector for trigrams and vectors), MySQL searches
+text with `MATCH … AGAINST` and has no vectors, and SQLite matches text with `LIKE` and
+computes distances and similarity in Go functions `nexus/db/sqlite` registers, with no
+index: enough for development and tests.
+
+```go
+type Post struct {
+    ID        int64
+    Title     string
+    Body      string
+    Search    orm.TSVector `orm:"generated"`   // computed by the database, never written
+    Embedding orm.Vector   `orm:"vector:1536"` // pgvector's vector(1536)
+}
+
+// Generated columns, Django's GeneratedField: the expression of each orm:"generated" field.
+func (Post) Generated() map[string]orm.Expr {
+    return map[string]orm.Expr{
+        "Search": orm.SearchVector("title").Weight("A").Add(orm.SearchVector("body").Weight("B")).Config("english"),
+    }
+}
+
+// Indexes, Django's Meta.indexes: made and dropped by migrations.
+func (Post) Indexes() []orm.Index {
+    return []orm.Index{
+        orm.GinIndex("search"),
+        orm.GinIndex("title").Trigram(),
+        orm.HnswIndex("embedding").Ops(orm.Cosine).M(16).EfConstruction(64),
+    }
+}
+
+var Vectors = orm.CreateExtension("vector") // and pg_trgm for Trigram
+```
+
+Text:
+
+```go
+Posts.Filter(orm.Q{"title__search": `go -java "web server"`})   // web search syntax
+Posts.Filter(orm.Q{"title__trigram_similar": "postgress"})        // typo-tolerant
+
+doc := orm.SearchVector("title").Weight("A").Add(orm.SearchVector("body"))
+q := orm.SearchQuery("web server")
+Posts.Filter(orm.Match(doc, q)).
+    Annotate("rank", orm.SearchRank(doc, q)).
+    Annotate("excerpt", orm.Headline("body", q)).
+    OrderBy("-rank")
+Posts.Annotate("sim", orm.Similarity("title", "postgress")).OrderBy("-sim")
+```
+
+- **`__search`** matches in web search syntax (every word, `"a phrase"`, `or`,
+  `-word`): on Postgres `to_tsvector(field) @@ websearch_to_tsquery(…)`, or the
+  generated `TSVector` column holding a `SearchVector` of the field when the model has
+  one (so `title__search` above searches the indexed `search` column); MySQL's
+  `MATCH … AGAINST` (it needs a `FullTextIndex`); elsewhere a `LIKE` per word.
+- **`__trigram_similar`** is pg_trgm's `%`, the same similarity (0.3) on SQLite, and a
+  `LIKE` on MySQL.
+- **Expressions:** `SearchVector(fields…)` with `Weight`, `Config` and `Add`;
+  `SearchQuery(text)`; `Match(doc, q)` (a condition); `SearchRank(doc, q)` (ts_rank, MySQL's
+  relevance, else the weights of the fields each word is found in); `Headline(field, q)`
+  (ts_headline, else the text around the first word); `Similarity(field, term)` (not on
+  MySQL). Fields may be relation paths, and are the schema's names under a names set.
+
+Vectors:
+
+```go
+near, err := Posts.Nearest("embedding", v, orm.Cosine).Limit(10).All(ctx) // annotated "distance"
+Posts.Annotate("d", orm.L2Distance("embedding", v)).Filter(orm.Q{"d__lt": 0.5})
+
+// Hybrid: reciprocal-rank fusion of the text rank and the distance.
+Posts.Filter(orm.Match(doc, q)).
+    Annotate("rank", orm.SearchRank(doc, q)).
+    Annotate("distance", orm.CosineDistance("embedding", v)).
+    Annotate("score", orm.Fuse("-rank", "distance")).OrderBy("-score").Limit(20)
+```
+
+- **`orm.Vector`** is `[]float32`, written as pgvector's text; `orm:"vector:N"` sizes the
+  column. `L2Distance`, `CosineDistance` and `InnerProduct` (negated, as pgvector's `<#>`,
+  so smaller is nearer) are expressions; an index serves the metric its `Ops` names.
+- **`Fuse(orders…)`** scores each row by the sum of `1/(60 + rank)` over the orderings
+  (a leading `-` ranks descending).
+
+The schema side:
+
+- **Indexes:** `GinIndex(fields or expressions…)` and `GistIndex` (with `.Trigram()` for
+  pg_trgm's operator classes), `FullTextIndex(fields…)` (MySQL's FULLTEXT; on Postgres a
+  GIN index of their tsvector by `.Config`, which `__search` of a field indexed alone
+  uses), `HnswIndex(field)` and `IvfflatIndex(field)` with `.Ops(orm.Cosine|orm.L2|orm.IP)`,
+  `.M`, `.EfConstruction`, `.Lists`; `.Name` names any of them. A `SearchVector` in an
+  index or a generated column needs a `Config`.
+- **Generated columns** are stored: a `tsvector` on Postgres, the fields' text elsewhere
+  (MySQL can index it with a `FullTextIndex`). Create and Save skip them; Update refuses
+  them. SQLite can't add one to an existing table: rebuild it.
+- **Where an index can't be made:** MySQL makes `FullTextIndex` only, and a model with
+  another kind, or a `Vector`, doesn't map onto it; SQLite makes none, its searches
+  unindexed.
+- **Extensions are explicit:** `orm.CreateExtension("vector")` (or `"pg_trgm"`),
+  package-level, has `nexus makemigrations` write `CREATE EXTENSION` into the next
+  migration; passed to `nexus.Boot` it also fails boot while the database lacks it.
+  Nothing installs one otherwise.
+- **`Schema.Check`** (after `orm.Migrate`) fails boot when its database can't hold a
+  model's columns or indexes, or lacks an extension they need, with the hint to add it.
 
 ## Subqueries
 

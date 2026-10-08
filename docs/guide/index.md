@@ -41,6 +41,9 @@ binary, with the frontend embedded in it.
   and cron schedules, on an in-memory, SQL, Redis or RabbitMQ driver.
 - **Dashboard.** A live architecture graph, an endpoint tester, traces, crons, rate
   limits and cached identities.
+- **ORM.** Django-style models, QuerySets and lookups, relations in both directions,
+  values and raw SQL, full-text and vector search, migrations, and one set of models
+  over two schemas while a database is migrated.
 - **Batteries.** Databases (GORM), caches (memory or Redis), file storage (local or S3),
   mail, sessions, auth and OAuth2, CSRF and security headers, workers and crons.
 

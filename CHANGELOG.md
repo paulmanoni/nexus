@@ -6,6 +6,65 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [2.28.0] - 2026-10-08
+
+The ORM entries ship as `orm/v0.4.0`.
+
+### Added
+
+- ORM: **one set of models over several schemas.** `orm.Schema{DB, Names, Unmanaged}` and
+  `orm.Of[T](schema)` (a manager per model and schema) query the same Go models, relations
+  declared on them, on databases that name things apart; `orm.For[T](orm.Names("legacy"))`
+  declares one package-level. Under a names set each field's tag of that key overrides its
+  default naming: a column (`legacy:"tel_no"`), no such field (`legacy:"-"`), a field there
+  only (`gorm:"-" legacy:"code"`), relation keys merged over the default tags
+  (`legacy:"many2many:auth_user_groups;joinReferences:group_id"`), or a column read through
+  a relation (`legacy:"profile__first_name"`: joined, filterable, orderable, read-only), and
+  `LegacyTableName()` names the table. Queries keep naming Go fields and default names;
+  writes, `Columns`, `ColumnValues` and the change feed use the schema's columns.
+  `Schema.Check(models…)` fails boot when a model doesn't map onto the schema.
+- ORM: **inverse relations**, Django's reverse relations: every foreign key and
+  many-to-many implies its inverse on the related model (`orm:"related:<name>"`, else the
+  declaring model's name in snake_case, plural, singular for a one-to-one), usable in
+  `Filter`/`Exclude`/`OrderBy`/`Values` paths and `PrefetchRelated` (into a field of its
+  name), and in `SelectRelated` for a one-to-one; `SelectRelated` takes GORM's has-one too.
+- ORM: **`Values` like Django's `values()`/`values_list()`:** relation paths
+  (`Values[string]("team__name")`, one row per related row through rows held by many),
+  `orm:"path"` tags on struct targets (`Values[Row]()` reads the struct's own fields),
+  `map[string]any` and `[]any` targets, and grouping by the other names when an aggregate
+  annotation is listed (`Annotate("n", orm.Count("id")).Values[[]any]("team__name", "n")`).
+  Aggregates (`orm.Count`, …, `orm.AggOf`) are expressions `Annotate` takes.
+- ORM: **raw SQL:** `Manager.Raw(sql, args…)` (`All`, `First`, `Iter`, `PrefetchRelated`)
+  fills the model from the columns under the manager's names set; `orm.Raw[R]` /
+  `orm.RawIter[R]` read any shape `Values` reads; `orm.Exec` runs writes and DDL. `?` marks
+  arguments on every database, inside the context's transaction, traced. Raw writes bypass
+  `OnChange` and mirrors.
+
+- ORM: **search**, Django's `contrib.postgres.search` and pgvector's: the `__search` (web
+  search syntax) and `__trigram_similar` lookups; `SearchVector` (`Weight`, `Config`, `Add`),
+  `SearchQuery`, `Match`, `SearchRank`, `Headline`, `Similarity`; `orm.Vector` (`orm:"vector:N"`)
+  with `L2Distance`, `CosineDistance`, `InnerProduct`, `QuerySet.Nearest` and `orm.Fuse`
+  (reciprocal-rank fusion for hybrid search). Postgres runs them natively; MySQL searches
+  text with `MATCH … AGAINST`; SQLite matches with `LIKE` and computes distances and
+  similarity in Go.
+- ORM: **model-level schema, Django's Meta:** `Indexes() []orm.Index` (`GinIndex`,
+  `GistIndex` with `Trigram`, `FullTextIndex`, `HnswIndex`/`IvfflatIndex` with `Ops`, `M`,
+  `EfConstruction`, `Lists`; `Name`; over fields or expressions) and generated columns
+  (`orm:"generated"` fields, their expressions from `Generated() map[string]orm.Expr`, never
+  written), made and dropped by migrations per dialect; `orm.CreateExtension("vector")`
+  declares an extension the next migration creates. `Schema.Check` fails boot when the
+  database can't hold a model's columns or indexes, or lacks an extension it needs.
+- db/sqlite registers `l2_distance`, `cosine_distance`, `inner_product` and `similarity`
+  (pgvector's and pg_trgm's functions, computed in Go) on every SQLite connection.
+
+### Changed
+
+- ORM: GORM's relation tags are honoured in full: `references` (belongs-to, has-one,
+  has-many) and `many2many`'s `joinForeignKey` / `joinReferences` (and `foreignKey` /
+  `references` on a many-to-many). Before, the join columns were always `<model>_id`; a
+  model whose tag named others (`many2many:team_members;joinForeignKey:team_ref`) now
+  queries the columns its tag names, as GORM does.
+
 ## [2.27.4] - 2026-10-08
 
 ### Fixed
