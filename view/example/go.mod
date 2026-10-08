@@ -5,7 +5,7 @@ go 1.26.2
 require (
 	github.com/a-h/templ v0.3.1020
 	github.com/gorilla/websocket v1.5.3
-	github.com/paulmanoni/nexus/v2 v2.29.1
+	github.com/paulmanoni/nexus/v2 v2.30.0
 	github.com/templui/templui v1.13.2
 )
 
@@ -26,5 +26,5 @@ require (
 	golang.org/x/crypto v0.51.0 // indirect
 	golang.org/x/net v0.55.0 // indirect
 	golang.org/x/sys v0.45.0 // indirect
-	golang.org/x/text v0.39.0 // indirect
+	golang.org/x/text v0.42.0 // indirect
 )

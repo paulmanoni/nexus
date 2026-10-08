@@ -4,7 +4,7 @@ go 1.26.2
 
 require (
 	github.com/gin-gonic/gin v1.10.1
-	github.com/paulmanoni/nexus/v2 v2.29.1
+	github.com/paulmanoni/nexus/v2 v2.30.0
 )
 
 require (
@@ -32,7 +32,7 @@ require (
 	golang.org/x/crypto v0.51.0 // indirect
 	golang.org/x/net v0.55.0 // indirect
 	golang.org/x/sys v0.45.0 // indirect
-	golang.org/x/text v0.39.0 // indirect
+	golang.org/x/text v0.42.0 // indirect
 	google.golang.org/protobuf v1.36.10 // indirect
 	gopkg.in/yaml.v3 v3.0.1 // indirect
 )
