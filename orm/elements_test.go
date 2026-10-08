@@ -65,9 +65,10 @@ func TestElementsJSON(t *testing.T) {
 	}
 	web, err := Letters.Annotate("web", orm.FilteredRelation("spots", orm.Q{"kind": "web"})).
 		Annotate("n", orm.Count("web__id").Distinct()).
+		Annotate("category", orm.Value("PLACEMENT")).
 		Filter(orm.Q{"n__gte": 1}).
-		OrderBy("ref").Values[[]any]("ref", "n").All(ctx)
-	if err != nil || !reflect.DeepEqual(web, [][]any{{"A", int64(1)}, {"B", int64(1)}}) {
+		OrderBy("ref").Values[[]any]("ref", "category", "n").All(ctx)
+	if err != nil || !reflect.DeepEqual(web, [][]any{{"A", "PLACEMENT", int64(1)}, {"B", "PLACEMENT", int64(1)}}) {
 		t.Fatalf("filtered relation over elements = %v, %v", web, err)
 	}
 

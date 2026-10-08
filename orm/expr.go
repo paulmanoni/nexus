@@ -33,6 +33,18 @@ func (f fieldRef) exprSQL(b *builder) (string, error) {
 	return col, nil
 }
 
+// Value is v as an expression, Django's Value(): a constant column
+// ('PLACEMENT' AS category) or a value passed where an expression goes
+// (Case results, Coalesce) — sent as a bound argument, never pasted into
+// the SQL.
+//
+//	Letters.Annotate("category", orm.Value("PLACEMENT"))
+func Value(v any) Expr { return valueExpr{v} }
+
+type valueExpr struct{ v any }
+
+func (e valueExpr) exprSQL(b *builder) (string, error) { return b.arg(e.v), nil }
+
 // SQL is an expression written in SQL: {0}, {1}, … stand for args, each
 // an Expr or a value sent as an argument ({{ and }} are literal braces).
 // It is the escape hatch for what a Func can't say; never build the

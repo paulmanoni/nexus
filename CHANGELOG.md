@@ -6,6 +6,14 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [2.31.1] - 2026-10-08
+
+### Added
+
+- **`orm.Value(v)`**, Django's `Value()`: a constant as an expression — a literal column
+  (`Annotate("category", orm.Value("PLACEMENT"))`) or a value where an expression goes —
+  sent as a bound argument. Ships as `orm/v0.6.1`.
+
 ## [2.31.0] - 2026-10-08
 
 ### Added

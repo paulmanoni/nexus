@@ -339,7 +339,8 @@ Users.Annotate("joined", orm.Year.Of(orm.F("created_at"))).
   `month`, `day`, `date`, each spelled for every database. `orm.Coalesce` is also
   available.
 - **Annotations:** `Annotate(name, expr)` is a named computed column that `Filter`,
-  `OrderBy` and `Values` use by name. A model field tagged `orm:"computed"` receives
+  `OrderBy` and `Values` use by name. `orm.Value(v)` is a constant as an expression
+  (`Annotate("category", orm.Value("PLACEMENT"))`), sent as a bound argument. A model field tagged `orm:"computed"` receives
   it.
 - **Cast:** `orm.Cast(v, t)` converts a field, an expression or a value, spelled
   for each database: `orm.AsInt`, `AsFloat`, `AsText`, `AsDate`, `AsDateTime`,
