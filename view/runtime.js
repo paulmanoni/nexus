@@ -1627,8 +1627,11 @@
     return { root: root, state: state };
   }
 
-  // liveSend sends an event, or queues it while the socket is down.
+  // liveSend sends an event, or queues it while the socket is down. A
+  // form change still waiting for typing to pause goes first, so the
+  // server sees what the user did in order.
   function liveSend(live, msg) {
+    if (!sendingChange) sendPendingChanges(live.state);
     msg.ref = ++live.state.ref;
     live.root.setAttribute("aria-busy", "true");
     var ws = live.state.ws;
@@ -1648,6 +1651,33 @@
   }
 
   var changeTimers = new WeakMap();
+  // pendingChanges are the forms whose change waits on changeTimers, with
+  // the send that delivers it.
+  var pendingChanges = new Map();
+  var sendingChange = false;
+
+  function deferChange(form, send) {
+    clearTimeout(changeTimers.get(form));
+    pendingChanges.set(form, send);
+    changeTimers.set(form, setTimeout(function () { sendChange(form); }, 150));
+  }
+  function dropChange(form) {
+    clearTimeout(changeTimers.get(form));
+    pendingChanges.delete(form);
+  }
+  function sendChange(form) {
+    var send = pendingChanges.get(form);
+    dropChange(form);
+    if (!send) return;
+    sendingChange = true;
+    try { send(); } finally { sendingChange = false; }
+  }
+  function sendPendingChanges(state) {
+    pendingChanges.forEach(function (_, form) {
+      var root = form.isConnected && form.closest("[data-nx-live]");
+      if (root && liveRoots.get(root) === state) sendChange(form);
+    });
+  }
 
   // A view.Form's fields the user changed, and those of them they left: a
   // field's error shows once it is touched.
@@ -1667,7 +1697,7 @@
     return Array.from(names);
   }
   function sendForm(form) {
-    clearTimeout(changeTimers.get(form));
+    dropChange(form);
     var live = liveState(form, "__form");
     if (!live) return;
     var msg = {
@@ -1849,18 +1879,16 @@
       if (e && e.target && e.target.name) formTouch(form).edited.add(e.target.name);
       unsentForms.add(form);
       leaveConfirmed = false; // new changes: ask again
-      clearTimeout(changeTimers.get(form));
-      changeTimers.set(form, setTimeout(function () { sendForm(form); }, 150));
+      deferChange(form, function () { sendForm(form); });
     },
     // change is what view.Change renders into a form's oninput/onchange:
     // the fields go to the server after typing pauses.
     change: function (e, form, event, comp) {
       changeEvents.set(form, { event: event, comp: comp });
-      clearTimeout(changeTimers.get(form));
-      changeTimers.set(form, setTimeout(function () {
+      deferChange(form, function () {
         var live = liveState(form, event);
         if (live) liveSend(live, target({ event: event, form: formFields(form) }, form, comp));
-      }, 150));
+      });
     },
   };
 

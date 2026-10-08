@@ -289,3 +289,41 @@ func TestValueAttributes(t *testing.T) {
 		t.Fatalf("view.Value(nil) value = %v", v)
 	}
 }
+
+// events lists the events the page sent, leaving out the connection's own.
+func (p *livePage) events() []string {
+	var out []string
+	for _, m := range p.sent {
+		if e, _ := m["event"].(string); e != "" && e != "__join" && e != "__resync" {
+			out = append(out, e)
+		}
+	}
+	return out
+}
+
+// A form's change waits for typing to pause; an event sent meanwhile goes
+// after it, so the server sees what the user did in order — a click right
+// after typing is neither overtaken by the typing nor undone by it.
+func TestPendingFormChangeSentBeforeOtherEvents(t *testing.T) {
+	for name, tc := range map[string]struct{ form, change string }{
+		"view.Form":   {`<form id="f" data-nx-form="draft" data-nx-then="Changed" oninput="__nx.live.form(event,this)" onsubmit="__nx.live.submit(event,this,&#34;Next&#34;)">`, "__form"},
+		"view.Change": {`<form id="f" oninput="__nx.live.change(event,this,&#34;Validate&#34;)" onsubmit="__nx.live.submit(event,this,&#34;Next&#34;)">`, "Validate"},
+	} {
+		t.Run(name, func(t *testing.T) {
+			p := openLive(t, tc.form+`<input id="a" name="a"><button id="next" type="submit">Next</button></form>`+
+				`<button id="add" onclick="__nx.live.send(this,&#34;AddChoice&#34;)">Add</button>`)
+			p.js(`__dom.fill(document.querySelector("#a"), "typed"); document.querySelector("#add").click()`)
+			p.settle()
+			if got := strings.Join(p.events(), ","); got != tc.change+",AddChoice" {
+				t.Fatalf("sent %s, want the change first and once", got)
+			}
+
+			p.sent = nil
+			p.js(`__dom.fill(document.querySelector("#a"), "more"); document.querySelector("#next").click()`)
+			p.settle()
+			if got := strings.Join(p.events(), ","); got != tc.change+",Next" {
+				t.Fatalf("sent %s, want the change before the submit and none after", got)
+			}
+		})
+	}
+}

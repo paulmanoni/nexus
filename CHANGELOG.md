@@ -6,6 +6,17 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [2.27.1] - 2026-10-08
+
+### Fixed
+
+- Live forms: an event sent while a form's change still waited for typing to pause
+  (150ms) reached the server before that change, and the change — carrying the
+  browser's fields from before the event's reply — could then undo it (a choice added
+  right after ticking an answer disappeared on a slow connection). A live page now
+  sends its pending form changes first, so the server sees events in the order the user
+  made them; a submit no longer has its own form's change arrive after it.
+
 ## [2.27.0] - 2026-10-08
 
 ### Added
