@@ -51,11 +51,11 @@ func stamp(f *field) any {
 }
 
 // insertable is the fields an INSERT writes: all but a zero
-// auto-increment key.
+// auto-increment key and generated columns.
 func (m *Manager[T]) insertable(v reflect.Value) []*field {
 	var out []*field
 	for _, f := range m.meta.Fields {
-		if f == m.meta.PK && peek(v, f.Index, f.Type).IsZero() {
+		if f.Gen != nil || f == m.meta.PK && peek(v, f.Index, f.Type).IsZero() {
 			continue
 		}
 		out = append(out, f)
@@ -179,15 +179,18 @@ func (m *Manager[T]) insert(ctx context.Context, c conn, rows []*T) error {
 	if mk, ok := rowScanner[T](m.meta); ok {
 		w, _ = mk().(RowWriter[T])
 	}
-	skipPK := len(fields) < len(m.meta.Fields)
+	written := make([]bool, len(m.meta.Fields))
+	for i, f := range m.meta.Fields {
+		written[i] = slices.Contains(fields, f)
+	}
 	var vals []any
 	tuples := make([]string, len(rows))
 	for r, row := range rows {
 		marks := make([]string, 0, len(fields))
 		if w != nil {
 			vals = w.Values(row, vals)
-			for i, f := range m.meta.Fields {
-				if !(skipPK && f == m.meta.PK) {
+			for i := range m.meta.Fields {
+				if written[i] {
 					marks = append(marks, b.arg(vals[i]))
 				}
 			}
@@ -277,7 +280,7 @@ func (m *Manager[T]) Save(ctx context.Context, row *T) error {
 	v := reflect.ValueOf(row).Elem()
 	values := Set{}
 	for _, f := range m.meta.Fields {
-		if f.PK {
+		if f.PK || f.Gen != nil {
 			continue
 		}
 		dst := fieldOf(v, f.Index)

@@ -62,7 +62,7 @@ func rowScanner[T any](m *model) (func() RowScanner[T], bool) {
 		return nil, false
 	}
 	e := v.(scannerEntry)
-	if !slices.Equal(e.cols, m.columns()) {
+	if len(m.via) > 0 || !slices.Equal(e.cols, m.columns()) {
 		return nil, false
 	}
 	return e.make.(func() RowScanner[T]), true
@@ -180,7 +180,7 @@ func (c *PtrCell[V]) Scan(src any) error {
 // Generated is whether T's rows are read by a generated scanner: one is
 // registered and reads the model's columns.
 func Generated[T any]() bool {
-	m, err := modelOf(reflect.TypeFor[T](), "")
+	m, err := modelOf(reflect.TypeFor[T](), "", "")
 	if err != nil {
 		return false
 	}

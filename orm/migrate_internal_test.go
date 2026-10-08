@@ -27,3 +27,17 @@ SELECT $$;$$`, true)
 		t.Fatalf("got  %q\nwant %q", got, want)
 	}
 }
+
+func TestPlaceholders(t *testing.T) {
+	src := "SELECT '?', \"a?\", data ?? 'k' FROM t -- a ?\nWHERE a = ? AND b IN (?, ?)"
+	got, args, err := placeholders(DialectFor("postgres"), src, []any{1, "x", 3})
+	if want := "SELECT '?', \"a?\", data ? 'k' FROM t \nWHERE a = $1 AND b IN ($2, $3)"; err != nil || got != want || !slices.Equal(args, []any{1, "x", 3}) {
+		t.Fatalf("postgres:\n got %q, %v, %v\nwant %q", got, args, err, want)
+	}
+	if got, _, _ := placeholders(DialectFor("mysql"), `SELECT 'it\'s ?' WHERE a = ?`, []any{1}); got != `SELECT 'it\'s ?' WHERE a = ?` {
+		t.Fatalf("mysql: %q", got)
+	}
+	if _, _, err := placeholders(DialectFor("sqlite"), "SELECT ?", nil); err == nil {
+		t.Fatal("a ? with no argument")
+	}
+}

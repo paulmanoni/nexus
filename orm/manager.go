@@ -2,6 +2,7 @@ package orm
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"reflect"
 	"slices"
@@ -39,8 +40,8 @@ type Manager[T any] struct {
 type ForOption func(*forConfig)
 
 type forConfig struct {
-	db, table, mirror string
-	unmanaged         bool
+	db, table, mirror, names string
+	unmanaged                bool
 }
 
 // On binds the model to the database db.Bind registered as name; the
@@ -55,6 +56,11 @@ func Table(name string) ForOption { return func(c *forConfig) { c.table = name }
 // or migrated by the ORM. Every legacy table is one.
 func Unmanaged() ForOption { return func(c *forConfig) { c.unmanaged = true } }
 
+// Names reads the model under a names set (see Schema): each field's tag
+// of that key over its default naming, and <Names>TableName (names
+// "legacy": LegacyTableName) over TableName.
+func Names(set string) ForOption { return func(c *forConfig) { c.names = set } }
+
 // For is the manager of the model T. Declare it once, package-level, and
 // pass it to nexus.Boot (or a module) so the model finds its database and
 // a model the ORM can't map fails boot.
@@ -64,7 +70,7 @@ func For[T any](opts ...ForOption) *Manager[T] {
 		o(&c)
 	}
 	m := &Manager[T]{dbName: c.db, mirror: c.mirror, unmanaged: c.unmanaged}
-	m.meta, m.err = modelOf(reflect.TypeFor[T](), c.table)
+	m.meta, m.err = modelOf(reflect.TypeFor[T](), c.names, c.table)
 	m.QuerySet = QuerySet[T]{m: m, q: query{m: m.meta}}
 	declare(declaredModel{db: c.db, unmanaged: c.unmanaged, tables: m.tables})
 	m.Option = nexus.Invoke(func(app *nexus.App, lc nexus.Lifecycle) error {
@@ -79,6 +85,103 @@ func For[T any](opts ...ForOption) *Manager[T] {
 		return nil
 	})
 	return m
+}
+
+// Schema is a database the models are queried on and the names they have
+// there: one set of Go models, relations declared on them, over schemas
+// that name their tables and columns apart.
+//
+//	var Legacy = orm.Schema{DB: "legacy", Names: "legacy", Unmanaged: true}
+//
+//	type User struct {
+//		ID      int64
+//		Phone   string   `legacy:"tel_no"`              // the column there
+//		Bio     string   `legacy:"-"`                   // no such column there
+//		Code    string   `gorm:"-" legacy:"code"`       // there only
+//		City    string   `legacy:"profile__city"`       // read through a relation there
+//		Profile *Profile `gorm:"foreignKey:UserID"`
+//		Groups  []Group  `gorm:"many2many:user_groups" legacy:"many2many:auth_user_groups;joinReferences:group_id"`
+//	}
+//	func (User) LegacyTableName() string { return "auth_user" }
+//
+//	users, err := orm.Of[User](Legacy).Filter(orm.Q{"groups__name": "staff"}).All(ctx)
+//
+// Queries name Go fields, default names and relation paths whatever the
+// schema; the ORM writes them in the schema's names. A field read through
+// a relation is read-only there: Create and Save skip it, and Update
+// refuses it.
+type Schema struct {
+	DB        string // the database db.Bind registered; "" the default
+	Names     string // the names set; "" the default naming
+	Unmanaged bool   // the tables are the database's own: never migrated
+}
+
+type schemaKey struct {
+	t reflect.Type
+	s Schema
+}
+
+var schemaManagers sync.Map // schemaKey → *Manager[T]
+
+// Of is the manager of the model T on schema s, made once per model and
+// schema. It finds its database as For's managers do: the app serving the
+// request, or the one a manager was last bound to.
+func Of[T any](s Schema) *Manager[T] {
+	k := schemaKey{reflect.TypeFor[T](), s}
+	if v, ok := schemaManagers.Load(k); ok {
+		return v.(*Manager[T])
+	}
+	opts := []ForOption{On(s.DB), Names(s.Names)}
+	if s.Unmanaged {
+		opts = append(opts, Unmanaged())
+	}
+	v, _ := schemaManagers.LoadOrStore(k, For[T](opts...))
+	return v.(*Manager[T])
+}
+
+// Check fails boot when one of the models (values or pointers of their
+// types) doesn't map onto the schema: a tag naming no field, a relation
+// to a model by no field of it, a column read through no relation, two
+// relations claiming one inverse name; and, once its database connects,
+// a column, index or generated column it can't make (a vector on MySQL),
+// or an extension it lacks. Pass it after orm.Migrate, which may install
+// them.
+//
+//	nexus.Boot(…, Legacy.Check(User{}, Profile{}, Group{}))
+func (s Schema) Check(models ...any) nexus.Option {
+	return nexus.Setup(func(ctx context.Context, app *nexus.App) error {
+		var errs []error
+		var ms []*model
+		for _, v := range models {
+			t := reflect.TypeOf(v)
+			for t.Kind() == reflect.Pointer {
+				t = t.Elem()
+			}
+			m, err := modelOf(t, s.Names, "")
+			if err != nil {
+				errs = append(errs, err)
+				continue
+			}
+			ms = append(ms, m)
+			errs = append(errs, m.check()...)
+		}
+		d, err := waitConnected(ctx, &binding{app: app}, s.DB)
+		switch {
+		case errors.Is(err, nexus.Unavailable):
+			errs = append(errs, err)
+		case err == nil:
+			var exts []string
+			for _, m := range ms {
+				if _, err := m.tables(d.dialect); err != nil {
+					errs = append(errs, err)
+				}
+				exts = append(exts, m.extensions()...)
+			}
+			slices.Sort(exts)
+			errs = append(errs, missingExtensions(ctx, d, slices.Compact(exts)))
+		}
+		return errors.Join(errs...)
+	})
 }
 
 // TableName is the model's table.
@@ -128,16 +231,22 @@ func (m *Manager[T]) conn(ctx context.Context) (conn, error) {
 	if t, ok := ctx.Value(inMirrorKey{}).(mirrorTarget); ok {
 		return m.mirrorConn(ctx, t)
 	}
+	return dbConn(ctx, m.dbName, m.bound.Load())
+}
+
+// dbConn is the database name (bound, else on the app a manager was last
+// bound to) as ctx sees it: WithDB's, Using's, or the one of the app
+// serving the request.
+func dbConn(ctx context.Context, name string, bound *binding) (conn, error) {
 	if d, ok := ctx.Value(dbKey{}).(*DB); ok {
 		return on(ctx, d), nil
 	}
-	name := m.dbName
 	if n, ok := ctx.Value(usingKey{}).(string); ok {
 		name = n
 	}
 	b := ctxBinding(ctx)
 	if b == nil {
-		b = m.bound.Load()
+		b = bound
 	}
 	if b == nil {
 		b = lastBinding.Load()

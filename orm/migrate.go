@@ -1,6 +1,7 @@
 package orm
 
 import (
+	"bytes"
 	"context"
 	"crypto/sha256"
 	"database/sql"
@@ -23,17 +24,93 @@ import (
 	"github.com/paulmanoni/nexus/orm/internal/schema"
 )
 
-// declared is every manager orm.For made, for the migration planner: the
-// models a program links are the models of its schema.
+// declared is every manager orm.For made and every extension
+// CreateExtension declared, for the migration planner: the models a
+// program links are the models of its schema.
 var declared struct {
 	mu   sync.Mutex
 	list []declaredModel
+	exts []extension
 }
 
 type declaredModel struct {
 	db        string
 	unmanaged bool
-	tables    func() ([]schema.Table, error)
+	tables    func(Dialect) ([]schema.Table, error)
+}
+
+type extension struct{ db, name string }
+
+// CreateExtension declares a Postgres extension the database needs —
+// "vector" for Vector columns and vector indexes, "pg_trgm" for trigram
+// indexes — Django's CreateExtension: nexus makemigrations writes it into
+// the next migration (CreateTables makes it too). Declare it
+// package-level, beside the models, where the planner finds it; passed to
+// nexus.Boot as well, it fails boot while the database lacks it. Nothing
+// installs an extension otherwise. orm.On names the database.
+//
+//	var Vectors = orm.CreateExtension("vector")
+func CreateExtension(name string, opts ...ForOption) nexus.Option {
+	var c forConfig
+	for _, o := range opts {
+		o(&c)
+	}
+	declared.mu.Lock()
+	declared.exts = append(declared.exts, extension{c.db, name})
+	declared.mu.Unlock()
+	return nexus.Setup(func(ctx context.Context, app *nexus.App) error {
+		d, err := waitConnected(ctx, &binding{app: app}, c.db)
+		if err != nil {
+			return err
+		}
+		return missingExtensions(ctx, d, []string{name})
+	})
+}
+
+func declaredExtensions() []extension {
+	declared.mu.Lock()
+	defer declared.mu.Unlock()
+	return slices.Clone(declared.exts)
+}
+
+func createExtension(d Dialect, name string) string {
+	return "CREATE EXTENSION IF NOT EXISTS " + d.Quote(name)
+}
+
+// missingExtensions fails, naming how to install them, when a Postgres
+// database lacks some of the extensions names.
+func missingExtensions(ctx context.Context, d *DB, names []string) error {
+	if d.dialect.Name() != "postgres" || len(names) == 0 {
+		return nil
+	}
+	rows, err := d.sql.QueryContext(ctx, "SELECT extname FROM pg_extension")
+	if err != nil {
+		return err
+	}
+	defer rows.Close()
+	have := map[string]bool{}
+	for rows.Next() {
+		var n string
+		if err := rows.Scan(&n); err != nil {
+			return err
+		}
+		have[n] = true
+	}
+	var errs []error
+	for _, n := range names {
+		if !have[n] {
+			errs = append(errs, fmt.Errorf("orm: the database lacks the extension %q: add orm.CreateExtension(%q) to a migration (declare it, then nexus makemigrations)", n, n))
+		}
+	}
+	return errors.Join(append(errs, rows.Err())...)
+}
+
+// snapshot is the schema a migration leaves: its tables and extensions.
+// One with no extensions is written as the list of its tables, as before
+// there were any.
+type snapshot struct {
+	Extensions []string       `json:"extensions"`
+	Tables     []schema.Table `json:"tables"`
 }
 
 func declare(d declaredModel) {
@@ -62,10 +139,16 @@ type MigrationPlan struct {
 // the default) declared with orm.For in the program, written for driver
 // (postgres, mysql, sqlite). It is what nexus makemigrations runs; apps
 // don't call it.
-func PlanMigration(snapshot []byte, driver string, dbs ...string) (MigrationPlan, error) {
-	var old []schema.Table
-	if len(snapshot) > 0 {
-		if err := json.Unmarshal(snapshot, &old); err != nil {
+func PlanMigration(snap []byte, driver string, dbs ...string) (MigrationPlan, error) {
+	var old snapshot
+	if len(bytes.TrimSpace(snap)) > 0 {
+		var err error
+		if bytes.TrimSpace(snap)[0] == '[' {
+			err = json.Unmarshal(snap, &old.Tables)
+		} else {
+			err = json.Unmarshal(snap, &old)
+		}
+		if err != nil {
 			return MigrationPlan{}, fmt.Errorf("orm: reading the schema snapshot: %w", err)
 		}
 	}
@@ -75,40 +158,57 @@ func PlanMigration(snapshot []byte, driver string, dbs ...string) (MigrationPlan
 	declared.mu.Lock()
 	list := append([]declaredModel(nil), declared.list...)
 	declared.mu.Unlock()
-	var cur []schema.Table
+	dl := DialectFor(driver)
+	var cur snapshot
+	for _, e := range declaredExtensions() {
+		if slices.Contains(dbs, e.db) && !slices.Contains(cur.Extensions, e.name) {
+			cur.Extensions = append(cur.Extensions, e.name)
+		}
+	}
 	at := map[string]int{}
 	for _, m := range list {
 		if m.unmanaged || !slices.Contains(dbs, m.db) {
 			continue
 		}
-		ts, err := m.tables()
+		ts, err := m.tables(dl)
 		if err != nil {
 			return MigrationPlan{}, err
 		}
 		for _, t := range ts {
 			i, ok := at[t.Name]
 			if !ok {
-				at[t.Name] = len(cur)
-				cur = append(cur, t)
+				at[t.Name] = len(cur.Tables)
+				cur.Tables = append(cur.Tables, t)
 				continue
 			}
-			if cur[i], err = mergeTable(cur[i], t); err != nil {
+			if cur.Tables[i], err = mergeTable(cur.Tables[i], t); err != nil {
 				return MigrationPlan{}, err
 			}
 		}
 	}
-	dl := DialectFor(driver)
 	d := schema.Dialect{Name: dl.Name(), Quote: dl.Quote}
 	var plan MigrationPlan
-	for _, s := range d.Diff(old, cur) {
+	for _, e := range cur.Extensions {
+		if !slices.Contains(old.Extensions, e) && dl.Name() == "postgres" {
+			plan.Steps = append(plan.Steps, MigrationStep{SQL: createExtension(dl, e)})
+		}
+	}
+	for _, e := range old.Extensions {
+		if !slices.Contains(cur.Extensions, e) {
+			plan.Steps = append(plan.Steps, MigrationStep{Note: "the extension " + e + " is no longer declared: drop it by hand once nothing uses it"})
+		}
+	}
+	for _, s := range d.Diff(old.Tables, cur.Tables) {
 		plan.Steps = append(plan.Steps, MigrationStep{SQL: s.SQL, Note: s.Note})
 	}
-	snap, err := json.MarshalIndent(schema.Sort(cur), "", "  ")
-	if err != nil {
-		return MigrationPlan{}, err
+	cur.Tables = schema.Sort(cur.Tables)
+	var out any = cur
+	if len(cur.Extensions) == 0 {
+		out = cur.Tables
 	}
-	plan.Snapshot = snap
-	return plan, nil
+	var err error
+	plan.Snapshot, err = json.MarshalIndent(out, "", "  ")
+	return plan, err
 }
 
 // mergeTable is one table two models map: the columns and foreign keys
@@ -130,6 +230,15 @@ func mergeTable(a, b schema.Table) (schema.Table, error) {
 	for _, fk := range b.FKs {
 		if !slices.Contains(a.FKs, fk) {
 			a.FKs = append(a.FKs, fk)
+		}
+	}
+	for _, ix := range b.Indexes {
+		i := slices.IndexFunc(a.Indexes, func(have schema.Index) bool { return have.Name == ix.Name })
+		switch {
+		case i < 0:
+			a.Indexes = append(a.Indexes, ix)
+		case a.Indexes[i] != ix:
+			return a, fmt.Errorf("orm: two models map table %s and disagree on its index %s: make one orm.Unmanaged()", a.Name, ix.Name)
 		}
 	}
 	return a, nil
@@ -351,8 +460,7 @@ func lockMigrations(ctx context.Context, c *sql.Conn, d Dialect) (func(), error)
 
 // splitSQL is a migration's statements: split at semicolons outside
 // quotes, comments and Postgres dollar quotes; comments and blank
-// statements dropped. backslash says a backslash escapes a quote inside
-// a string (MySQL); elsewhere it is an ordinary character.
+// statements dropped.
 func splitSQL(src string, backslash bool) []string {
 	var out []string
 	var b strings.Builder
@@ -362,6 +470,25 @@ func splitSQL(src string, backslash bool) []string {
 		}
 		b.Reset()
 	}
+	lexSQL(src, backslash, &b, func(i int) int {
+		if src[i] == ';' {
+			flush()
+		} else {
+			b.WriteByte(src[i])
+		}
+		return i + 1
+	})
+	flush()
+	return out
+}
+
+// lexSQL writes src to b: quoted strings and identifiers and Postgres
+// dollar-quoted bodies whole, comments dropped (a block comment as a
+// space), and each other byte through code, which writes it or what it
+// stands for and returns where to go on. backslash says a backslash
+// escapes a quote inside a string (MySQL); elsewhere it is an ordinary
+// character.
+func lexSQL(src string, backslash bool, b *strings.Builder, code func(i int) int) {
 	for i := 0; i < len(src); {
 		ch := src[i]
 		switch {
@@ -412,16 +539,9 @@ func splitSQL(src string, backslash bool) []string {
 				i = stop
 				continue
 			}
-		case ch == ';':
-			flush()
-			i++
-			continue
 		}
-		b.WriteByte(ch)
-		i++
+		i = code(i)
 	}
-	flush()
-	return out
 }
 
 var dollarRE = regexp.MustCompile(`^\$[A-Za-z_]*\$`)

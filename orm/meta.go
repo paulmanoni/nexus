@@ -16,11 +16,14 @@ import (
 	"database/sql"
 	"database/sql/driver"
 	"fmt"
-	"github.com/paulmanoni/nexus/orm/internal/tags"
+	"maps"
 	"reflect"
+	"slices"
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/paulmanoni/nexus/orm/internal/tags"
 )
 
 // field is a model's column: where it sits in the struct and how it is
@@ -34,32 +37,58 @@ type field struct {
 	AutoNowAdd bool
 	AutoNow    bool
 	Unique     bool
+	UniqueIdx  string // a named unique index: unique together with the fields sharing it
 	Indexed    bool
 	Size       int
 	SQLType    string
+	// Via is the lookup path of a field read through a relation
+	// (profile__first_name): it has no column, and is never written.
+	Via string
+	// Gen is a generated column's expression, from the model's
+	// Generated(): the database computes it, the ORM never writes it.
+	Gen  Expr
+	gen  bool // tagged orm:"generated"
+	Dims int  // a vector's dimensions
 }
 
-// model is what a Go struct means to the database, computed once per
-// type.
+// model is what a Go struct means to the database under a names set,
+// computed once per type and set.
 type model struct {
-	Type   reflect.Type
-	Name   string // the Go type's name
-	Table  string
+	Type  reflect.Type
+	Name  string // the Go type's name
+	Table string
+	// Names is the names set the model is read under: each field's tag of
+	// that key over its default naming. "" is the default.
+	Names  string
 	Fields []*field
+	via    []*field // the fields read through relations
 	PK     *field
-	byName map[string]*field // Go name, lowercased, and column
+	byName map[string]*field // Go name and default column, lowercased
+	byCol  map[string]*field // column under Names, lowercased
 	// computed is the fields tagged orm:"computed", by Go name lowercased
 	// and snake_case: no column, filled from the annotation of that name.
 	computed map[string]*field
 	// rels is the relation fields, by Go name lowercased and snake_case.
 	rels    map[string]*relation
 	relList []*relation
+	indexes []Index // the model's Indexes()
+
+	// The inverses other models' relations imply on this one, as of
+	// declarers' version invVer; see inverses.
+	invMu  sync.Mutex
+	invVer int
+	inv    map[string]*relation
+	clash  map[string][]string
 }
 
-// field is the column a lookup names: by Go field name (any case) or by
-// column.
+// field is the field a lookup names: by Go name (any case) or default
+// column, else by its column under the names set.
 func (m *model) field(name string) (*field, bool) {
-	f, ok := m.byName[strings.ToLower(name)]
+	k := strings.ToLower(name)
+	if f, ok := m.byName[k]; ok {
+		return f, true
+	}
+	f, ok := m.byCol[k]
 	return f, ok
 }
 
@@ -71,31 +100,42 @@ func (m *model) columns() []string {
 	return out
 }
 
-var models sync.Map // reflect.Type → *model, or error
+// readFields is the fields a row is read into: the columns, then the
+// fields read through relations.
+func (m *model) readFields() []*field {
+	if len(m.via) == 0 {
+		return m.Fields
+	}
+	return append(slices.Clip(m.Fields), m.via...)
+}
 
-// modelOf is the metadata of T, computed on first use.
-func modelOf(t reflect.Type, table string) (*model, error) {
-	key := t
+type modelKey struct {
+	t     reflect.Type
+	names string
+}
+
+var models sync.Map // modelKey → *model, or error
+
+// modelOf is the metadata of t under a names set, computed on first use;
+// a table of its own makes one apart.
+func modelOf(t reflect.Type, names, table string) (*model, error) {
 	if table != "" {
-		key = nil
+		return buildModel(t, names, table)
 	}
-	if key != nil {
-		if v, ok := models.Load(key); ok {
-			if err, isErr := v.(error); isErr {
-				return nil, err
-			}
-			return v.(*model), nil
-		}
-	}
-	m, err := buildModel(t, table)
-	if key != nil {
+	k := modelKey{t, names}
+	v, ok := models.Load(k)
+	if !ok {
+		m, err := buildModel(t, names, "")
+		v = m
 		if err != nil {
-			models.Store(key, err)
-		} else {
-			models.Store(key, m)
+			v = err
 		}
+		v, _ = models.LoadOrStore(k, v)
 	}
-	return m, err
+	if err, isErr := v.(error); isErr {
+		return nil, err
+	}
+	return v.(*model), nil
 }
 
 type tableNamer interface{ TableName() string }
@@ -106,18 +146,25 @@ var (
 	timeType    = reflect.TypeFor[time.Time]()
 )
 
-func buildModel(t reflect.Type, table string) (*model, error) {
+func buildModel(t reflect.Type, names, table string) (*model, error) {
 	if t.Kind() != reflect.Struct {
 		return nil, fmt.Errorf("orm: %v is not a struct", t)
 	}
-	m := &model{Type: t, Name: t.Name(), byName: map[string]*field{}, computed: map[string]*field{}, rels: map[string]*relation{}}
-	switch {
-	case table != "":
-		m.Table = table
-	case reflect.PointerTo(t).Implements(reflect.TypeFor[tableNamer]()):
-		m.Table = reflect.New(t).Interface().(tableNamer).TableName()
-	default:
+	m := &model{Type: t, Name: t.Name(), Names: names, byName: map[string]*field{}, byCol: map[string]*field{}, computed: map[string]*field{}, rels: map[string]*relation{}}
+	m.Table = table
+	if table == "" {
 		m.Table = tags.Plural(tags.Snake(t.Name()))
+		if tn, ok := reflect.New(t).Interface().(tableNamer); ok {
+			m.Table = tn.TableName()
+		}
+		// Under a names set, <Names>TableName (LegacyTableName) wins.
+		if names != "" {
+			if mt := reflect.New(t).MethodByName(strings.ToUpper(names[:1]) + names[1:] + "TableName"); mt.IsValid() {
+				if f, ok := mt.Interface().(func() string); ok {
+					m.Table = f()
+				}
+			}
+		}
 	}
 	if err := collect(m, t, nil, ""); err != nil {
 		return nil, err
@@ -136,13 +183,16 @@ func buildModel(t reflect.Type, table string) (*model, error) {
 		m.PK = nil
 	}
 	if m.PK == nil && keys == 0 {
-		if f, ok := m.byName["id"]; ok {
+		if f, ok := m.byName["id"]; ok && f.Via == "" {
 			f.PK = true
 			m.PK = f
 		}
 	}
-	if len(m.Fields) == 0 {
+	if len(m.Fields)+len(m.via) == 0 {
 		return nil, fmt.Errorf("orm: %s has no columns", m.Name)
+	}
+	if err := m.declared(reflect.New(t).Interface()); err != nil {
+		return nil, err
 	}
 	for _, r := range m.relList {
 		if err := r.settle(m); err != nil {
@@ -159,7 +209,11 @@ func collect(m *model, t reflect.Type, index []int, prefix string) error {
 	for i := range t.NumField() {
 		sf := t.Field(i)
 		path := append(append([]int(nil), index...), i)
-		tag := tags.Parse(sf.Name, sf.Tag, sf.Type == timeType)
+		def := tags.Parse(sf.Name, sf.Tag, sf.Type == timeType)
+		tag := def
+		if v, ok := sf.Tag.Lookup(m.Names); ok && m.Names != "" {
+			tag = def.Under(v)
+		}
 		if tag.Skip {
 			continue
 		}
@@ -198,13 +252,9 @@ func collect(m *model, t reflect.Type, index []int, prefix string) error {
 			m.computed[f.Column] = f
 			continue
 		}
-		col := tag.Column
-		if col == "" {
-			col = tags.Snake(sf.Name)
-		}
-		col = prefix + col
-		f := &field{Name: sf.Name, Column: col, Index: path, Type: ft, PK: tag.PK,
-			AutoNowAdd: tag.AutoNowAdd, AutoNow: tag.AutoNow, Unique: tag.Unique, Indexed: tag.Index, Size: tag.Size, SQLType: tag.Type}
+		f := &field{Name: sf.Name, Column: column(tag, sf.Name, prefix), Index: path, Type: ft, PK: tag.PK,
+			AutoNowAdd: tag.AutoNowAdd, AutoNow: tag.AutoNow, Unique: tag.Unique, UniqueIdx: tag.UniqueIndex, Indexed: tag.Index, Size: tag.Size, SQLType: tag.Type, Via: tag.Path,
+			gen: tag.Generated, Dims: tag.Vector}
 		key := strings.ToLower(sf.Name)
 		if old, ok := m.byName[key]; ok {
 			if len(old.Index) <= len(path) {
@@ -212,25 +262,59 @@ func collect(m *model, t reflect.Type, index []int, prefix string) error {
 			}
 			m.remove(old)
 		}
-		m.Fields = append(m.Fields, f)
 		m.byName[key] = f
-		m.byName[strings.ToLower(col)] = f
+		if !def.Skip && def.Path == "" {
+			m.byName[strings.ToLower(column(def, sf.Name, prefix))] = f
+		}
+		if f.Via != "" {
+			f.Column = ""
+			m.via = append(m.via, f)
+			continue
+		}
+		m.Fields = append(m.Fields, f)
+		m.byCol[strings.ToLower(f.Column)] = f
 	}
 	return nil
 }
 
+// declared reads what the model declares by method, Django's Meta: its
+// generated columns' expressions (Generated, by Go field name) and its
+// indexes (Indexes).
+func (m *model) declared(v any) error {
+	if g, ok := v.(interface{ Generated() map[string]Expr }); ok {
+		for name, e := range g.Generated() {
+			f, ok := m.field(name)
+			if !ok || !f.gen {
+				return fmt.Errorf("orm: %s.Generated() names %s, no field of it tagged orm:\"generated\"", m.Name, name)
+			}
+			f.Gen = e
+		}
+	}
+	for _, f := range m.Fields {
+		if f.gen && f.Gen == nil {
+			return fmt.Errorf("orm: %s.%s is generated: give its expression in %s's Generated()", m.Name, f.Name, m.Name)
+		}
+	}
+	if ix, ok := v.(interface{ Indexes() []Index }); ok {
+		m.indexes = ix.Indexes()
+	}
+	return nil
+}
+
+// column is a field's column by its tags: tagged, else its name in
+// snake_case.
+func column(t tags.Tags, name, prefix string) string {
+	if t.Column != "" {
+		return prefix + t.Column
+	}
+	return prefix + tags.Snake(name)
+}
+
 func (m *model) remove(old *field) {
-	for i, f := range m.Fields {
-		if f == old {
-			m.Fields = append(m.Fields[:i], m.Fields[i+1:]...)
-			break
-		}
-	}
-	for k, f := range m.byName {
-		if f == old {
-			delete(m.byName, k)
-		}
-	}
+	m.Fields = slices.DeleteFunc(m.Fields, func(f *field) bool { return f == old })
+	m.via = slices.DeleteFunc(m.via, func(f *field) bool { return f == old })
+	maps.DeleteFunc(m.byName, func(_ string, f *field) bool { return f == old })
+	maps.DeleteFunc(m.byCol, func(_ string, f *field) bool { return f == old })
 }
 
 // isValue is whether a column can hold t: basic kinds, times, bytes, and

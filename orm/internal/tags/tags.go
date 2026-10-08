@@ -14,24 +14,39 @@ type Tags struct {
 	AutoNowAdd, AutoNow bool
 	Embedded, Computed  bool
 	Prefix              string
+	// Generated is a column the database computes from the model's
+	// Generated() expression (orm:"generated"); Vector a vector's
+	// dimensions (orm:"vector:1536").
+	Generated bool
+	Vector    int
 
 	// A relation: FK names the column holding the related row's key
-	// (orm:"fk:author_id", GORM's foreignKey on a belongs-to), Rel the
-	// related rows' column holding this row's key (orm:"rel:author_id",
-	// GORM's foreignKey on a has-many), M2M the table between
-	// (orm:"m2m:post_tags[,post_id,tag_id]", GORM's many2many).
-	FK, Rel, M2M string
+	// (orm:"fk:author_id"), Rel the related rows' column holding this
+	// row's key (orm:"rel:author_id"), M2M the table between
+	// (orm:"m2m:post_tags[,post_id,tag_id]", GORM's many2many) and
+	// JoinForeignKey and JoinReferences its columns for this row's key and
+	// the related row's. Related names the relation's inverse on the
+	// related model (orm:"related:members").
+	FK, Rel, M2M                   string
+	JoinForeignKey, JoinReferences string
+	Related                        string
+	// Path is a lookup path through relations the field is read at
+	// (orm:"team__name"): a column read through a relation, or what a
+	// Values struct's field takes.
+	Path string
 
 	// Schema: a UNIQUE column, a VARCHAR size, a database type of your
 	// own, an index, and what deleting the related row does to this one
 	// (on a foreign key: cascade, set_null, restrict).
 	Unique, Index bool
+	UniqueIndex   string // GORM's uniqueIndex name: columns sharing one are unique together
 	Size          int
 	Type          string
 	OnDelete      string
 	// GormForeignKey is GORM's foreignKey, a Go field name, read as FK or
-	// Rel by the field's shape.
-	GormForeignKey string
+	// Rel by the field's shape; References GORM's references, the Go
+	// field the key refers to.
+	GormForeignKey, References string
 }
 
 // Parse reads a field's column settings from its name, tag and whether
@@ -60,6 +75,10 @@ func Parse(name string, tag reflect.StructTag, isTime bool) Tags {
 				t.Embedded = true
 			case "computed":
 				t.Computed = true
+			case "generated":
+				t.Generated = true
+			case "vector":
+				t.Vector, _ = strconv.Atoi(val)
 			case "unique":
 				t.Unique = true
 			case "index":
@@ -75,9 +94,15 @@ func Parse(name string, tag reflect.StructTag, isTime bool) Tags {
 			case "rel":
 				t.Rel = val
 			case "m2m":
-				t.M2M = val
+				t.m2m(val)
+			case "related":
+				t.Related = val
 			case "prefix":
 				t.Prefix = val
+			default:
+				if strings.Contains(k, "__") && val == "" {
+					t.Path = k
+				}
 			}
 		}
 	}
@@ -108,8 +133,19 @@ func Parse(name string, tag reflect.StructTag, isTime bool) Tags {
 				t.Embedded = true
 			case "foreignkey":
 				t.GormForeignKey = val
+			case "references":
+				t.References = val
+			case "joinforeignkey":
+				if t.JoinForeignKey == "" {
+					t.JoinForeignKey = Snake(val)
+				}
+			case "joinreferences":
+				if t.JoinReferences == "" {
+					t.JoinReferences = Snake(val)
+				}
 			case "unique", "uniqueindex":
 				t.Unique = true
+				t.UniqueIndex, _, _ = strings.Cut(val, ",")
 			case "index":
 				t.Index = true
 			case "size":
@@ -140,6 +176,56 @@ func Parse(name string, tag reflect.StructTag, isTime bool) Tags {
 		case "UpdatedAt":
 			t.AutoNow = true
 		}
+	}
+	return t
+}
+
+// m2m reads orm's m2m:table[,local,remote].
+func (t *Tags) m2m(v string) {
+	parts := strings.Split(v, ",")
+	t.M2M = strings.TrimSpace(parts[0])
+	if len(parts) == 3 {
+		t.JoinForeignKey, t.JoinReferences = strings.TrimSpace(parts[1]), strings.TrimSpace(parts[2])
+	}
+}
+
+// Under is t as a names set reads it, v the field's tag of that set: "-"
+// for no such field there, a lookup path (profile__first_name) for a
+// column read through a relation, relation keys (foreignKey, references,
+// many2many, joinForeignKey, joinReferences, fk, rel, m2m, related) and
+// column merged over t's, else the field's column.
+func (t Tags) Under(v string) Tags {
+	t.Skip = v == "-"
+	switch {
+	case t.Skip:
+	case strings.Contains(v, ":"):
+		for part := range strings.SplitSeq(v, ";") {
+			k, val, _ := strings.Cut(strings.TrimSpace(part), ":")
+			switch strings.ToLower(k) {
+			case "column":
+				t.Column, t.Path = val, ""
+			case "foreignkey":
+				t.GormForeignKey, t.FK = val, ""
+			case "fk":
+				t.FK = val
+			case "rel":
+				t.Rel = val
+			case "references":
+				t.References = val
+			case "many2many", "m2m":
+				t.m2m(val)
+			case "joinforeignkey":
+				t.JoinForeignKey = val
+			case "joinreferences":
+				t.JoinReferences = val
+			case "related":
+				t.Related = val
+			}
+		}
+	case strings.Contains(v, "__"):
+		t.Column, t.Path = "", v
+	default:
+		t.Column, t.Path = v, ""
 	}
 	return t
 }

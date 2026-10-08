@@ -1,9 +1,12 @@
 package orm
 
 import (
+	"cmp"
 	"fmt"
 	"reflect"
+	"slices"
 	"strings"
+	"sync"
 
 	"github.com/paulmanoni/nexus/orm/internal/tags"
 )
@@ -17,27 +20,39 @@ const (
 )
 
 // relation is a field holding related rows: a pointer or struct for a
-// foreign key, a slice for reverse foreign keys and many-to-many.
+// foreign key, a slice for reverse foreign keys and many-to-many. An
+// inverse (see inverses) is one too, held by a field of its name or none.
 type relation struct {
-	Name   string // Go name
-	Index  []int
+	Name   string // Go name; an inverse's name
+	Index  []int  // nil for an inverse no field holds
 	Kind   relKind
 	Target reflect.Type // the related model's struct type
 	Ptr    bool         // the field (or the slice's elements) is a pointer
 	Slice  bool
-	// Single is a reverse foreign key holding one row (GORM's has-one):
-	// the related model holds this row's key, at most once.
-	Single bool
+	// Single is a reverse foreign key holding one row (GORM's has-one, a
+	// unique foreign key's inverse): the related model holds this row's
+	// key, at most once.
+	Single   bool
+	OnDelete string // a foreign key's: cascade, set_null, restrict
 
-	fkTag, relTag, m2mTag, gormFK string
-	OnDelete                      string // a foreign key's: cascade, set_null, restrict
-
-	// FK: the column of this model holding the key. Rev: the related
-	// model's column holding this row's key.
-	Column string
+	tag   tags.Tags
+	owner *model
+	// local is the owner's field the relation links on: a foreign key's
+	// column, else the key the related rows (or the table between) hold.
+	local *field
+	// remote names the related model's field the relation links on: the
+	// key a foreign key or a many-to-many refers to ("" its primary key),
+	// the column of rows held by many holding local ("" <Model>ID).
+	remote string
 	// M2M: the table between, its column for this row's key and for the
 	// related row's.
 	Through, ThroughLocal, ThroughRemote string
+	of                                   *relation // the relation an inverse is the other side of
+
+	once sync.Once
+	t    *model
+	rf   *field
+	err  error
 }
 
 // relationOf is the relation a field declares, or nil: a struct, a
@@ -47,7 +62,7 @@ func relationOf(sf reflect.StructField, index []int, t tags.Tags) *relation {
 		return nil
 	}
 	ft := sf.Type
-	r := &relation{Name: sf.Name, Index: index, fkTag: t.FK, relTag: t.Rel, m2mTag: t.M2M, gormFK: t.GormForeignKey, OnDelete: t.OnDelete}
+	r := &relation{Name: sf.Name, Index: index, tag: t, OnDelete: t.OnDelete}
 	if ft.Kind() == reflect.Slice {
 		r.Slice, ft = true, ft.Elem()
 	}
@@ -62,17 +77,30 @@ func relationOf(sf reflect.StructField, index []int, t tags.Tags) *relation {
 }
 
 func (m *model) addRelation(r *relation) {
+	r.owner = m
 	m.relList = append(m.relList, r)
 	m.rels[strings.ToLower(r.Name)] = r
 	m.rels[tags.Snake(r.Name)] = r
+	if m.Table != "-" {
+		declareRelation(r.Target, m.Type)
+	}
 }
 
 // relation is the relation a lookup step names, by Go field name (any
-// case) or snake_case.
+// case) or snake_case: a relation of the model's own, else an inverse.
 func (m *model) relation(name string) (*relation, bool) {
 	r, ok := m.rels[strings.ToLower(name)]
 	if !ok {
 		r, ok = m.rels[name]
+	}
+	if ok && r.Kind != 0 {
+		if _, _, err := r.ends(); err == nil {
+			return r, true
+		}
+	}
+	inv, _ := m.inverses()
+	if x, found := inv[strings.ToLower(name)]; found {
+		return x, true
 	}
 	return r, ok && r.Kind != 0
 }
@@ -80,97 +108,288 @@ func (m *model) relation(name string) (*relation, bool) {
 // settle decides what a relation is from its tags, else by convention:
 // Author *User with an AuthorID field is a foreign key; Posts []Post a
 // reverse foreign key on Post's <Model>ID. A field that is neither stays
-// out of the model, as before.
+// out of the model, as before. GORM's foreignKey and references name Go
+// fields: on a foreign key the field holding the key and the related
+// model's field it refers to, on rows held by many (or a has-one) their
+// field holding the key and this model's field it refers to.
 func (r *relation) settle(m *model) error {
-	switch {
-	case r.m2mTag != "":
-		r.Kind = relM2M
-		parts := strings.Split(r.m2mTag, ",")
-		r.Through = strings.TrimSpace(parts[0])
-		r.ThroughLocal = tags.Snake(m.Name) + "_id"
-		r.ThroughRemote = tags.Snake(r.Target.Name()) + "_id"
-		if len(parts) == 3 {
-			r.ThroughLocal, r.ThroughRemote = strings.TrimSpace(parts[1]), strings.TrimSpace(parts[2])
+	t := r.tag
+	key := func() error {
+		r.local = m.PK
+		if t.References != "" {
+			f, ok := m.field(t.References)
+			if !ok {
+				return fmt.Errorf("orm: %s.%s: references %s, no field of %s", m.Name, r.Name, t.References, m.Name)
+			}
+			r.local = f
 		}
+		if r.local == nil {
+			return fmt.Errorf("orm: %s.%s: %s has no primary key for the related rows to hold", m.Name, r.Name, m.Name)
+		}
+		return nil
+	}
+	switch {
+	case t.M2M != "":
+		r.Kind = relM2M
+		r.Through = t.M2M
+		r.ThroughLocal = cmp.Or(t.JoinForeignKey, tags.Snake(m.Name)+"_id")
+		r.ThroughRemote = cmp.Or(t.JoinReferences, tags.Snake(r.Target.Name())+"_id")
 		if !r.Slice {
 			return fmt.Errorf("orm: %s.%s is many-to-many but not a slice", m.Name, r.Name)
 		}
-		if m.PK == nil {
+		r.local, r.remote = m.PK, t.References
+		if t.GormForeignKey != "" {
+			f, ok := m.field(t.GormForeignKey)
+			if !ok {
+				return fmt.Errorf("orm: %s.%s: foreignKey %s is no field of %s", m.Name, r.Name, t.GormForeignKey, m.Name)
+			}
+			r.local = f
+		}
+		if r.local == nil {
 			return fmt.Errorf("orm: %s.%s: many-to-many needs %s's primary key", m.Name, r.Name, m.Name)
 		}
-	case r.fkTag != "" || (r.gormFK != "" && !r.Slice):
+	case t.FK != "" || (t.GormForeignKey != "" && !r.Slice):
 		r.Kind = relFK
-		r.Column = r.fkTag
-		if r.Column == "" {
-			f, ok := m.field(r.gormFK)
-			if !ok {
-				// GORM's has-one: the key is on the related model.
-				if m.PK == nil {
-					return fmt.Errorf("orm: %s.%s: foreignKey %s is no field of %s, and %s has no primary key for a has-one", m.Name, r.Name, r.gormFK, m.Name, m.Name)
-				}
-				r.Kind, r.Single = relRev, true
-				return nil
-			}
-			r.Column = f.Column
+		f, ok := m.field(cmp.Or(t.FK, t.GormForeignKey))
+		switch {
+		case !ok && t.FK != "":
+			return fmt.Errorf("orm: %s.%s: %s has no column %q", m.Name, r.Name, m.Name, t.FK)
+		case !ok:
+			// GORM's has-one: the key is on the related model.
+			r.Kind, r.Single, r.remote = relRev, true, t.GormForeignKey
+			return key()
 		}
-		if _, ok := m.field(r.Column); !ok {
-			return fmt.Errorf("orm: %s.%s: %s has no column %q", m.Name, r.Name, m.Name, r.Column)
-		}
+		r.local, r.remote = f, t.References
 		if r.Slice {
 			return fmt.Errorf("orm: %s.%s is a foreign key but a slice", m.Name, r.Name)
 		}
-	case r.relTag != "" || (r.gormFK != "" && r.Slice):
+	case t.Rel != "" || (t.GormForeignKey != "" && r.Slice):
 		r.Kind = relRev
-		r.Column = r.relTag // checked against the related model when it is used
+		r.remote = cmp.Or(t.Rel, t.GormForeignKey) // checked against the related model when it is used
 		if !r.Slice {
 			return fmt.Errorf("orm: %s.%s is a reverse foreign key but not a slice", m.Name, r.Name)
 		}
-		if m.PK == nil {
-			return fmt.Errorf("orm: %s.%s: a reverse foreign key needs %s's primary key", m.Name, r.Name, m.Name)
-		}
+		return key()
 	case !r.Slice:
 		if f, ok := m.field(r.Name + "ID"); ok {
-			r.Kind, r.Column = relFK, f.Column
+			r.Kind, r.local = relFK, f
 		}
 	default:
 		if m.PK != nil {
-			r.Kind = relRev // its column is found on the related model when used
+			r.Kind, r.local = relRev, m.PK // its column is found on the related model when used
 		}
 	}
 	return nil
 }
 
-// target is the related model.
-func (r *relation) target() (*model, error) {
-	t, err := modelOf(r.Target, "")
+// ends is the related model and its field the relation links on (see
+// remote), found once.
+func (r *relation) ends() (*model, *field, error) {
+	r.once.Do(func() { r.t, r.rf, r.err = r.resolve() })
+	return r.t, r.rf, r.err
+}
+
+func (r *relation) resolve() (*model, *field, error) {
+	m := r.owner
+	t, err := modelOf(r.Target, m.Names, "")
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	if t.PK == nil {
-		return nil, fmt.Errorf("orm: %s has no primary key to relate by", t.Name)
+		return nil, nil, fmt.Errorf("orm: %s has no primary key to relate by", t.Name)
 	}
-	return t, nil
-}
-
-// childColumn is a reverse relation's column on the related model:
-// tagged, GORM's foreignKey field, or <Model>ID by convention.
-func (r *relation) childColumn(m, child *model) (*field, error) {
 	switch {
-	case r.Column != "":
-		if f, ok := child.field(r.Column); ok {
-			return f, nil
+	case r.remote != "":
+		if f, ok := t.field(r.remote); ok {
+			return t, f, nil
 		}
-	case r.gormFK != "":
-		if f, ok := child.field(r.gormFK); ok {
-			return f, nil
+		return nil, nil, fmt.Errorf("orm: %s.%s: %s has no field %q", m.Name, r.Name, t.Name, r.remote)
+	case r.Kind == relRev:
+		if f, ok := t.field(m.Name + "ID"); ok {
+			return t, f, nil
 		}
-	default:
-		if f, ok := child.field(m.Name + "ID"); ok {
-			return f, nil
-		}
+		return nil, nil, fmt.Errorf("orm: %s.%s: %s has no column holding %s's key (tag it orm:\"rel:<column>\")", m.Name, r.Name, t.Name, m.Name)
 	}
-	return nil, fmt.Errorf("orm: %s.%s: %s has no column holding %s's key (tag it orm:\"rel:<column>\")", m.Name, r.Name, child.Name, m.Name)
+	return t, t.PK, nil
 }
 
-// one is whether the relation holds one row: a foreign key.
-func (r *relation) one() bool { return r.Kind == relFK }
+// one is whether the relation holds one row: a foreign key, or a has-one.
+func (r *relation) one() bool { return r.Kind == relFK || r.Single }
+
+// held is r's error when no field holds its rows: an inverse the model
+// declares no field of its name for.
+func (r *relation) held(m *model) error {
+	if r.Index != nil {
+		return nil
+	}
+	return fmt.Errorf("orm: %s has no field to hold %s, the inverse of %s.%s: declare one of that name", m.Name, r.Name, r.of.owner.Name, r.of.Name)
+}
+
+// declarers is, by model type, the types with relation fields to it:
+// the models whose relations imply its inverses.
+var declarers struct {
+	sync.Mutex
+	by  map[reflect.Type][]reflect.Type
+	ver int
+}
+
+func declareRelation(target, from reflect.Type) {
+	declarers.Lock()
+	defer declarers.Unlock()
+	if declarers.by == nil {
+		declarers.by = map[reflect.Type][]reflect.Type{}
+	}
+	if !slices.Contains(declarers.by[target], from) {
+		declarers.by[target] = append(declarers.by[target], from)
+		declarers.ver++
+	}
+}
+
+// inverses is the relations other models' foreign keys and many-to-manys
+// imply on m, Django's reverse relations, by name: rows held by many (one
+// for a unique foreign key), and many-to-manys back; and the names more
+// than one claims, with what claims them. An inverse m declares itself
+// is m's own relation, not a second one.
+func (m *model) inverses() (map[string]*relation, map[string][]string) {
+	declarers.Lock()
+	from, ver := slices.Clone(declarers.by[m.Type]), declarers.ver
+	declarers.Unlock()
+	m.invMu.Lock()
+	defer m.invMu.Unlock()
+	if m.inv != nil && m.invVer == ver {
+		return m.inv, m.clash
+	}
+	found := map[string][]*relation{}
+	for _, d := range from {
+		dm, err := modelOf(d, m.Names, "")
+		if err != nil {
+			continue
+		}
+		for _, r := range dm.relList {
+			if r.Target != m.Type || (r.Kind != relFK && r.Kind != relM2M) {
+				continue
+			}
+			if x, ok := r.inverse(m); ok && !m.declares(x) {
+				k := strings.ToLower(x.Name)
+				found[k] = append(found[k], x)
+			}
+		}
+	}
+	inv, clash := map[string]*relation{}, map[string][]string{}
+	for k, xs := range found {
+		var claims []string
+		if e, ok := m.rels[k]; ok && xs[0].Index == nil && e.Kind != 0 {
+			if _, _, err := e.ends(); err == nil {
+				claims = append(claims, "the field "+m.Name+"."+e.Name)
+			}
+		}
+		if len(xs) == 1 && claims == nil {
+			inv[k] = xs[0]
+			continue
+		}
+		for _, x := range xs {
+			claims = append(claims, x.of.owner.Name+"."+x.of.Name)
+		}
+		clash[k] = claims
+	}
+	m.inv, m.clash, m.invVer = inv, clash, ver
+	return inv, clash
+}
+
+// inverseName is the name of a foreign key's or many-to-many's inverse:
+// tagged related:, else the declaring model's in snake_case, plural
+// unless the foreign key is unique.
+func (r *relation) inverseName() string {
+	name := tags.Plural(tags.Snake(r.owner.Name))
+	if r.oneToOne() {
+		name = tags.Snake(r.owner.Name)
+	}
+	return cmp.Or(r.tag.Related, name)
+}
+
+// oneToOne is whether r is a foreign key whose column is unique by itself:
+// its inverse holds one row.
+func (r *relation) oneToOne() bool {
+	if r.Kind != relFK || !r.local.Unique {
+		return false
+	}
+	return r.local.UniqueIdx == "" || !slices.ContainsFunc(r.owner.Fields, func(f *field) bool {
+		return f != r.local && f.UniqueIdx == r.local.UniqueIdx
+	})
+}
+
+// inverse is r seen from its related model m: rows of r's model holding
+// m's key (one, for a unique foreign key), or a many-to-many back. A
+// field of m of its name that is no relation of its own holds it.
+func (r *relation) inverse(m *model) (*relation, bool) {
+	_, rf, err := r.ends()
+	if err != nil {
+		return nil, false
+	}
+	local, _ := m.field(rf.Name)
+	x := &relation{Name: r.inverseName(), Kind: relRev, Target: r.owner.Type, Slice: true, owner: m, local: local, of: r,
+		Through: r.Through, ThroughLocal: r.ThroughRemote, ThroughRemote: r.ThroughLocal}
+	if r.Kind == relM2M {
+		x.Kind = relM2M
+	} else if r.oneToOne() {
+		x.Single, x.Slice = true, false
+	}
+	x.once.Do(func() { x.t, x.rf = r.owner, r.local })
+	if e, ok := m.rels[strings.ToLower(x.Name)]; ok && e.Target == x.Target && e.Slice == x.Slice {
+		if _, _, err := e.ends(); e.Kind == 0 || err != nil {
+			x.Index, x.Ptr = e.Index, e.Ptr
+		}
+	}
+	return x, true
+}
+
+// declares is whether m declares x itself: a relation of its own to the
+// same rows by the same columns.
+func (m *model) declares(x *relation) bool {
+	for _, e := range m.relList {
+		if e.Target != x.Target || e.Kind != x.Kind {
+			continue
+		}
+		if x.Kind == relM2M {
+			if e.Through == x.Through && e.ThroughLocal == x.ThroughLocal && e.ThroughRemote == x.ThroughRemote {
+				return true
+			}
+			continue
+		}
+		if _, rf, err := e.ends(); err == nil && rf.Column == x.rf.Column && e.local.Column == x.local.Column {
+			return true
+		}
+	}
+	return false
+}
+
+// check is what keeps m from mapping onto its names set: relations to no
+// model or by no field, fields read through no relation, inverse names
+// claimed twice.
+func (m *model) check() []error {
+	var errs []error
+	for _, r := range m.relList {
+		if got, _ := m.relation(r.Name); r.Kind == 0 || got != r {
+			continue
+		}
+		t, _, err := r.ends()
+		if err != nil {
+			errs = append(errs, err)
+			continue
+		}
+		if r.Kind == relRev {
+			continue
+		}
+		name := r.inverseName()
+		if _, clash := t.inverses(); slices.Contains(clash[strings.ToLower(name)], m.Name+"."+r.Name) {
+			errs = append(errs, fmt.Errorf("orm: %s's inverse %q is claimed by %s: give each its own orm:\"related:<name>\"", t.Name, name, strings.Join(clash[strings.ToLower(name)], " and ")))
+		}
+	}
+	b := newBuilder(DialectFor(""), m)
+	for _, f := range m.via {
+		if _, err := b.ref(f.Via); err != nil {
+			errs = append(errs, fmt.Errorf("orm: %s.%s is read through %s: %w", m.Name, f.Name, f.Via, err))
+		}
+	}
+	return errs
+}

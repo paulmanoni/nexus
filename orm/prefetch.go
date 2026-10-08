@@ -76,7 +76,10 @@ func prefetch(ctx context.Context, c conn, m *model, parents []reflect.Value, sp
 }
 
 func fetchRelated(ctx context.Context, c conn, m *model, r *relation, parents []reflect.Value, custom *query, nested []PrefetchSpec) error {
-	t, err := r.target()
+	if err := r.held(m); err != nil {
+		return err
+	}
+	t, _, err := r.ends()
 	if err != nil {
 		return err
 	}
@@ -89,91 +92,65 @@ func fetchRelated(ctx context.Context, c conn, m *model, r *relation, parents []
 		base.limit, base.offset = 0, 0
 	}
 	base.prefetch = append(base.prefetch, nested...)
-	load := func(field string, keys []any) ([]reflect.Value, error) {
-		var out []reflect.Value
-		for chunk := range slices.Chunk(keys, prefetchChunk) {
-			q := base.clone()
-			q.where = append(q.where, Q{field + "__in": chunk})
-			rows, err := q.all(ctx, c)
-			if err != nil {
-				return nil, err
-			}
-			out = append(out, rows...)
-		}
-		return out, nil
+	byKey, err := related(ctx, c, r, base, distinctKeys(parents, r.local))
+	if err != nil {
+		return err
 	}
-	switch r.Kind {
-	case relFK:
-		fk, _ := m.field(r.Column)
-		keys := distinctKeys(parents, fk)
-		rows, err := load(t.PK.Name, keys)
-		if err != nil {
-			return err
+	for _, p := range parents {
+		got := byKey[key(p, r.local)]
+		switch {
+		case !r.one():
+			setMany(fieldOf(p, r.Index), r, got)
+		case len(got) > 0:
+			setOne(fieldOf(p, r.Index), r, got[0])
 		}
-		byKey := map[any]reflect.Value{}
-		for _, row := range rows {
-			byKey[key(row.Elem(), t.PK)] = row
+	}
+	return nil
+}
+
+// related is a relation's rows (pointers), read by base, a query of the
+// related model, by the key of the parent holding them: keys, values of
+// the parents' r.local.
+func related(ctx context.Context, c conn, r *relation, base query, keys []any) (map[any][]reflect.Value, error) {
+	_, rf, err := r.ends()
+	if err != nil {
+		return nil, err
+	}
+	var pairs [][2]any
+	if r.Kind == relM2M {
+		if pairs, err = throughPairs(ctx, c, r, keys); err != nil {
+			return nil, err
 		}
-		for _, p := range parents {
-			if row, ok := byKey[key(p, fk)]; ok {
-				setOne(fieldOf(p, r.Index), r, row)
-			}
-		}
-	case relRev:
-		col, err := r.childColumn(m, t)
-		if err != nil {
-			return err
-		}
-		rows, err := load(col.Name, distinctKeys(parents, m.PK))
-		if err != nil {
-			return err
-		}
-		byKey := map[any][]reflect.Value{}
-		for _, row := range rows {
-			k := key(row.Elem(), col)
-			byKey[k] = append(byKey[k], row)
-		}
-		for _, p := range parents {
-			if r.Single {
-				if rows := byKey[key(p, m.PK)]; len(rows) > 0 {
-					setOne(fieldOf(p, r.Index), r, rows[0])
-				}
-				continue
-			}
-			setMany(fieldOf(p, r.Index), r, byKey[key(p, m.PK)])
-		}
-	case relM2M:
-		pairs, err := throughPairs(ctx, c, r, distinctKeys(parents, m.PK))
-		if err != nil {
-			return err
-		}
-		var remotes []any
+		keys = nil
 		seen := map[any]bool{}
 		for _, pr := range pairs {
 			if !seen[pr[1]] {
 				seen[pr[1]] = true
-				remotes = append(remotes, pr[1])
+				keys = append(keys, pr[1])
 			}
-		}
-		rows, err := load(t.PK.Name, remotes)
-		if err != nil {
-			return err
-		}
-		byKey := map[any]reflect.Value{}
-		for _, row := range rows {
-			byKey[key(row.Elem(), t.PK)] = row
-		}
-		byLocal := map[any][]reflect.Value{}
-		for _, pr := range pairs {
-			if row, ok := byKey[pr[1]]; ok {
-				byLocal[pr[0]] = append(byLocal[pr[0]], row)
-			}
-		}
-		for _, p := range parents {
-			setMany(fieldOf(p, r.Index), r, byLocal[key(p, m.PK)])
 		}
 	}
-	return nil
+	out := map[any][]reflect.Value{}
+	for chunk := range slices.Chunk(keys, prefetchChunk) {
+		q := base.clone()
+		q.where = append(q.where, Q{rf.Name + "__in": chunk})
+		rows, err := q.all(ctx, c)
+		if err != nil {
+			return nil, err
+		}
+		for _, row := range rows {
+			k := key(row.Elem(), rf)
+			out[k] = append(out[k], row)
+		}
+	}
+	if r.Kind != relM2M {
+		return out, nil
+	}
+	byLocal := map[any][]reflect.Value{}
+	for _, pr := range pairs {
+		byLocal[pr[0]] = append(byLocal[pr[0]], out[pr[1]]...)
+	}
+	return byLocal, nil
 }
 
 // throughPairs is the (local, remote) keys of a many-to-many table for

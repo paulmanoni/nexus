@@ -12,6 +12,7 @@ func init() {
 	orm.RegisterScanner[Author]([]string{"id", "name", "profile_id"}, func() orm.RowScanner[Author] { return new(ormScanAuthor) })
 	orm.RegisterScanner[AuthorStats]([]string{"id", "name"}, func() orm.RowScanner[AuthorStats] { return new(ormScanAuthorStats) })
 	orm.RegisterScanner[Book]([]string{"id", "title", "author_id", "published"}, func() orm.RowScanner[Book] { return new(ormScanBook) })
+	orm.RegisterScanner[Doc]([]string{"id", "title", "body", "search", "embedding"}, func() orm.RowScanner[Doc] { return new(ormScanDoc) })
 	orm.RegisterScanner[Member]([]string{"group_id", "user_id"}, func() orm.RowScanner[Member] { return new(ormScanMember) })
 	orm.RegisterScanner[Post]([]string{"id", "headline", "author_id"}, func() orm.RowScanner[Post] { return new(ormScanPost) })
 	orm.RegisterScanner[Profile]([]string{"id", "bio"}, func() orm.RowScanner[Profile] { return new(ormScanProfile) })
@@ -221,6 +222,59 @@ func (s BookFieldSet) Author() AuthorFieldSet {
 // Tags is the fields of Book's Tags, for lookups across the relation.
 func (s BookFieldSet) Tags() TagFieldSet {
 	return TagFieldSet{}.Under(s.p + "tags__")
+}
+
+type ormScanDoc struct {
+	c0   orm.Cell[int64]
+	c1   orm.Cell[string]
+	c2   orm.Cell[string]
+	c3   orm.Cell[string]
+	c4   orm.Cell[orm.Vector]
+	dest []any
+}
+
+func (s *ormScanDoc) Dest() []any {
+	if s.dest == nil {
+		s.dest = []any{&s.c0, &s.c1, &s.c2, &s.c3, &s.c4}
+	}
+	return s.dest
+}
+
+func (s *ormScanDoc) Bind(r *Doc) {
+	s.c0.P = &r.ID
+	s.c1.P = &r.Title
+	s.c2.P = &r.Body
+	s.c3.P = (*string)(&r.Search)
+	s.c4.P = &r.Embedding
+}
+
+func (s *ormScanDoc) Values(r *Doc, dst []any) []any {
+	return append(dst[:0], r.ID, r.Title, r.Body, r.Search, r.Embedding)
+}
+
+// DocFields is Doc's fields as typed lookups.
+var DocFields = DocFieldSet{}.Under("")
+
+// DocFieldSet is Doc's fields as typed lookups: DocFields from the model itself, Under from a model related to it.
+type DocFieldSet struct {
+	p         string
+	ID        orm.Field[int64]
+	Title     orm.TextField[string]
+	Body      orm.TextField[string]
+	Search    orm.TextField[orm.TSVector]
+	Embedding orm.Field[orm.Vector]
+}
+
+// Under is the set through a relation path, such as "author__".
+func (s DocFieldSet) Under(prefix string) DocFieldSet {
+	return DocFieldSet{
+		p:         prefix,
+		ID:        orm.FieldAt[int64](prefix + "id"),
+		Title:     orm.TextFieldAt[string](prefix + "title"),
+		Body:      orm.TextFieldAt[string](prefix + "body"),
+		Search:    orm.TextFieldAt[orm.TSVector](prefix + "search"),
+		Embedding: orm.FieldAt[orm.Vector](prefix + "embedding"),
+	}
 }
 
 type ormScanMember struct {

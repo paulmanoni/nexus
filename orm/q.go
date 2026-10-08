@@ -23,8 +23,9 @@ type Cond interface {
 //	orm.Q{"age__gte": 18, "name__icontains": "a", "email": e}
 //
 // Lookups: exact (the default), iexact, contains, icontains, startswith,
-// istartswith, endswith, iendswith, in, gt, gte, lt, lte, range, isnull.
-// A nil value with exact means IS NULL.
+// istartswith, endswith, iendswith, in, gt, gte, lt, lte, range, isnull,
+// search (full text, in web search syntax; see SearchQuery) and
+// trigram_similar. A nil value with exact means IS NULL.
 type Q map[string]any
 
 func (q Q) sql(b *builder) (string, error) {
@@ -96,7 +97,7 @@ var lookups = map[string]bool{
 	"exact": true, "iexact": true, "contains": true, "icontains": true,
 	"startswith": true, "istartswith": true, "endswith": true, "iendswith": true,
 	"in": true, "gt": true, "gte": true, "lt": true, "lte": true,
-	"range": true, "isnull": true,
+	"range": true, "isnull": true, "search": true, "trigram_similar": true,
 }
 
 // stmt is what the builders of one statement share: its arguments and a
@@ -126,6 +127,8 @@ type builder struct {
 	joins *[]joinClause
 	outer *builder // the query a subquery's OuterRef reads
 	neg   bool     // under an odd number of Nots
+	many  bool     // names may follow relations holding many rows (Values)
+	ddl   bool     // columns bare, for an index's or a generated column's expression
 }
 
 // newBuilder is a builder of a statement on m, aliased by its table.
@@ -154,7 +157,12 @@ func (b *builder) arg(v any) string {
 func (b *builder) args() []any { return b.st.args }
 
 // col is a column of b's model, qualified by its alias.
-func (b *builder) col(f *field) string { return b.d.Quote(b.alias) + "." + b.d.Quote(f.Column) }
+func (b *builder) col(f *field) string {
+	if b.ddl {
+		return b.d.Quote(f.Column)
+	}
+	return b.d.Quote(b.alias) + "." + b.d.Quote(f.Column)
+}
 
 // bare is a column unqualified, as UPDATE's SET names it.
 func (b *builder) bare(f *field) string { return b.d.Quote(f.Column) }
@@ -172,10 +180,11 @@ func (b *builder) from() string {
 	return s
 }
 
-// follow is the builder of the model a foreign key leads to, joining it
-// once per path.
+// follow is the builder of the model a relation leads to, LEFT JOINed
+// once per path: a foreign key's row, or, for Values, rows held by many
+// (through the table between, for a many-to-many).
 func (b *builder) follow(r *relation) (*builder, error) {
-	t, err := r.target()
+	t, rf, err := r.ends()
 	if err != nil {
 		return nil, err
 	}
@@ -184,18 +193,20 @@ func (b *builder) follow(r *relation) (*builder, error) {
 	if alias == b.joinRoot() {
 		alias += "_"
 	}
-	fk, ok := b.m.field(r.Column)
-	if !ok {
-		return nil, fmt.Errorf("orm: %s has no column %q", b.m.Name, r.Column)
-	}
-	nb := &builder{d: b.d, m: t, alias: alias, path: path, st: b.st, joins: b.joins, outer: b.outer, neg: b.neg}
+	nb := &builder{d: b.d, m: t, alias: alias, path: path, st: b.st, joins: b.joins, outer: b.outer, neg: b.neg, many: b.many}
 	for _, j := range *b.joins {
 		if j.path == path {
 			return nb, nil
 		}
 	}
-	*b.joins = append(*b.joins, joinClause{path: path, sql: " LEFT JOIN " + b.d.Quote(t.Table) + " AS " + b.d.Quote(alias) +
-		" ON " + nb.col(t.PK) + " = " + b.col(fk)})
+	q := b.d.Quote
+	join, on := "", nb.col(rf)+" = "+b.col(r.local)
+	if r.Kind == relM2M {
+		through := q(alias + "_through")
+		join = " LEFT JOIN " + q(r.Through) + " AS " + through + " ON " + through + "." + q(r.ThroughLocal) + " = " + b.col(r.local)
+		on = nb.col(rf) + " = " + through + "." + q(r.ThroughRemote)
+	}
+	*b.joins = append(*b.joins, joinClause{path: path, sql: join + " LEFT JOIN " + q(t.Table) + " AS " + q(alias) + " ON " + on})
 	return nb, nil
 }
 
@@ -210,43 +221,54 @@ func (b *builder) joinRoot() string {
 // ref is a name as SQL: an annotation's expression, a field's column, or
 // a path through foreign keys to one (author__name).
 func (b *builder) ref(name string) (string, error) {
+	s, _, err := b.refField(name)
+	return s, err
+}
+
+// refField is ref and the field it reads, nil for an annotation.
+func (b *builder) refField(name string) (string, *field, error) {
 	if e, ok := b.ann[name]; ok {
 		if b.depth > 16 {
-			return "", fmt.Errorf("orm: annotation %q refers to itself", name)
+			return "", nil, fmt.Errorf("orm: annotation %q refers to itself", name)
 		}
 		b.depth++
 		defer func() { b.depth-- }()
 		s, err := e.exprSQL(b)
 		if err != nil {
-			return "", err
+			return "", nil, err
 		}
-		return "(" + s + ")", nil
+		return "(" + s + ")", nil, nil
 	}
 	parts := strings.Split(name, "__")
 	cur := b
 	for i, part := range parts {
 		last := i == len(parts)-1
 		if f, ok := cur.m.field(part); ok && last {
-			return cur.col(f), nil
+			if f.Via != "" {
+				return cur.refField(f.Via)
+			}
+			return cur.col(f), f, nil
 		}
 		r, ok := cur.m.relation(part)
 		if !ok {
 			break
 		}
-		if !r.one() {
-			return "", fmt.Errorf("orm: %s.%s holds many rows: it can't be read as one value", cur.m.Name, r.Name)
+		if !r.one() && !cur.many {
+			return "", nil, fmt.Errorf("orm: %s.%s holds many rows: it can't be read as one value", cur.m.Name, r.Name)
 		}
-		if last {
-			f, _ := cur.m.field(r.Column)
-			return cur.col(f), nil
+		if last && r.Kind == relFK {
+			return cur.col(r.local), r.local, nil
 		}
 		next, err := cur.follow(r)
 		if err != nil {
-			return "", err
+			return "", nil, err
+		}
+		if last {
+			return next.col(next.m.PK), next.m.PK, nil
 		}
 		cur = next
 	}
-	return "", fmt.Errorf("orm: %s has no field %q", b.m.Name, name)
+	return "", nil, fmt.Errorf("orm: %s has no field %q", b.m.Name, name)
 }
 
 // lookup is the SQL of one Q entry: a field (after any foreign keys) and
@@ -270,6 +292,13 @@ func (b *builder) lookup(key string, v any) (string, error) {
 	for i := 0; i < len(parts); i++ {
 		part := parts[i]
 		if f, ok := cur.m.field(part); ok {
+			if f.Via != "" {
+				return cur.lookup(strings.Join(append(strings.Split(f.Via, "__"), parts[i+1:]...), "__")+"__"+lookup, v)
+			}
+			if lookup == "search" && i == len(parts)-1 {
+				g, tsv, config := cur.m.searchFor(f)
+				return cur.search(cur.col(g), tsv, config, fmt.Sprint(v))
+			}
 			s, err := cur.transformed(cur.col(f), parts[i+1:], lookup, v, key)
 			return cur.nullSafe(s, f, lookup, v), err
 		}
@@ -279,16 +308,19 @@ func (b *builder) lookup(key string, v any) (string, error) {
 		}
 		rest := parts[i+1:]
 		if r.one() {
-			if len(rest) == 0 {
-				f, _ := cur.m.field(r.Column)
-				s, err := cur.compare(cur.col(f), lookup, v, key)
-				return cur.nullSafe(s, f, lookup, v), err
+			if len(rest) == 0 && r.Kind == relFK {
+				s, err := cur.compare(cur.col(r.local), lookup, v, key)
+				return cur.nullSafe(s, r.local, lookup, v), err
 			}
 			next, err := cur.follow(r)
 			if err != nil {
 				return "", err
 			}
 			cur = next
+			if len(rest) == 0 {
+				s, err := cur.compare(cur.col(cur.m.PK), lookup, v, key)
+				return cur.nullSafe(s, cur.m.PK, lookup, v), err
+			}
 			continue
 		}
 		return cur.exists(r, rest, lookup, v, key)
@@ -330,27 +362,19 @@ func (b *builder) transformed(col string, steps []string, lookup string, v any, 
 // related row matching the rest of the key. With no rest, isnull asks
 // whether there is none.
 func (b *builder) exists(r *relation, rest []string, lookup string, v any, key string) (string, error) {
-	t, err := r.target()
+	t, rf, err := r.ends()
 	if err != nil {
 		return "", err
 	}
 	b.st.n++
 	alias := "nexus_" + strconv.Itoa(b.st.n)
 	child := &builder{d: b.d, m: t, alias: alias, path: alias, st: b.st, joins: &[]joinClause{}, outer: b.outer}
-	var from, link string
-	switch r.Kind {
-	case relRev:
-		col, err := r.childColumn(b.m, t)
-		if err != nil {
-			return "", err
-		}
-		from = b.d.Quote(t.Table) + " AS " + b.d.Quote(alias)
-		link = child.col(col) + " = " + b.col(b.m.PK)
-	case relM2M:
-		through := alias + "_through"
-		from = b.d.Quote(r.Through) + " AS " + b.d.Quote(through) + " JOIN " + b.d.Quote(t.Table) + " AS " + b.d.Quote(alias) +
-			" ON " + child.col(t.PK) + " = " + b.d.Quote(through) + "." + b.d.Quote(r.ThroughRemote)
-		link = b.d.Quote(through) + "." + b.d.Quote(r.ThroughLocal) + " = " + b.col(b.m.PK)
+	from := b.d.Quote(t.Table) + " AS " + b.d.Quote(alias)
+	link := child.col(rf) + " = " + b.col(r.local)
+	if r.Kind == relM2M {
+		through := b.d.Quote(alias + "_through")
+		from = b.d.Quote(r.Through) + " AS " + through + " JOIN " + from + " ON " + child.col(rf) + " = " + through + "." + b.d.Quote(r.ThroughRemote)
+		link = through + "." + b.d.Quote(r.ThroughLocal) + " = " + b.col(r.local)
 	}
 	if len(rest) == 0 {
 		if lookup != "isnull" {
@@ -482,6 +506,10 @@ func (b *builder) compare(col, lookup string, v any, key string) (string, error)
 			}
 		}
 		return col + " IN (" + strings.Join(marks, ", ") + ")", nil
+	case "search":
+		return b.search(col, false, "", fmt.Sprint(v))
+	case "trigram_similar":
+		return b.trigramSimilar(col, fmt.Sprint(v)), nil
 	case "range":
 		items, err := list(v)
 		if err != nil || len(items) != 2 {

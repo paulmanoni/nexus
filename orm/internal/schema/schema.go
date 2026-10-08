@@ -38,6 +38,9 @@ type Column struct {
 	Index    bool   `json:"index,omitempty"`
 	Size     int    `json:"size,omitempty"`
 	Type     string `json:"type,omitempty"` // a database type of the model's own
+	// Generated is the expression a stored generated column is computed
+	// by, as the dialect writes it.
+	Generated string `json:"generated,omitempty"`
 }
 
 // ForeignKey is a column referring to another table's key.
@@ -48,11 +51,20 @@ type ForeignKey struct {
 	OnDelete string `json:"onDelete,omitempty"` // cascade, set_null, restrict
 }
 
-// Table is a table: its columns in order, its foreign keys.
+// Index is an index the model declares (GIN, HNSW, FULLTEXT, …), as the
+// statement creating it on the dialect.
+type Index struct {
+	Name string `json:"name"`
+	SQL  string `json:"sql"`
+}
+
+// Table is a table: its columns in order, its foreign keys, its declared
+// indexes.
 type Table struct {
 	Name    string       `json:"name"`
 	Columns []Column     `json:"columns"`
 	FKs     []ForeignKey `json:"fks,omitempty"`
+	Indexes []Index      `json:"indexes,omitempty"`
 }
 
 // Dialect is how a database writes the schema.
@@ -125,6 +137,9 @@ func (d Dialect) Type(c Column) string {
 // columnSQL is a column's definition in CREATE TABLE or ADD COLUMN.
 func (d Dialect) columnSQL(c Column, singlePK bool) string {
 	s := d.Quote(c.Name) + " " + d.Type(c)
+	if c.Generated != "" {
+		return s + " GENERATED ALWAYS AS (" + c.Generated + ") STORED"
+	}
 	if c.PK && singlePK {
 		s += " PRIMARY KEY"
 		if c.Auto {
@@ -198,6 +213,13 @@ func (d Dialect) Create(t Table, ifNotExists bool) []string {
 		if c.Index && !c.Unique && !c.PK {
 			out = append(out, d.createIndex(t.Name, c.Name, ifNotExists))
 		}
+	}
+	for _, ix := range t.Indexes {
+		s := ix.SQL
+		if ifNotExists && d.Name != "mysql" {
+			s = strings.Replace(s, "CREATE INDEX ", "CREATE INDEX IF NOT EXISTS ", 1)
+		}
+		out = append(out, s)
 	}
 	return out
 }
@@ -302,13 +324,18 @@ func (d Dialect) alter(o, t Table) []Step {
 				// A NOT NULL column added to rows that exist needs a value.
 				note = "adds NOT NULL column " + t.Name + "." + c.Name + ": give existing rows a value (a DEFAULT) if the table has any"
 			}
+			if c.Generated != "" && d.Name == "sqlite" {
+				note = "SQLite can't add the stored generated column " + t.Name + "." + c.Name + " to an existing table: rebuild the table"
+			}
 			steps = append(steps, Step{SQL: "ALTER TABLE " + tq + " ADD COLUMN " + d.columnSQL(def, false), Note: note})
 			if c.Index && !c.Unique {
 				steps = append(steps, Step{SQL: d.createIndex(t.Name, c.Name, false)})
 			}
 			continue
 		}
-		if d.Type(oc) != d.Type(c) || oc.Nullable != c.Nullable {
+		if oc.Generated != c.Generated {
+			steps = append(steps, Step{Note: "the expression generating " + t.Name + "." + c.Name + " changed: drop the column and add it again"})
+		} else if d.Type(oc) != d.Type(c) || oc.Nullable != c.Nullable {
 			steps = append(steps, d.changeColumn(t.Name, oc, c)...)
 		}
 		if oc.Unique != c.Unique {
@@ -331,6 +358,25 @@ func (d Dialect) alter(o, t Table) []Step {
 			steps = append(steps, Step{SQL: "ALTER TABLE " + tq + " DROP COLUMN " + d.Quote(c.Name), Note: "drops column " + t.Name + "." + c.Name + " and its data; if it was renamed, write the rename instead"})
 		}
 	}
+	oldIx := map[string]string{}
+	for _, ix := range o.Indexes {
+		oldIx[ix.Name] = ix.SQL
+	}
+	newIx := map[string]bool{}
+	for _, ix := range t.Indexes {
+		newIx[ix.Name] = true
+		switch was, ok := oldIx[ix.Name]; {
+		case !ok:
+			steps = append(steps, Step{SQL: ix.SQL})
+		case was != ix.SQL:
+			steps = append(steps, Step{SQL: d.dropNamedIndex(t.Name, ix.Name)}, Step{SQL: ix.SQL})
+		}
+	}
+	for _, ix := range o.Indexes {
+		if !newIx[ix.Name] {
+			steps = append(steps, Step{SQL: d.dropNamedIndex(t.Name, ix.Name)})
+		}
+	}
 	oldFK := map[ForeignKey]bool{}
 	for _, fk := range o.FKs {
 		oldFK[fk] = true
@@ -349,10 +395,14 @@ func (d Dialect) alter(o, t Table) []Step {
 }
 
 func (d Dialect) dropIndex(table, col string) string {
+	return d.dropNamedIndex(table, d.indexName(table, col))
+}
+
+func (d Dialect) dropNamedIndex(table, name string) string {
 	if d.Name == "mysql" {
-		return "DROP INDEX " + d.Quote(d.indexName(table, col)) + " ON " + d.Quote(table)
+		return "DROP INDEX " + d.Quote(name) + " ON " + d.Quote(table)
 	}
-	return "DROP INDEX " + d.Quote(d.indexName(table, col))
+	return "DROP INDEX " + d.Quote(name)
 }
 
 func (d Dialect) changeColumn(table string, o, c Column) []Step {

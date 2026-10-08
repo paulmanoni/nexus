@@ -2,7 +2,11 @@ package orm
 
 import (
 	"reflect"
+	"slices"
+	"strings"
 	"testing"
+
+	"github.com/paulmanoni/nexus/orm/internal/schema"
 )
 
 type SQLBase struct {
@@ -45,7 +49,7 @@ func TestSQL(t *testing.T) {
 }
 
 func TestPointerEmbed(t *testing.T) {
-	m, err := modelOf(reflect.TypeFor[sqlUser](), "")
+	m, err := modelOf(reflect.TypeFor[sqlUser](), "", "")
 	if err != nil || m.PK == nil || m.PK.Column != "id" {
 		t.Fatalf("model = %+v, %v", m, err)
 	}
@@ -90,7 +94,7 @@ type hiddenPtr struct {
 }
 
 func TestUnexportedPointerEmbed(t *testing.T) {
-	if _, err := modelOf(reflect.TypeFor[hiddenPtr](), ""); err == nil {
+	if _, err := modelOf(reflect.TypeFor[hiddenPtr](), "", ""); err == nil {
 		t.Fatal("an unexported *embed was accepted")
 	}
 }
@@ -119,5 +123,158 @@ func TestFunctionSQL(t *testing.T) {
 	}
 	if _, err := SQL("{2}", 1).exprSQL(b); err == nil {
 		t.Fatal("a missing argument was accepted")
+	}
+}
+
+type sqlDoc struct {
+	ID        int64
+	Title     string
+	Body      string
+	Search    TSVector `orm:"generated"`
+	Embedding Vector   `orm:"vector:3"`
+}
+
+func (sqlDoc) Generated() map[string]Expr {
+	return map[string]Expr{"Search": SearchVector("title").Weight("A").Add(SearchVector("body").Weight("B")).Config("english")}
+}
+
+func (sqlDoc) Indexes() []Index {
+	return []Index{GinIndex("search"), GinIndex("title").Trigram(), HnswIndex("embedding").Ops(Cosine).M(16).EfConstruction(64),
+		IvfflatIndex("embedding").Lists(100).Name("docs_ivf"), FullTextIndex("body").Config("english")}
+}
+
+// sqlNote is sqlDoc as MySQL can hold it: no vector, a FULLTEXT index.
+type sqlNote struct {
+	ID     int64
+	Title  string
+	Body   string
+	Search TSVector `orm:"generated"`
+}
+
+func (sqlNote) Generated() map[string]Expr {
+	return map[string]Expr{"Search": SearchVector("title", "body").Config("english")}
+}
+
+func (sqlNote) Indexes() []Index {
+	return []Index{FullTextIndex("search"), FullTextIndex("title", "body").Name("notes_text")}
+}
+
+func searchModel(t *testing.T, of any, table string) *model {
+	t.Helper()
+	m, err := modelOf(reflect.TypeOf(of), "", table)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return m
+}
+
+func TestSearchSQL(t *testing.T) {
+	doc := SearchVector("title").Weight("A").Add(SearchVector("body"))
+	q := SearchQuery("go -java")
+	for _, c := range []struct {
+		m     *model
+		d     Dialect
+		where string
+		refs  []string
+	}{
+		{searchModel(t, sqlDoc{}, "docs"), postgres{},
+			`WHERE (("docs"."search" @@ websearch_to_tsquery('english', $1) AND "docs"."search" @@ websearch_to_tsquery('english', $2) AND "docs"."title" % $3) AND (setweight(to_tsvector(COALESCE("docs"."title", '')), 'A') || to_tsvector(COALESCE("docs"."body", ''))) @@ websearch_to_tsquery($4))`,
+			[]string{
+				`(ts_rank((setweight(to_tsvector(COALESCE("docs"."title", '')), 'A') || to_tsvector(COALESCE("docs"."body", ''))), websearch_to_tsquery($5)))`,
+				`(ts_headline(COALESCE("docs"."body", ''), websearch_to_tsquery($6)))`,
+				`(("docs"."embedding" <=> $7))`,
+				`((1.0 / (60 + ROW_NUMBER() OVER (ORDER BY (ts_rank((setweight(to_tsvector(COALESCE("docs"."title", '')), 'A') || to_tsvector(COALESCE("docs"."body", ''))), websearch_to_tsquery($8))) DESC)) + 1.0 / (60 + ROW_NUMBER() OVER (ORDER BY (("docs"."embedding" <=> $9)) ASC))))`,
+				`(similarity("docs"."title", $10))`,
+			}},
+		{searchModel(t, sqlNote{}, "notes"), mysql{},
+			"WHERE ((MATCH(`notes`.`search`) AGAINST(? IN NATURAL LANGUAGE MODE) AND MATCH(`notes`.`search`) AGAINST(? IN NATURAL LANGUAGE MODE) AND LOWER(`notes`.`title`) LIKE LOWER(?) ESCAPE '!') AND MATCH(`notes`.`title`, `notes`.`body`) AGAINST(? IN NATURAL LANGUAGE MODE))",
+			[]string{
+				"(MATCH(`notes`.`title`, `notes`.`body`) AGAINST(? IN NATURAL LANGUAGE MODE))",
+				"(SUBSTRING(`notes`.`body`, GREATEST(1, LOCATE(?, `notes`.`body`) - 40), 160))",
+			}},
+	} {
+		qs := query{m: c.m, where: []Cond{Q{"title__search": "go", "body__search": "web", "title__trigram_similar": "gp"}, Match(doc, q)}}
+		b := qs.builder(c.d)
+		b.ann = map[string]Expr{"rank": SearchRank(doc, q), "head": Headline("body", q), "d": CosineDistance("embedding", Vector{1, 2}), "sim": Similarity("title", "go")}
+		b.ann["score"] = Fuse("-rank", "d")
+		w, err := qs.whereSQL(b)
+		if err != nil || w != " "+c.where {
+			t.Errorf("%s where:\n got %s\nwant %s (%v)", c.d.Name(), w, " "+c.where, err)
+		}
+		for i, name := range []string{"rank", "head", "d", "score", "sim"}[:len(c.refs)] {
+			if s, err := b.ref(name); err != nil || s != c.refs[i] {
+				t.Errorf("%s %s:\n got %s\nwant %s (%v)", c.d.Name(), name, s, c.refs[i], err)
+			}
+		}
+	}
+	b := newBuilder(mysql{}, searchModel(t, sqlNote{}, "notes"))
+	b.ann = map[string]Expr{"sim": Similarity("title", "go")}
+	if _, err := b.ref("sim"); err == nil {
+		t.Error("Similarity on MySQL")
+	}
+	if got, _ := (Vector{1, 0.5, -2}).Value(); got != "[1,0.5,-2]" {
+		t.Errorf("vector value %v", got)
+	}
+	var v Vector
+	if err := v.Scan([]byte("[1, 0.5,-2]")); err != nil || !slices.Equal(v, Vector{1, 0.5, -2}) {
+		t.Errorf("vector scan %v, %v", v, err)
+	}
+}
+
+func TestSearchDDL(t *testing.T) {
+	docs := searchModel(t, sqlDoc{}, "docs")
+	notes := searchModel(t, sqlNote{}, "notes")
+	for _, c := range []struct {
+		m    *model
+		d    Dialect
+		want []string
+		err  string
+	}{
+		{docs, postgres{}, []string{
+			"CREATE TABLE \"docs\" (\n  \"id\" BIGSERIAL PRIMARY KEY,\n  \"title\" TEXT NOT NULL,\n  \"body\" TEXT NOT NULL,\n  \"search\" tsvector GENERATED ALWAYS AS ((setweight(to_tsvector('english', COALESCE(\"title\", '')), 'A') || setweight(to_tsvector('english', COALESCE(\"body\", '')), 'B'))) STORED,\n  \"embedding\" vector(3)\n)",
+			`CREATE INDEX "docs_search_gin" ON "docs" USING gin ("search")`,
+			`CREATE INDEX "docs_title_gin" ON "docs" USING gin ("title" gin_trgm_ops)`,
+			`CREATE INDEX "docs_embedding_hnsw" ON "docs" USING hnsw ("embedding" vector_cosine_ops) WITH (ef_construction = 64, m = 16)`,
+			`CREATE INDEX "docs_ivf" ON "docs" USING ivfflat ("embedding" vector_l2_ops) WITH (lists = 100)`,
+			`CREATE INDEX "docs_body_fulltext" ON "docs" USING gin (((to_tsvector('english', COALESCE("body", '')))))`,
+		}, ""},
+		{docs, sqlite{}, []string{
+			"CREATE TABLE \"docs\" (\n  \"id\" INTEGER PRIMARY KEY AUTOINCREMENT,\n  \"title\" TEXT NOT NULL,\n  \"body\" TEXT NOT NULL,\n  \"search\" TEXT GENERATED ALWAYS AS (COALESCE(\"title\", '') || ' ' || COALESCE(\"body\", '')) STORED,\n  \"embedding\" TEXT\n)",
+		}, ""},
+		{docs, mysql{}, nil, "MySQL has no vector type"},
+		{notes, mysql{}, []string{
+			"CREATE TABLE `notes` (\n  `id` BIGINT PRIMARY KEY AUTO_INCREMENT,\n  `title` TEXT NOT NULL,\n  `body` TEXT NOT NULL,\n  `search` TEXT GENERATED ALWAYS AS (CONCAT_WS(' ', `title`, `body`)) STORED\n)",
+			"CREATE FULLTEXT INDEX `notes_search_fulltext` ON `notes` (`search`)",
+			"CREATE FULLTEXT INDEX `notes_text` ON `notes` (`title`, `body`)",
+		}, ""},
+	} {
+		ts, err := c.m.tables(c.d)
+		if c.err != "" {
+			if err == nil || !strings.Contains(err.Error(), c.err) {
+				t.Errorf("%s: %v, want %q", c.d.Name(), err, c.err)
+			}
+			continue
+		}
+		if err != nil {
+			t.Fatal(err)
+		}
+		got := schema.Dialect{Name: c.d.Name(), Quote: c.d.Quote}.Create(ts[0], false)
+		if !slices.Equal(got, c.want) {
+			t.Errorf("%s:\n got %q\nwant %q", c.d.Name(), got, c.want)
+		}
+	}
+	if got := docs.extensions(); !slices.Equal(got, []string{"vector", "pg_trgm"}) {
+		t.Errorf("extensions %v", got)
+	}
+
+	ts, _ := docs.tables(postgres{})
+	changed := ts[0]
+	changed.Indexes = []schema.Index{changed.Indexes[0], {Name: "docs_ivf", SQL: `CREATE INDEX "docs_ivf" ON "docs" USING ivfflat ("embedding" vector_l2_ops) WITH (lists = 200)`}}
+	var steps []string
+	for _, s := range (schema.Dialect{Name: "postgres", Quote: postgres{}.Quote}).Diff(ts, []schema.Table{changed}) {
+		steps = append(steps, s.SQL)
+	}
+	if want := []string{`DROP INDEX "docs_ivf"`, changed.Indexes[1].SQL, `DROP INDEX "docs_title_gin"`, `DROP INDEX "docs_embedding_hnsw"`, `DROP INDEX "docs_body_fulltext"`}; !slices.Equal(steps, want) {
+		t.Errorf("diff %q", steps)
 	}
 }

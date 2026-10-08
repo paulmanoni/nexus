@@ -22,7 +22,8 @@ type query struct {
 	ann      []annotation
 	related  []string
 	prefetch []PrefetchSpec
-	every    bool // Unfiltered: an Update or Delete may touch every row
+	every    bool   // Unfiltered: an Update or Delete may touch every row
+	group    string // Values' GROUP BY
 }
 
 type annotation struct {
@@ -112,7 +113,7 @@ func (q query) selectSQL(b *builder, cols string) (string, error) {
 	if q.distinct {
 		d = "DISTINCT "
 	}
-	return "SELECT " + d + cols + " FROM " + b.from() + w + o + q.pageSQL(b), nil
+	return "SELECT " + d + cols + " FROM " + b.from() + w + q.group + o + q.pageSQL(b), nil
 }
 
 type computedField struct {
@@ -153,7 +154,10 @@ func (q query) relatedPlans(b *builder) ([]relPlan, error) {
 		for part := range strings.SplitSeq(path, "__") {
 			r, ok := cur.m.relation(part)
 			if !ok || !r.one() {
-				return nil, fmt.Errorf("orm: SelectRelated(%q): %s has no foreign key %q (PrefetchRelated loads rows held by many)", path, cur.m.Name, part)
+				return nil, fmt.Errorf("orm: SelectRelated(%q): %s has no foreign key or one-to-one %q (PrefetchRelated loads rows held by many)", path, cur.m.Name, part)
+			}
+			if err := r.held(cur.m); err != nil {
+				return nil, err
 			}
 			prefix = strings.TrimPrefix(prefix+"__"+part, "__")
 			if i, ok := index[prefix]; ok {
@@ -172,12 +176,25 @@ func (q query) relatedPlans(b *builder) ([]relPlan, error) {
 	return plans, nil
 }
 
-// columns is the SELECT list reading q's rows: the model's columns, its
-// computed annotations, and the columns of the foreign keys it selects.
+// columns is the SELECT list reading q's rows: the model's fields, its
+// computed annotations, and the fields of the foreign keys it selects.
 func (q query) columns(b *builder, plans []relPlan) (string, error) {
 	var cols []string
-	for _, f := range q.m.Fields {
-		cols = append(cols, b.col(f))
+	read := func(b *builder) error {
+		for _, f := range b.m.readFields() {
+			col := b.col(f)
+			if f.Via != "" {
+				var err error
+				if col, err = b.ref(f.Via); err != nil {
+					return err
+				}
+			}
+			cols = append(cols, col)
+		}
+		return nil
+	}
+	if err := read(b); err != nil {
+		return "", err
 	}
 	for _, f := range q.computedFields() {
 		col, err := b.ref(f.ann)
@@ -187,8 +204,8 @@ func (q query) columns(b *builder, plans []relPlan) (string, error) {
 		cols = append(cols, col+" AS "+b.d.Quote(f.ann))
 	}
 	for _, p := range plans {
-		for _, f := range p.b.m.Fields {
-			cols = append(cols, p.b.col(f))
+		if err := read(p.b); err != nil {
+			return "", err
 		}
 	}
 	return strings.Join(cols, ", "), nil
@@ -217,9 +234,9 @@ func (q query) scan(ctx context.Context, c conn, newRow func() reflect.Value, ea
 	}
 	defer rows.Close()
 	computed := q.computedFields()
-	n := len(q.m.Fields) + len(computed)
+	n := len(q.m.readFields()) + len(computed)
 	for _, p := range plans {
-		n += len(p.b.m.Fields)
+		n += len(p.b.m.readFields())
 	}
 	cells := make([]cell, n)
 	dest := make([]any, n)
@@ -230,7 +247,7 @@ func (q query) scan(ctx context.Context, c conn, newRow func() reflect.Value, ea
 	for rows.Next() {
 		row := newRow()
 		i := 0
-		for _, f := range q.m.Fields {
+		for _, f := range q.m.readFields() {
 			cells[i].dst = fieldOf(row, f.Index)
 			i++
 		}
@@ -240,7 +257,7 @@ func (q query) scan(ctx context.Context, c conn, newRow func() reflect.Value, ea
 		}
 		for j, p := range plans {
 			tmps[j] = reflect.New(p.b.m.Type)
-			for _, f := range p.b.m.Fields {
+			for _, f := range p.b.m.readFields() {
 				cells[i].dst = fieldOf(tmps[j].Elem(), f.Index)
 				i++
 			}

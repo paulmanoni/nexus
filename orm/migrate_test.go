@@ -82,3 +82,33 @@ func TestMigrateAtBoot(t *testing.T) {
 		t.Fatalf("the migrated table: %v", err)
 	}
 }
+
+// TestSearchMigrations plans Doc's generated column, vector and indexes,
+// and the extension declared for them (search_test.go).
+func TestSearchMigrations(t *testing.T) {
+	plan, err := orm.PlanMigration(nil, "postgres")
+	if err != nil || plan.Steps[0].SQL != `CREATE EXTENSION IF NOT EXISTS "vector"` || !strings.Contains(string(plan.Snapshot), `"extensions": [`) {
+		t.Fatalf("plan %v, %v", plan.Steps, err)
+	}
+	src := string(orm.MigrationFile(plan.Steps))
+	for _, want := range []string{`"search" tsvector GENERATED ALWAYS AS`, `"embedding" vector(3)`, `USING hnsw ("embedding" vector_cosine_ops)`} {
+		if !strings.Contains(src, want) {
+			t.Fatalf("migration lacks %q", want)
+		}
+	}
+	if again, err := orm.PlanMigration(plan.Snapshot, "postgres"); err != nil || len(again.Steps) != 0 {
+		t.Fatalf("again %+v, %v", again.Steps, err)
+	}
+	lite, err := orm.PlanMigration(nil, "sqlite")
+	if err != nil || strings.Contains(string(orm.MigrationFile(lite.Steps)), "EXTENSION") {
+		t.Fatalf("sqlite %v", err)
+	}
+	ctx := ormtest.Open(t)
+	db, _ := orm.DBFrom(ctx)
+	if _, err := orm.ApplyMigrations(ctx, db, fstest.MapFS{"0001_initial.sql": {Data: orm.MigrationFile(lite.Steps)}}); err != nil {
+		t.Fatal(err)
+	}
+	if err := Docs.Create(ctx, &Doc{Title: "a", Body: "b"}); err != nil {
+		t.Fatalf("the migrated table: %v", err)
+	}
+}
