@@ -113,7 +113,7 @@
     pending = { path: want, since: Date.now() };
     clearInterval(fast);
     fast = setInterval(() => {
-      if (!pending || Date.now() - pending.since > 10000) {
+      if (!pending || Date.now() - pending.since > 4000) {
         want = null;
         settle();
         draw();
@@ -121,6 +121,7 @@
       }
       poll(true);
     }, 300);
+    poll(true); // the server records a live move before it answers: likely in already
     draw();
   }
   window.addEventListener('nx:navigate', navigated);

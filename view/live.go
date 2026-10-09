@@ -990,7 +990,7 @@ func (d *liveDef) serve(ctx context.Context, rq liveRequest, lc *liveConn, in *i
 			send(liveReply{Error: nexus.ErrorOf(err).Error()})
 			return
 		}
-		mctx, done := d.pageSpan(ctx, in)
+		mctx, done := d.pageSpan(ctx, in, "Mount")
 		if err := in.mount(withPageURL(mctx, in.url), props); err != nil {
 			done(err)
 			send(liveReply{Error: err.Error()})
@@ -1043,7 +1043,7 @@ func (d *liveDef) serve(ctx context.Context, rq liveRequest, lc *liveConn, in *i
 		in.url = u
 		props, err := in.routedProps(param, u)
 		if err == nil {
-			uctx, done := d.span(ctx, in, "Update")
+			uctx, done := d.pageSpan(ctx, in, "Update")
 			err = in.update(withPageURL(uctx, u), props)
 			done(err)
 		}

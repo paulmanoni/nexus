@@ -6,6 +6,16 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [2.33.7] - 2026-10-09
+
+### Fixed
+
+- **The debug toolbar settles at once on a live page's patch** — a tab or filter kept in
+  the URL (`?type=permits`). A patch's `Update` is now a page entry of the page's path, as
+  a navigation's Mount is; before, no entry matched and the loader spun until it gave up.
+  The toolbar also asks for the entry the moment the page moves (the server records it
+  before answering), and gives up after 4s instead of 10s.
+
 ## [2.33.6] - 2026-10-09
 
 ### Changed
