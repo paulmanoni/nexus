@@ -274,7 +274,7 @@ func MountToolbar(r httpx.Router) {
 		items := []httpx.H{}
 		for _, id := range ids {
 			if r := requests.get(id); r != nil {
-				items = append(items, httpx.H{"id": r.ID, "label": label(r)})
+				items = append(items, httpx.H{"id": r.ID, "label": label(r), "page": r.isPage, "path": r.Path})
 			}
 		}
 		c.JSON(http.StatusOK, httpx.H{"next": next, "items": items})

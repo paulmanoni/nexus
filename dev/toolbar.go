@@ -53,6 +53,7 @@ type Request struct {
 	logs     []LogRecord
 	notes    map[string][]any
 	children []string // what the page did after its load: Track's records
+	isPage   bool     // TrackPage's: a page the browser moved to
 }
 
 // LogRecord is a log record written while a request ran.
@@ -260,11 +261,22 @@ func spansOf(r *Request) {
 //	err := run(ctx)
 //	finish(200, err)
 func Track(ctx context.Context, page, method, label string) (context.Context, func(status int, err error)) {
+	return track(ctx, page, method, label, false)
+}
+
+// TrackPage is Track for a page the browser moved to without a page load —
+// a live view navigated to over its socket: path is the page's URL path,
+// and the toolbar pins the entry when the browser shows that page.
+func TrackPage(ctx context.Context, page, method, path string) (context.Context, func(status int, err error)) {
+	return track(ctx, page, method, path, true)
+}
+
+func track(ctx context.Context, page, method, label string, isPage bool) (context.Context, func(status int, err error)) {
 	parent := requests.get(page)
 	if parent == nil || !ToolbarEnabled() {
 		return ctx, func(int, error) {}
 	}
-	r := &Request{ID: newToolbarID(), Method: method, Path: label, Start: time.Now()}
+	r := &Request{ID: newToolbarID(), Method: method, Path: label, Start: time.Now(), isPage: isPage}
 	ctx = context.WithValue(ctx, requestKey{}, r)
 	ctx = trace.OnRoot(ctx, func(s *trace.Span) {
 		r.mu.Lock()

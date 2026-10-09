@@ -6,6 +6,17 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [2.33.4] - 2026-10-09
+
+### Fixed
+
+- **The debug toolbar follows navigation without a page load.** Moving between live
+  pages over their socket, through an Inertia visit, or with an in-app link now pins the
+  new page's entry, so the handle and the drawer show the page on screen rather than the
+  one first loaded. A live page's Mount is recorded as a page entry by its URL path
+  (`LIVE /orders`; `dev.TrackPage`), a socket handed to the next page keeps the toolbar's
+  list, and an Inertia response (`X-Inertia: true`) or a fetched HTML page counts as a page.
+
 ## [2.33.3] - 2026-10-09
 
 ### Added

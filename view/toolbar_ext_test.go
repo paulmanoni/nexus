@@ -3,6 +3,7 @@ package view_test
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"io"
 	"net/http/httptest"
 	"strconv"
@@ -60,19 +61,26 @@ func TestToolbarListsLiveWork(t *testing.T) {
 		w := httptest.NewRecorder()
 		app.ServeHTTP(w, httptest.NewRequest("GET", "/__nexus/toolbar/requests/"+page+"/children", nil))
 		var got struct {
-			Items []struct{ Label string } `json:"items"`
+			Items []struct {
+				Label string
+				Page  bool
+				Path  string
+			} `json:"items"`
 		}
 		_ = json.Unmarshal(w.Body.Bytes(), &got)
 		labels = labels[:0]
 		for _, it := range got.Items {
-			labels = append(labels, it.Label)
+			labels = append(labels, fmt.Sprintf("%s page=%v path=%s", it.Label, it.Page, it.Path))
 		}
 		if len(labels) >= 2 {
 			break
 		}
 	}
 	joined := strings.Join(labels, "\n")
-	if !strings.Contains(joined, "LIVE view_test.shelf.Mount · 200") || !strings.Contains(joined, "LIVE view_test.shelf.Add · 200") {
+	// The connection's Mount is a page entry, by its URL path, which the
+	// toolbar pins when the browser navigates to it; an event is not.
+	if !strings.Contains(joined, "LIVE /shelf · 200") || !strings.Contains(joined, "page=true path=/shelf") ||
+		!strings.Contains(joined, "LIVE view_test.shelf.Add · 200") || !strings.Contains(joined, "page=false path=view_test.shelf.Add") {
 		t.Fatalf("toolbar entries:\n%s", joined)
 	}
 }

@@ -22,6 +22,11 @@ The dropdown at the top lists every request the page made: the page itself, then
 on a live view, the work its socket does: the connected Mount, each event, each URL
 update and `Info`, as `LIVE Dashboard.Search` entries. Pick one to see its panels.
 
+Moving to another page without a page load — a live page navigating over its socket,
+an Inertia visit, an in-app link — pins the new page's entry (`LIVE /orders`, the
+Inertia visit, the fetched page), so the handle and the drawer show the page on
+screen. The list keeps every page visited since the last full page load.
+
 ## Rebuilds
 
 The toolbar follows `nexus dev`'s rebuild, so you don't need the terminal to know whether

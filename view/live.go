@@ -920,7 +920,10 @@ func (d *liveDef) serve(ctx context.Context, rq liveRequest, lc *liveConn, in *i
 	page := strings.TrimSuffix(path, "/_live")
 	navigated := lc.target
 	lc.target = ""
-	in.devPage = rq.url.Query().Get("nx_toolbar")
+	if p := rq.url.Query().Get("nx_toolbar"); p != "" {
+		lc.devPage = p
+	}
+	in.devPage = lc.devPage // a page handed the connection keeps the page load's list
 	active := time.Now()
 	render := func(ref int, invalid bool) liveReply {
 		msg, full, err := in.diffRender(ctx, &lc.tree)
@@ -987,7 +990,7 @@ func (d *liveDef) serve(ctx context.Context, rq liveRequest, lc *liveConn, in *i
 			send(liveReply{Error: nexus.ErrorOf(err).Error()})
 			return
 		}
-		mctx, done := d.span(ctx, in, "Mount")
+		mctx, done := d.pageSpan(ctx, in)
 		if err := in.mount(withPageURL(mctx, in.url), props); err != nil {
 			done(err)
 			send(liveReply{Error: err.Error()})

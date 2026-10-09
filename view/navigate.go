@@ -41,6 +41,7 @@ type liveConn struct {
 	next    string                     // the URL of a page to hand the connection to
 	target  string                     // the URL the page being opened was navigated to
 	pending func(base context.Context) // the page a hand-off opened, to run
+	devPage string                     // nexus dev: the toolbar entry of the page load that opened it
 }
 
 type liveConnKey struct{}

@@ -102,6 +102,27 @@ func (d *liveDef) span(ctx context.Context, in *instance, op string) (context.Co
 	}
 }
 
+// pageSpan is span for the connection's Mount: under nexus dev the page's
+// toolbar entry, by its URL path, which the toolbar pins once the browser
+// shows it — a live navigation is a page without a page load.
+func (d *liveDef) pageSpan(ctx context.Context, in *instance) (context.Context, func(error)) {
+	typ := strings.TrimPrefix(d.t.String(), "*")
+	path := typ
+	if in.url != nil {
+		path = in.url.Path
+	}
+	ctx, tracked := dev.TrackPage(ctx, in.devPage, "LIVE", path)
+	ctx, _, finish := trace.NewRootSpan(ctx, typ+".Mount", typ, typ+".Mount", "live")
+	return ctx, func(err error) {
+		status := 200
+		if err != nil {
+			status = 500
+		}
+		finish(status, err)
+		tracked(status, err)
+	}
+}
+
 func (d *liveDef) inform(ctx context.Context, in *instance, msg Message, send func(liveReply) bool) bool {
 	ctx, done := d.span(ctx, in, "Info")
 	defer done(nil)

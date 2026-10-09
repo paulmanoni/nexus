@@ -62,11 +62,40 @@
     return view;
   }
 
-  function add(id, label) {
+  // A page the browser moves to without a page load — a live view's
+  // navigation, an Inertia visit, an in-app link — is pinned once its entry
+  // is in: want is the path the browser shows, waiting for its entry.
+  let want = null;
+
+  function add(id, label, path, page) {
     if (!id || state.list.some((e) => e.id === id)) return;
-    state.list.push({ id, label });
+    state.list.push({ id, label, path, page, at: Date.now() });
+    if (page && want === path) pin(id);
     load(id).then(draw).catch(() => {});
   }
+
+  function pin(id) {
+    want = null;
+    if (state.current === id) return;
+    state.current = id;
+    draw();
+  }
+
+  // An Inertia visit's answer is in before its navigate event; a live
+  // page's Mount arrives after it. So an entry for the path from the last
+  // moments is the one, else the next one to come — never an older visit
+  // to the same page.
+  function navigated() {
+    want = location.pathname;
+    for (let i = state.list.length - 1; i >= 0; i--) {
+      const e = state.list[i];
+      if (Date.now() - e.at > 3000) break;
+      if (e.page && e.path === want) return pin(e.id);
+    }
+  }
+  window.addEventListener('nx:navigate', navigated);
+  window.addEventListener('popstate', () => setTimeout(navigated));
+  document.addEventListener('inertia:navigate', navigated);
 
   function showPanel(view) {
     const names = [...view.querySelectorAll('nav button')].map((b) => b.dataset.panel);
@@ -144,7 +173,11 @@
     const res = await origFetch(...args);
     try {
       const id = res.headers.get(HEADER);
-      if (id) add(id, new URL(res.url, location.href).pathname);
+      if (id) {
+        const path = new URL(res.url, location.href).pathname;
+        const page = res.headers.get('X-Inertia') === 'true' || /text\/html/.test(res.headers.get('Content-Type') || '');
+        add(id, path, path, page);
+      }
     } catch (_) {}
     return res;
   };
@@ -153,7 +186,11 @@
     this.addEventListener('load', () => {
       try {
         const id = this.getResponseHeader(HEADER);
-        if (id) add(id, `${method} ${new URL(url, location.href).pathname}`);
+        if (id) {
+          const path = new URL(this.responseURL || url, location.href).pathname;
+          const page = this.getResponseHeader('X-Inertia') === 'true' || /text\/html/.test(this.getResponseHeader('Content-Type') || '');
+          add(id, `${method} ${path}`, path, page);
+        }
       } catch (_) {}
     });
     return xhrOpen.call(this, method, url, ...rest);
@@ -173,7 +210,7 @@
       if (!res.ok) { clearInterval(timer); return; }
       const body = await res.json();
       after = body.next;
-      body.items.forEach((it) => add(it.id, it.label));
+      body.items.forEach((it) => add(it.id, it.label, it.path, it.page));
     } catch (_) {}
   };
   const timer = setInterval(poll, 1500);
@@ -195,7 +232,7 @@
   pollBuild();
 
   window.__nxToolbar = { add, open: () => { state.open = true; draw(); } };
-  add(pageId, `${location.pathname} (page)`);
+  add(pageId, `${location.pathname} (page)`, location.pathname, true);
   // On <html>, not <body>: in-app navigation replaces the body.
   document.documentElement.appendChild(host);
   draw();
