@@ -8,6 +8,8 @@ import (
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -251,5 +253,18 @@ func TestDevToolbarTracksAPagesLaterWork(t *testing.T) {
 		t.Error("tracked under an unknown page")
 	} else {
 		done2(200, nil)
+	}
+}
+
+func TestDevToolbarBuildState(t *testing.T) {
+	dir := t.TempDir()
+	t.Setenv("NEXUS_DEV_STATE", filepath.Join(dir, "state.json"))
+	app := toolbarApp(t, "1")
+	if err := os.WriteFile(filepath.Join(dir, "build.json"), []byte(`{"state":"failed","since":1,"output":"main.go:3: undefined: x"}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	w := toolbarGet(app, "/__nexus/toolbar/build", "")
+	if !strings.Contains(w.Body.String(), `"state":"failed"`) || !strings.Contains(w.Body.String(), "undefined: x") {
+		t.Fatalf("build = %s", w.Body)
 	}
 }

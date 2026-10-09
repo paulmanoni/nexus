@@ -228,7 +228,9 @@ panel, v)` from request code; Section = Summary/Tone/Stats/Text/View (templ)/HTM
 (Columns Code/Lang "sql"/Num/Bar, Tones). Live views' socket work (connected Mount, events,
 Update, Info) shows as `LIVE Type.Event` entries under the page (runtime.js sends the page's
 toolbar id as `nx_toolbar`; `dev.Track(ctx, page, method, label)` for other work); queries
-the ORM refuses before sending show as red "refused" rows. Never in production binaries. `nexus docs toolbar`,
+the ORM refuses before sending show as red "refused" rows. The handle/drawer show nexus dev's
+rebuild (`building… Ns`, `build failed` + compiler output): the CLI writes `build.json` in the
+session state dir (cmd/nexus/dev_buildstate.go), the app reads `dev.BuildState()`. Never in production binaries. `nexus docs toolbar`,
 docs/guide/debug-toolbar.md.
 
 ### Dev server logs (columnar, configurable — Django/Spring-style)

@@ -433,6 +433,8 @@ func runDev(target, addr string, openOnReady, openDash, watch bool, frontendDir 
 		fmt.Fprintf(stderr, "%s●%s dev-state disabled: %v\n", ansiYellow, ansiReset, err)
 	}
 
+	builds := newBuildState(devStatePath)
+
 	// The compiler for the build-then-swap path.
 	builder, err := newDevBuilder(fast)
 	if err != nil {
@@ -508,6 +510,7 @@ func runDev(target, addr string, openOnReady, openDash, watch bool, frontendDir 
 			cleanupOverlay = nil
 		}
 		codegenStart := time.Now()
+		builds.set("building", codegenStart, "")
 		if op, cl, err := buildDevOverlay(target, distStubRoot, !viewFiles); err != nil {
 			fmt.Fprintf(stderr, "%s●%s handler codegen skipped: %v\n", ansiYellow, ansiReset, err)
 			overlayPath = ""
@@ -519,11 +522,13 @@ func runDev(target, addr string, openOnReady, openDash, watch bool, frontendDir 
 		// Build-then-swap. The child from the previous iteration is still
 		// serving here — nothing is torn down until the build is green.
 		start := time.Now()
-		bin, buildErr := builder.build(ctx, target, overlayPath, stderr)
+		output := &tail{n: 16 << 10}
+		bin, buildErr := builder.build(ctx, target, overlayPath, io.MultiWriter(stderr, output))
 		if ctx.Err() != nil {
 			return exitErr
 		}
 		if buildErr != nil {
+			builds.set("failed", time.Now(), output.String())
 			// Compile error. With a watcher up, the running app (if
 			// any) stays up and the user fixes the code; without one,
 			// there's nothing to wait for.
@@ -541,6 +546,7 @@ func runDev(target, addr string, openOnReady, openDash, watch bool, frontendDir 
 			continue
 		}
 		buildDur := time.Since(start)
+		builds.set("ok", time.Now(), "")
 		fmt.Fprintf(stdout, "  %s● built in %s%s\n", ansiDim, buildDur.Round(time.Millisecond), ansiReset)
 
 		// Identical bytes mean the running process already IS this

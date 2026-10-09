@@ -156,3 +156,23 @@ tr.warn .mini span { background: var(--warn); } tr.error .mini span { background
 .tl-track .bar { position: absolute; top: 0; height: 10px; border-radius: 2px; background: var(--fg3); }
 .tl-track .bar.sql { background: var(--acc); } .tl-track .bar.err { background: var(--err); }
 .tl-ms { width: 52px; text-align: right; color: var(--fg3); font-size: 11.5px; font-variant-numeric: tabular-nums; }
+
+/* Where nexus dev's rebuild stands. */
+.handle.busy { border-left-color: var(--acc); }
+.handle.busy .figs::before { content: ""; display: inline-block; width: 9px; height: 9px; margin-right: 6px; vertical-align: -1px;
+  border: 2px solid var(--acc); border-right-color: transparent; border-radius: 50%; animation: spin .8s linear infinite; }
+.build:empty { display: none; }
+.build { flex: none; padding: 8px 12px; font-size: 12px; border-bottom: 1px solid var(--line); color: var(--fg); }
+.build.building { background: var(--acc-soft); box-shadow: inset 3px 0 0 var(--acc); }
+.build.failed { background: var(--err-soft); box-shadow: inset 3px 0 0 var(--err); max-height: 45vh; overflow: auto; }
+.build.failed b { color: var(--err); }
+.build pre { margin-top: 6px; padding: 8px 10px; background: var(--elev); border: 1px solid var(--line); border-radius: 3px; }
+.build .spin { display: inline-block; width: 10px; height: 10px; margin-right: 8px; vertical-align: -1px;
+  border: 2px solid var(--acc); border-right-color: transparent; border-radius: 50%; animation: spin .8s linear infinite; }
+@keyframes spin { to { transform: rotate(360deg); } }
+.bstate:empty { display: none; }
+.bstate { flex: none; display: inline-flex; align-items: center; height: 22px; padding: 0 8px; border-radius: 3px;
+  font-size: 11.5px; font-weight: 600; white-space: nowrap; }
+.bstate.building { color: #fff; background: var(--acc); }
+.bstate.building .spin { border-color: #fff; border-right-color: transparent; margin-right: 6px; }
+.bstate.failed { color: #fff; background: var(--err); }

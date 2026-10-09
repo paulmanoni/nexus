@@ -253,6 +253,12 @@ func MountToolbar(r httpx.Router) {
 		c.Writer.Header().Set("Cache-Control", "no-cache")
 		c.Data(http.StatusOK, "text/css; charset=utf-8", toolbarCSS)
 	})
+	// Where nexus dev's rebuild stands, for the handle and the drawer.
+	r.GET("/__nexus/toolbar/build", func(c *httpx.Ctx) {
+		b := BuildState()
+		c.Writer.Header().Set("Cache-Control", "no-store")
+		c.JSON(http.StatusOK, httpx.H{"state": b.State, "seconds": int(time.Since(b.Since).Seconds()), "output": b.Output})
+	})
 	// What a page did after its load, from the after'th entry on.
 	r.GET("/__nexus/toolbar/requests/:id/children", func(c *httpx.Ctx) {
 		page := requests.get(c.Param("id"))

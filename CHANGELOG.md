@@ -6,6 +6,16 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [2.33.3] - 2026-10-09
+
+### Added
+
+- **The debug toolbar shows nexus dev's rebuild.** While the next build compiles (the
+  previous one still serving), the handle reads `building… 12s` and the open drawer shows
+  a "Rebuilding" chip and banner; a failed build turns the handle red ("build failed") and
+  the drawer shows the compiler's output, until a save compiles. The dev loop writes the
+  state to its session directory; the app reads it with `dev.BuildState()`.
+
 ## [2.33.2] - 2026-10-09
 
 ### Added

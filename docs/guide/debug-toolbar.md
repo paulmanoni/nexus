@@ -22,6 +22,20 @@ The dropdown at the top lists every request the page made: the page itself, then
 on a live view, the work its socket does: the connected Mount, each event, each URL
 update and `Info`, as `LIVE Dashboard.Search` entries. Pick one to see its panels.
 
+## Rebuilds
+
+The toolbar follows `nexus dev`'s rebuild, so you don't need the terminal to know whether
+a save is live:
+
+- **Building:** while the next binary compiles — the previous one keeps serving — the
+  handle shows a spinner and `building… 12s`, and the open drawer a "Rebuilding" chip.
+  The page reloads by itself once the new build takes over.
+- **Failed:** a save that doesn't compile turns the handle red (`build failed`), and the
+  drawer shows the compiler's output above the panels. The previous build keeps serving
+  until a save compiles.
+- **Unchanged:** a save that doesn't change the binary (a comment, a `_test.go` file)
+  clears the state without a reload.
+
 ## What it shows
 
 **Queries from both the nexus ORM and GORM.** Each statement is recorded on the

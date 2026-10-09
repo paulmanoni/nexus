@@ -77,11 +77,40 @@
     });
   }
 
+  // Where nexus dev's rebuild stands: the previous build serves meanwhile.
+  const build = { state: '', seconds: 0, output: '' };
+
+  function paintBuild() {
+    const chip = app.querySelector('.bstate');
+    if (chip) {
+      chip.className = 'bstate ' + build.state;
+      chip.innerHTML = build.state === 'building' ? `<span class="spin"></span>Rebuilding ${build.seconds}s`
+        : build.state === 'failed' ? 'Build failed' : '';
+    }
+    const el = app.querySelector('.build');
+    if (!el) return;
+    el.className = 'build ' + build.state;
+    if (build.state === 'building') {
+      el.innerHTML = `<span class="spin"></span><b>Rebuilding</b> · ${build.seconds}s — the previous build serves until the new one is live, then the page reloads`;
+    } else if (build.state === 'failed') {
+      el.innerHTML = `<b>Build failed</b> · still serving the previous build — fix the error and save<pre>${esc(build.output || 'no compiler output')}</pre>`;
+    } else {
+      el.innerHTML = '';
+    }
+  }
+
   function draw() {
     const view = state.views[state.current];
     if (!state.open) {
-      const tone = view ? view.dataset.tone : '';
-      const label = state.hidden ? '' : view ? view.dataset.handle : '…';
+      let tone = view ? view.dataset.tone : '';
+      let label = state.hidden ? '' : view ? view.dataset.handle : '…';
+      if (build.state === 'building') {
+        tone = 'busy';
+        label = `building… ${build.seconds}s`;
+      } else if (build.state === 'failed') {
+        tone = 'error';
+        label = 'build failed';
+      }
       app.innerHTML = `<button class="handle ${esc(tone)}${state.hidden ? ' hidden' : ''}" title="nexus debug toolbar">
         ${mark(20)}${label ? `<span class="figs">${esc(label)}</span>` : ''}</button>`;
       app.firstElementChild.onclick = () => { state.open = true; save(); draw(); };
@@ -89,10 +118,11 @@
     }
     const opts = state.list.map((e) =>
       `<option value="${esc(e.id)}"${e.id === state.current ? ' selected' : ''}>${esc(e.label)}</option>`).join('');
-    app.innerHTML = `<div class="drawer"><div class="top"><span class="brand">${mark(22)}nexus <small>debug</small></span>
+    app.innerHTML = `<div class="drawer"><div class="top"><span class="brand">${mark(22)}nexus <small>debug</small></span><span class="bstate"></span>
       <select title="Requests on this page">${opts}</select>
       <button data-act="hide" title="Show or hide the figures on the handle">${state.hidden ? 'Show figures' : 'Hide figures'}</button>
-      <button data-act="close" title="Close (Esc)">Close</button></div><div class="slot"></div></div>`;
+      <button data-act="close" title="Close (Esc)">Close</button></div><div class="build"></div><div class="slot"></div></div>`;
+    paintBuild();
     const slot = app.querySelector('.slot');
     if (view) {
       showPanel(view);
@@ -147,6 +177,22 @@
     } catch (_) {}
   };
   const timer = setInterval(poll, 1500);
+
+  const pollBuild = async () => {
+    if (document.visibilityState !== 'visible') return;
+    try {
+      const res = await origFetch('/__nexus/toolbar/build');
+      if (!res.ok) return;
+      const b = await res.json();
+      const was = build.state;
+      if (b.state !== 'building' && b.state !== 'failed') b.state = '';
+      Object.assign(build, { state: b.state, seconds: b.seconds || 0, output: b.output || '' });
+      if (state.open) paintBuild();
+      else if (build.state || was) draw();
+    } catch (_) {}
+  };
+  setInterval(pollBuild, 1000);
+  pollBuild();
 
   window.__nxToolbar = { add, open: () => { state.open = true; draw(); } };
   add(pageId, `${location.pathname} (page)`);
