@@ -6,6 +6,16 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [2.33.1] - 2026-10-09
+
+### Fixed
+
+- **The debug toolbar shows on pages an app compresses.** An app's own compression
+  middleware (gzip, br, …) running inside the toolbar sent pages already encoded, which
+  the toolbar can't add its script to, so no page got it. Under `nexus dev` a page load
+  now reaches the app without `Accept-Encoding`; fetch, XHR and asset responses keep
+  their compression, and the Request panel still shows the header the browser sent.
+
 ## [2.33.0] - 2026-10-09
 
 ### Added

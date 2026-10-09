@@ -1,6 +1,7 @@
 package nexus
 
 import (
+	"compress/gzip"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -13,6 +14,7 @@ import (
 	"github.com/paulmanoni/nexus/v2/config"
 	"github.com/paulmanoni/nexus/v2/dev"
 	"github.com/paulmanoni/nexus/v2/httpx"
+	"github.com/paulmanoni/nexus/v2/middleware"
 	"github.com/paulmanoni/nexus/v2/trace"
 )
 
@@ -132,5 +134,82 @@ func TestDevToolbarOffOutsideDev(t *testing.T) {
 	}
 	if w := toolbarGet(app, "/__nexus/toolbar/toolbar.js", ""); w.Code != http.StatusNotFound {
 		t.Fatalf("script served outside nexus dev: %d", w.Code)
+	}
+}
+
+// gzipPages compresses HTML for clients that accept it, as an app's own
+// edge middleware might.
+func gzipPages() middleware.Middleware {
+	return middleware.Middleware{Name: "gzip", Stage: middleware.Edge, HTTP: func(c *httpx.Ctx) {
+		if !strings.Contains(c.Request.Header.Get("Accept-Encoding"), "gzip") {
+			c.Next()
+			return
+		}
+		orig := c.Writer
+		gw := &gzipWriter{ResponseWriter: orig}
+		c.Writer = &httpx.ResponseWriter{ResponseWriter: gw}
+		defer func() {
+			if gw.gz != nil {
+				gw.gz.Close()
+			}
+			c.Writer = orig
+		}()
+		c.Next()
+	}}
+}
+
+type gzipWriter struct {
+	http.ResponseWriter
+	gz *gzip.Writer
+}
+
+func (w *gzipWriter) WriteHeader(code int) {
+	if strings.HasPrefix(w.Header().Get("Content-Type"), "text/html") {
+		w.Header().Set("Content-Encoding", "gzip")
+		w.gz = gzip.NewWriter(w.ResponseWriter)
+	}
+	w.ResponseWriter.WriteHeader(code)
+}
+
+func (w *gzipWriter) Write(b []byte) (int, error) {
+	if w.gz != nil {
+		return w.gz.Write(b)
+	}
+	return w.ResponseWriter.Write(b)
+}
+
+func TestDevToolbarUnderAnAppsCompression(t *testing.T) {
+	t.Setenv(dev.Env, "1")
+	page := func(c *httpx.Ctx) {
+		c.Data(http.StatusOK, "text/html; charset=utf-8", []byte("<!doctype html><html><body><p>pets</p></body></html>"))
+	}
+	app, stop, err := InProcess(config.Runtime{TraceCapacity: 100}, Middleware(gzipPages()), AsRest("GET", "/pets", page))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer stop(context.Background())
+
+	w := httptest.NewRecorder()
+	r := httptest.NewRequest("GET", "/pets", nil)
+	r.Header.Set("Sec-Fetch-Dest", "document")
+	r.Header.Set("Accept-Encoding", "gzip, deflate, br")
+	app.ServeHTTP(w, r)
+	if w.Header().Get("Content-Encoding") != "" || !strings.Contains(w.Body.String(), "toolbar.js") {
+		t.Fatalf("page under compression: encoding %q, body %q", w.Header().Get("Content-Encoding"), w.Body.String())
+	}
+	id := w.Header().Get(dev.HeaderName)
+	d := toolbarGet(app, "/__nexus/toolbar/requests/"+id, "")
+	if !strings.Contains(d.Body.String(), "gzip, deflate, br") {
+		t.Errorf("the Request panel shows the browser's Accept-Encoding: %s", d.Body)
+	}
+
+	// A fetch keeps its compression.
+	w = httptest.NewRecorder()
+	r = httptest.NewRequest("GET", "/pets", nil)
+	r.Header.Set("Sec-Fetch-Dest", "empty")
+	r.Header.Set("Accept-Encoding", "gzip")
+	app.ServeHTTP(w, r)
+	if w.Header().Get("Content-Encoding") != "gzip" {
+		t.Errorf("fetch lost its compression: %q", w.Header().Get("Content-Encoding"))
 	}
 }

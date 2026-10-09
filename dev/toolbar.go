@@ -257,9 +257,16 @@ func Toolbar(spans SpanSource) httpx.HandlerFunc {
 			r.traceIDs = append(r.traceIDs, s.TraceID)
 			r.mu.Unlock()
 		})
+		page := isPageRequest(c.Request)
+		if page && c.Request.Header.Get("Accept-Encoding") != "" {
+			// The app's own compression may run inside this middleware; a
+			// page it can't compress is one the toolbar can be added to.
+			c.Request.Header = c.Request.Header.Clone()
+			c.Request.Header.Del("Accept-Encoding")
+		}
 		c.Request = c.Request.WithContext(ctx)
 		c.Writer.Header().Set(HeaderName, r.ID)
-		w := &injector{ResponseWriter: c.Writer.ResponseWriter, page: isPageRequest(c.Request), id: r.ID}
+		w := &injector{ResponseWriter: c.Writer.ResponseWriter, page: page, id: r.ID}
 		c.Writer.ResponseWriter = w
 		defer func() {
 			r.Duration = time.Since(r.Start)

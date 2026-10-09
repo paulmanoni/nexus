@@ -39,8 +39,10 @@ console as before.
 
 **Which pages get it.** A page the browser loads (a navigation or a frame) whose
 answer is a whole HTML document gets the toolbar before its `</body>`. Fetch and XHR
-calls, Inertia JSON responses, fragments, compressed responses, `/__nexus` routes
-and WebSocket upgrades never do. Every response under `nexus dev` carries an
+calls, Inertia JSON responses, fragments, `/__nexus` routes and WebSocket upgrades
+never do. So that the app's own compression middleware leaves a page as text, a page
+load reaches the app without its `Accept-Encoding` header under `nexus dev` (the
+Request panel shows the one the browser sent); everything else stays compressed. Every response under `nexus dev` carries an
 `X-Nexus-Toolbar` header naming its record, which is how the toolbar lists the page's
 calls.
 
