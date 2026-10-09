@@ -5,7 +5,7 @@ go 1.27
 require (
 	github.com/glebarez/sqlite v1.11.0
 	github.com/go-sql-driver/mysql v1.8.1
-	github.com/paulmanoni/nexus/v2 v2.33.6
+	github.com/paulmanoni/nexus/v2 v2.33.7
 	golang.org/x/tools v0.49.0
 	gorm.io/driver/mysql v1.6.0
 	gorm.io/driver/postgres v1.6.0
