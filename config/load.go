@@ -219,6 +219,7 @@ type runtimeBlock struct {
 	Middleware            middlewareBlock `toml:"middleware"`
 	DevReload             devReloadBlock  `toml:"devreload"`
 	Logging               loggingBlock    `toml:"logging"`
+	Toolbar               toolbarBlock    `toml:"toolbar"`
 	Telemetry             telemetryBlock  `toml:"telemetry"`
 	Tailwind              tailwindBlock   `toml:"tailwind"`
 	Browser               browserBlock    `toml:"browser"`
@@ -238,6 +239,12 @@ type loggingBlock struct {
 	Requests *bool  `toml:"requests"` // dev-only per-request console log (default true)
 	Format   string `toml:"format"`   // pretty | logfmt | pattern | raw | json
 	Pattern  string `toml:"pattern"`  // used when format = "pattern"
+}
+
+// toolbarBlock is [runtime.toolbar], the nexus dev debug toolbar; read
+// through config.Get.
+type toolbarBlock struct {
+	Enabled *bool `toml:"enabled" doc:"the debug toolbar on HTML pages under nexus dev (default true; never outside nexus dev)"`
 }
 
 // tailwindBlock is [runtime.tailwind], read by nexus dev and nexus build

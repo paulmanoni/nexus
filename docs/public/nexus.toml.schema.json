@@ -1293,6 +1293,16 @@
           },
           "type": "object"
         },
+        "toolbar": {
+          "additionalProperties": false,
+          "properties": {
+            "enabled": {
+              "description": "the debug toolbar on HTML pages under nexus dev (default true; never outside nexus dev)",
+              "type": "boolean"
+            }
+          },
+          "type": "object"
+        },
         "trace_capacity": {
           "description": "request-trace ring buffer size (0 = off)",
           "type": "integer"

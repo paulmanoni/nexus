@@ -93,6 +93,9 @@ func StartRequest(c *httpx.Ctx, bus *Bus, service, endpoint, transport string) (
 	}
 	c.Set(spanKey, span)
 	c.Set(busKey, bus)
+	if f, ok := c.Request.Context().Value(rootHookKey{}).(func(*Span)); ok {
+		f(span)
+	}
 	// Also propagate onto context.Context so ctx-only code (GraphQL
 	// resolvers, GORM hooks, any downstream taking a context.Context)
 	// can read via SpanFromCtx / BusFromCtx.
@@ -205,4 +208,13 @@ func Record(c *httpx.Ctx, name string, start time.Time, err error) {
 		Error:      errStr,
 		Timestamp:  end,
 	})
+}
+
+type rootHookKey struct{}
+
+// OnRoot returns ctx carrying f, called with the root span of each request
+// traced under it: what wraps the router (the dev toolbar) learns the
+// trace IDs of the request it watches.
+func OnRoot(ctx context.Context, f func(*Span)) context.Context {
+	return context.WithValue(ctx, rootHookKey{}, f)
 }

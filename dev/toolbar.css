@@ -1,0 +1,158 @@
+/* The nexus debug toolbar, inside its shadow root (nexus dev only).
+   The /__nexus console's palette and chrome, light and dark. */
+:host {
+  --bg: #eceff1; --elev: #ffffff; --sunken: #e3e7ea; --hover: #e8ecef;
+  --line: #c9d1d6; --line-strong: #a8b3ba;
+  --fg: #262626; --fg2: #4d5d68; --fg3: #728e9b;
+  --chrome: #303030; --chrome2: #3c3c3c; --chrome-fg: #e4e8ea; --chrome-fg2: #a6b3ba;
+  --acc: #1491c1; --acc-soft: #dceef5; --acc-fg: #106b8f;
+  --ok: #3f9a4b; --ok-soft: #e2f0e2; --warn: #a8841f; --warn-soft: #faf2dd;
+  --err: #ba554a; --err-soft: #f7e4e1; --ws: #c7822e;
+  --kw: #1d6fa0; --str: #3f8a4b; --num: #a35c1d; --argc: #8a4fb0;
+  --mono: ui-monospace, "SF Mono", SFMono-Regular, Menlo, Consolas, monospace;
+}
+:host([data-theme="dark"]) {
+  --bg: #1b1f22; --elev: #24292d; --sunken: #16191c; --hover: #2c3237;
+  --line: #363d43; --line-strong: #4c555c;
+  --fg: #dde3e6; --fg2: #a6b3ba; --fg3: #7f939e;
+  --chrome: #17191b; --chrome2: #202325; --chrome-fg: #dde3e6; --chrome-fg2: #93a3ac;
+  --acc: #3fb0da; --acc-soft: #14323f; --acc-fg: #6cc6e8;
+  --ok: #5cb567; --ok-soft: #172a19; --warn: #d9b757; --warn-soft: #2c2614;
+  --err: #d47b6e; --err-soft: #2e1c19; --ws: #d9a05b;
+  --kw: #6cc6e8; --str: #8fd197; --num: #e5a66b; --argc: #c79be6;
+}
+#app {
+  font: 12.5px/1.45 ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  color: var(--fg); -webkit-font-smoothing: antialiased;
+}
+* { box-sizing: border-box; scrollbar-width: thin; scrollbar-color: var(--line-strong) transparent; }
+button { font: inherit; color: inherit; cursor: pointer; }
+pre { margin: 0; white-space: pre-wrap; word-break: break-word; font: 11.5px/1.55 var(--mono); }
+.mark { flex: none; display: block; }
+
+/* Handle on the page's edge. */
+.handle {
+  position: fixed; top: 72px; right: 0; display: flex; align-items: center; gap: 8px;
+  height: 30px; padding: 0 12px 0 8px; border: 1px solid #000; border-right: 0;
+  background: var(--chrome); color: var(--chrome-fg); border-radius: 3px 0 0 3px;
+  font: 600 12px/1 ui-sans-serif, system-ui, sans-serif; letter-spacing: .01em;
+  box-shadow: 0 4px 14px rgba(0,0,0,.28); border-left: 3px solid var(--ok);
+  transition: transform .12s ease, background .12s ease;
+}
+.handle:hover { background: var(--chrome2); transform: translateX(-2px); }
+.handle.warn { border-left-color: var(--warn); }
+.handle.error { border-left-color: var(--err); }
+.handle.hidden { padding: 0 8px; }
+.handle .figs { color: var(--chrome-fg); font-variant-numeric: tabular-nums; }
+
+/* Drawer. */
+.drawer {
+  position: fixed; top: 0; right: 0; height: 100vh; width: min(920px, 100vw);
+  display: flex; flex-direction: column; background: var(--bg);
+  border-left: 1px solid #000; box-shadow: -12px 0 40px rgba(0,0,0,.28);
+  animation: slide .16s ease-out;
+}
+@keyframes slide { from { transform: translateX(24px); opacity: .6; } }
+.top {
+  flex: none; display: flex; align-items: center; gap: 8px; height: 38px; padding: 0 10px 0 12px;
+  background: var(--chrome); border-bottom: 1px solid #000; color: var(--chrome-fg);
+}
+.brand { display: flex; align-items: center; gap: 8px; font-weight: 600; letter-spacing: .01em; margin-right: 8px; white-space: nowrap; }
+.brand small { color: var(--chrome-fg2); font-weight: 500; }
+.top select {
+  flex: 1; min-width: 0; height: 26px; font: inherit; color: var(--chrome-fg); background: var(--chrome2);
+  border: 1px solid #000; border-radius: 3px; padding: 0 8px;
+}
+.top select:focus { outline: 1px solid var(--acc); }
+.top button {
+  height: 26px; padding: 0 10px; background: transparent; color: var(--chrome-fg2);
+  border: 1px solid transparent; border-radius: 3px; white-space: nowrap;
+}
+.top button:hover { color: var(--chrome-fg); background: var(--chrome2); border-color: #000; }
+
+/* Status strip under the top bar. */
+.view { flex: 1; display: flex; flex-direction: column; min-height: 0; }
+.strip {
+  flex: none; display: flex; align-items: center; gap: 14px; height: 30px; padding: 0 12px;
+  background: var(--sunken); border-bottom: 1px solid var(--line); color: var(--fg2); font-size: 12px;
+  white-space: nowrap; overflow: hidden;
+}
+.strip .method { font: 700 10.5px/1 var(--mono); padding: 3px 6px; border-radius: 2px; color: #fff; background: var(--ok); letter-spacing: .04em; }
+.strip .method.post, .strip .method.put, .strip .method.patch { background: var(--ws); }
+.strip .method.delete { background: var(--err); }
+.strip .path { font: 12px var(--mono); color: var(--fg); overflow: hidden; text-overflow: ellipsis; min-width: 0; }
+.strip .status { font: 700 11px/1 var(--mono); padding: 3px 6px; border-radius: 2px; }
+.strip .status.ok { color: var(--ok); background: var(--ok-soft); }
+.strip .status.redirect { color: var(--acc-fg); background: var(--acc-soft); }
+.strip .status.warn { color: var(--warn); background: var(--warn-soft); }
+.strip .status.error { color: var(--err); background: var(--err-soft); }
+.strip .fig b { color: var(--fg); font-variant-numeric: tabular-nums; }
+.strip .fig:first-of-type { margin-left: auto; }
+
+.view-body { flex: 1; display: flex; min-height: 0; }
+nav { width: 196px; flex: none; overflow: auto; background: var(--bg); border-right: 1px solid var(--line); padding: 6px 0; }
+nav button {
+  display: block; width: 100%; text-align: left; background: transparent; border: 0;
+  border-left: 3px solid transparent; padding: 7px 12px 7px 11px;
+}
+nav button:hover { background: var(--hover); }
+nav button.on { background: var(--elev); border-left-color: var(--acc); box-shadow: inset 0 1px 0 var(--line), inset 0 -1px 0 var(--line); }
+nav .name { display: flex; align-items: center; gap: 6px; font-weight: 600; color: var(--fg); }
+nav .sum { display: block; color: var(--fg3); font-size: 11.5px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; font-variant-numeric: tabular-nums; }
+nav .sum.warn { color: var(--warn); } nav .sum.error { color: var(--err); }
+.dot { width: 6px; height: 6px; border-radius: 50%; background: var(--warn); display: inline-block; }
+.dot.error { background: var(--err); }
+
+main { flex: 1; overflow: auto; min-width: 0; background: var(--elev); padding: 0 16px 20px; }
+section[hidden] { display: none; }
+.ph { display: flex; align-items: baseline; gap: 10px; padding: 14px 0 10px; }
+.ph h2 { margin: 0; font-size: 14px; font-weight: 600; letter-spacing: .01em; }
+.ph-sum { color: var(--fg3); font-size: 12px; font-variant-numeric: tabular-nums; }
+.ph-sum.warn { color: var(--warn); } .ph-sum.error { color: var(--err); }
+
+.stats { display: grid; grid-template-columns: repeat(auto-fill, minmax(130px, 1fr)); gap: 0; margin-bottom: 14px;
+  border: 1px solid var(--line); border-radius: 3px; overflow: hidden; }
+.stat { padding: 8px 12px; border-right: 1px solid var(--line); border-bottom: 1px solid var(--line); margin: 0 -1px -1px 0; background: var(--elev); }
+.stat .l { color: var(--fg3); font-size: 10.5px; font-weight: 600; text-transform: uppercase; letter-spacing: .06em; }
+.stat .v { margin-top: 2px; font-size: 15px; font-weight: 600; color: var(--fg); word-break: break-all; font-variant-numeric: tabular-nums; }
+.stat.warn { box-shadow: inset 3px 0 0 var(--warn); } .stat.warn .v { color: var(--warn); }
+.stat.error { box-shadow: inset 3px 0 0 var(--err); } .stat.error .v { color: var(--err); }
+
+.note { border: 1px solid var(--line); border-left: 3px solid var(--acc); border-radius: 3px; padding: 8px 12px; margin-bottom: 14px; background: var(--acc-soft); }
+.note.warn { border-left-color: var(--warn); background: var(--warn-soft); }
+.note.error { border-left-color: var(--err); background: var(--err-soft); color: var(--fg); }
+
+.grid { border: 1px solid var(--line); border-radius: 3px; overflow: hidden; }
+table { width: 100%; border-collapse: collapse; }
+th {
+  position: sticky; top: 0; z-index: 1; text-align: left; padding: 6px 10px; background: var(--sunken);
+  border-bottom: 1px solid var(--line); color: var(--fg2); font-size: 10.5px; font-weight: 600;
+  text-transform: uppercase; letter-spacing: .06em; white-space: nowrap;
+}
+td { padding: 6px 10px; border-bottom: 1px solid var(--line); vertical-align: top; color: var(--fg); }
+tbody tr:last-child td { border-bottom: 0; }
+tbody tr:hover td { background: var(--hover); }
+td.num, th.num { text-align: right; white-space: nowrap; font-variant-numeric: tabular-nums; }
+td.code { width: 100%; }
+tr.warn td:first-child { box-shadow: inset 3px 0 0 var(--warn); }
+tr.warn td { background: color-mix(in srgb, var(--warn-soft) 70%, transparent); }
+tr.error td:first-child { box-shadow: inset 3px 0 0 var(--err); }
+tr.error td { background: color-mix(in srgb, var(--err-soft) 80%, transparent); }
+.bar-cell { min-width: 96px; }
+.mini { display: inline-block; width: 44px; height: 4px; margin-right: 8px; vertical-align: middle; background: var(--sunken); border-radius: 2px; overflow: hidden; }
+.mini span { display: block; height: 100%; background: var(--acc); }
+tr.warn .mini span { background: var(--warn); } tr.error .mini span { background: var(--err); }
+.kw { color: var(--kw); font-weight: 600; } .str { color: var(--str); } .numlit { color: var(--num); }
+.arg { color: var(--argc); font-weight: 600; } .ident { color: var(--fg2); }
+
+.empty { color: var(--fg3); padding: 28px 0; text-align: center; border: 1px dashed var(--line); border-radius: 3px; }
+.err { color: var(--err); padding: 16px 0; }
+
+.tl { border: 1px solid var(--line); border-radius: 3px; padding: 6px 10px; }
+.tl-row { display: flex; align-items: center; gap: 10px; height: 22px; }
+.tl-name { width: 40%; flex: none; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; font: 11.5px var(--mono); color: var(--fg2); }
+.tl-name.sql { color: var(--fg); }
+.tl-track { position: relative; flex: 1; height: 10px; background: var(--sunken); border-radius: 2px; }
+.tl-track .bar { position: absolute; top: 0; height: 10px; border-radius: 2px; background: var(--fg3); }
+.tl-track .bar.sql { background: var(--acc); } .tl-track .bar.err { background: var(--err); }
+.tl-ms { width: 52px; text-align: right; color: var(--fg3); font-size: 11.5px; font-variant-numeric: tabular-nums; }

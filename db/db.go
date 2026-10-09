@@ -462,6 +462,10 @@ func (m *Manager) connect() error {
 		m.reportUnreachable(err)
 		return err
 	}
+	if err := traceQueries(db); err != nil {
+		m.markDisconnected()
+		return err
+	}
 	sqlDB, err := db.DB()
 	if err != nil {
 		m.markDisconnected()

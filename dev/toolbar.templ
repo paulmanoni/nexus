@@ -1,0 +1,153 @@
+package dev
+
+import (
+	"fmt"
+	"strconv"
+	"strings"
+)
+
+// requestView is the drawer's content for one request: a status strip,
+// the panels' list and every panel; toolbar.js switches between them.
+templ requestView(r *Request, views []panelView, queries int) {
+	<div
+		class="view"
+		data-id={ r.ID }
+		data-label={ fmt.Sprintf("%s %s · %d · %s · %dq", r.Method, r.Path, r.Status, ms(r.Duration), queries) }
+		data-handle={ fmt.Sprintf("%s · %dq", ms(r.Duration), queries) }
+		data-tone={ worstTone(views) }
+	>
+		<div class="strip">
+			<span class={ "method", strings.ToLower(r.Method) }>{ r.Method }</span>
+			<span class="path" title={ r.Path }>{ r.Path }</span>
+			<span class={ "status", statusTone(r.Status) }>{ strconv.Itoa(r.Status) }</span>
+			<span class="fig"><b>{ ms(r.Duration) }</b></span>
+			<span class="fig"><b>{ strconv.Itoa(queries) }</b> queries</span>
+			<span class="fig"><b>{ strconv.Itoa(len(r.Spans)) }</b> spans</span>
+		</div>
+		<div class="view-body">
+			<nav>
+				for i, v := range views {
+					<button type="button" data-panel={ v.Name } class={ templ.KV("on", i == 0) }>
+						<span class="name">
+							{ v.Name }
+							if v.Tone != "" || v.Error != "" {
+								<i class={ "dot", v.Tone, templ.KV("error", v.Error != "") }></i>
+							}
+						</span>
+						<span class={ "sum", v.Tone }>{ v.Summary }</span>
+					</button>
+				}
+			</nav>
+			<main>
+				for i, v := range views {
+					<section data-panel={ v.Name } hidden?={ i > 0 }>
+						@panelSection(v)
+					</section>
+				}
+			</main>
+		</div>
+	</div>
+}
+
+templ panelSection(v panelView) {
+	<header class="ph">
+		<h2>{ v.Name }</h2>
+		if v.Summary != "" {
+			<span class={ "ph-sum", v.Tone }>{ v.Summary }</span>
+		}
+	</header>
+	if v.Error != "" {
+		<div class="note error">The panel failed: { v.Error }</div>
+	} else {
+		if len(v.Stats) > 0 {
+			<div class="stats">
+				for _, s := range v.Stats {
+					<div class={ "stat", s.Tone }>
+						<div class="l">{ s.Label }</div>
+						<div class="v">{ s.Value }</div>
+					</div>
+				}
+			</div>
+		}
+		if v.Text != "" {
+			<div class={ "note", v.Tone }><pre>{ v.Text }</pre></div>
+		}
+		if v.View != nil {
+			@v.View
+		}
+		if v.HTML != "" {
+			@templ.Raw(v.HTML)
+		}
+		if v.Table != nil {
+			@table(v.Table)
+		}
+	}
+}
+
+templ table(t *Table) {
+	if len(t.Rows) == 0 {
+		<div class="empty">Nothing recorded for this request.</div>
+	} else {
+		<div class="grid">
+			<table>
+				<thead>
+					<tr>
+						for _, c := range t.Columns {
+							<th class={ templ.KV("num", c.Num || c.Bar) }>{ c.Title }</th>
+						}
+					</tr>
+				</thead>
+				<tbody>
+					for i, row := range t.Rows {
+						<tr class={ rowTone(t, i) }>
+							for j, cell := range row {
+								@tableCell(t, j, cell)
+							}
+						</tr>
+					}
+				</tbody>
+			</table>
+		</div>
+	}
+}
+
+templ tableCell(t *Table, j int, cell any) {
+	if j >= len(t.Columns) {
+		<td>{ fmt.Sprint(cell) }</td>
+	} else if c := t.Columns[j]; c.Lang == "sql" {
+		<td class="code"><pre>
+			for _, tok := range sqlTokens(fmt.Sprint(cell)) {
+				if tok.kind == "" {
+					{ tok.text }
+				} else {
+					<span class={ tok.kind }>{ tok.text }</span>
+				}
+			}
+		</pre></td>
+	} else if c.Code {
+		<td class="code"><pre>{ fmt.Sprint(cell) }</pre></td>
+	} else if c.Bar {
+		<td class="num bar-cell">
+			<span class="mini"><span style={ barWidth(t, j, cell) }></span></span>
+			{ fmt.Sprint(cell) }
+		</td>
+	} else {
+		<td class={ templ.KV("num", c.Num) }>{ fmt.Sprint(cell) }</td>
+	}
+}
+
+// timeline is the Timeline panel: a bar per span, placed on the request's
+// duration.
+templ timeline(rows []timelineRow) {
+	<div class="tl">
+		for _, r := range rows {
+			<div class="tl-row">
+				<span class={ "tl-name", templ.KV("sql", r.SQL) } title={ r.Name }>{ r.Name }</span>
+				<span class="tl-track">
+					<span class={ "bar", templ.KV("sql", r.SQL), templ.KV("err", r.Err) } style={ r.style() }></span>
+				</span>
+				<span class="tl-ms">{ strconv.FormatInt(r.Ms, 10) } ms</span>
+			</div>
+		}
+	</div>
+}

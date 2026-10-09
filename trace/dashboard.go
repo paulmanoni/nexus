@@ -45,6 +45,8 @@ type SpanNode struct {
 	Error      string         `json:"error,omitempty"`
 	Remote     bool           `json:"remote,omitempty"`
 	Attrs      map[string]any `json:"attrs,omitempty"`
+
+	seq int64 // the start event's place on the bus: order within a millisecond
 }
 
 // traceByID serves the span tree Spans reconstructs.
@@ -101,6 +103,7 @@ func (b *Bus) Spans(id string) []*SpanNode {
 		switch e.Kind {
 		case KindRequestStart, KindSpanStart:
 			node.Kind = string(e.Kind)
+			node.seq = e.ID
 			if !e.Timestamp.IsZero() {
 				node.StartMs = e.Timestamp.Sub(base).Milliseconds()
 			}
@@ -131,7 +134,7 @@ func (b *Bus) Spans(id string) []*SpanNode {
 		if out[i].StartMs != out[j].StartMs {
 			return out[i].StartMs < out[j].StartMs
 		}
-		return out[i].SpanID < out[j].SpanID
+		return out[i].seq < out[j].seq
 	})
 	return out
 }

@@ -623,6 +623,21 @@ func New(cfg config.Runtime) *App {
 	// log one line per HTTP request to stdout so navigations surface in the
 	// terminal — otherwise request activity only reaches the dashboard trace
 	// stream. No-op outside dev; opt out with [runtime.logging] requests=false.
+	if dev.ToolbarEnabled() {
+		var spans dev.SpanSource
+		if a.bus != nil {
+			spans = a.bus
+		}
+		a.engine.Use(dev.Toolbar(spans))
+		dev.MountToolbar(a.engine)
+		a.registry.RegisterMiddleware(middleware.Info{
+			Name:        "dev-toolbar",
+			Kind:        middleware.KindBuiltin,
+			Description: "Debug toolbar on HTML pages: SQL, timeline, logs per request (dev only)",
+		})
+		a.registry.RegisterGlobalMiddleware("dev-toolbar")
+	}
+
 	if dev.RequestLogEnabled() {
 		a.engine.Use(dev.RequestLogger(os.Stdout))
 		a.registry.RegisterMiddleware(middleware.Info{
@@ -1081,7 +1096,7 @@ func (a *App) Logger() *slog.Logger {
 	if l := a.logger.Load(); l != nil {
 		return l
 	}
-	a.logger.CompareAndSwap(nil, defaultLogger())
+	a.logger.CompareAndSwap(nil, devLogger(defaultLogger()))
 	return a.logger.Load()
 }
 
@@ -1111,8 +1126,17 @@ type loggerOverride struct{ l *slog.Logger }
 // fxEarlyOptions so it runs before any user invoke can read App.Logger.
 func installLogger(a *App, o *loggerOverride) {
 	if o != nil && o.l != nil {
-		a.logger.Store(o.l)
+		a.logger.Store(devLogger(o.l))
 	}
+}
+
+// devLogger is l, its records under a request also kept for the debug
+// toolbar under nexus dev.
+func devLogger(l *slog.Logger) *slog.Logger {
+	if !dev.ToolbarEnabled() {
+		return l
+	}
+	return slog.New(dev.ToolbarLogs(l.Handler()))
 }
 
 // provideLogger is the framework's *slog.Logger provider.

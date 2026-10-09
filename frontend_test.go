@@ -1279,6 +1279,7 @@ type viteDevFixture struct {
 func newViteDevFixture(t *testing.T, index string, opts ...FrontendOption) *viteDevFixture {
 	t.Helper()
 	t.Setenv("GIN_MODE", "test")
+	t.Setenv("RUNTIME_TOOLBAR_ENABLED", "false") // the page as served, without the debug toolbar
 	dir := t.TempDir()
 	dist := filepath.Join(dir, "web", "dist")
 	if err := os.MkdirAll(filepath.Join(dist, "assets"), 0o755); err != nil {

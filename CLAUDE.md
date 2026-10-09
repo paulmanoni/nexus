@@ -214,6 +214,20 @@ server's hot file back after `emptyOutDir`. Opt-in: each change is a full produc
 build. No rebuild loop — `dist/` is excluded from the watch and the Go-source watcher
 ignores `web/dist` writes.
 
+### Debug toolbar (nexus dev only — Django-debug-toolbar-style)
+Under `nexus dev` every HTML page the app serves gets a toolbar: a handle on the right edge
+(time · queries) opening a drawer of panels for the request — Request (status, handler,
+query, headers), SQL (nexus ORM + GORM statements in order, time bars, repeats amber, the
+ORM's N+1 named), Timeline (trace spans), Logs (records written with the request's ctx) —
+and a dropdown of the page's fetch/XHR calls (each response carries `X-Nexus-Toolbar`).
+Templ-rendered (`dev/toolbar.templ`, `toolbar.css`, `toolbar.js`) in a shadow DOM, console
+colours. GORM statements are recorded only with the request's context
+(`db.WithContext(ctx)`). Off: `[runtime.toolbar] enabled = false`. Custom panels:
+`dev.AddPanel(dev.Panel{Name, Render: func(*dev.Request) dev.Section})` + `dev.Note(ctx,
+panel, v)` from request code; Section = Summary/Tone/Stats/Text/View (templ)/HTML/Table
+(Columns Code/Lang "sql"/Num/Bar, Tones). Never in production binaries. `nexus docs toolbar`,
+docs/guide/debug-toolbar.md.
+
 ### Dev server logs (columnar, configurable — Django/Spring-style)
 The app logs through `log/slog`: `App.Logger()` — also DI-provided as `*slog.Logger`,
 taken by the db/cache binders and `nexus.Managed` — writes JSON to stdout (AddSource,

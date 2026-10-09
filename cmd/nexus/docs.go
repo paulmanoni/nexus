@@ -222,6 +222,7 @@ var topicSummaries = map[string]string{
 	"orm":         "nexus/orm — Django-style models, querysets, relations, migrations",
 	"cli":         "Subcommand cheatsheet (new / init / dev / build / client / generate)",
 	"devstate":    "dev.Preserve — carry in-memory state across a nexus dev rebuild",
+	"toolbar":     "nexus dev's debug toolbar — SQL, timeline, logs per request; custom panels",
 	"dashboard":   "/__nexus tabs, gating, HTTP surface",
 	"client":      "Embedded JS/TS SDK — connect a browser to your app",
 	"autoselect":  "nexus-vite-plugin: auto-select, and what else the plugin does",
@@ -232,6 +233,45 @@ var topicSummaries = map[string]string{
 // and stays under ~70 lines so the user can read a topic in one
 // scrollback. Keep examples copy-paste-runnable.
 var docsTopics = map[string]string{
+	"toolbar": `
+DEBUG TOOLBAR (nexus dev only)
+
+Every HTML page the app serves under nexus dev gets a handle on its right
+edge (time · queries). Click it for a drawer of panels about that request:
+
+    Request    method, path, status, time, handler, query, headers
+    SQL        each statement (nexus ORM and GORM), time bar, repeats,
+               N+1 named by the nexus ORM
+    Timeline   a bar per trace span
+    Logs       records logged with the request's context
+
+The dropdown lists the page and each fetch/XHR call it made (Inertia visits
+too). Every response carries X-Nexus-Toolbar naming its record.
+
+GORM statements are recorded when they run with the request's context:
+
+    db.GetDB().WithContext(ctx).Find(&pets)
+
+Turn it off in dev:
+
+    [runtime.toolbar]
+    enabled = false
+
+YOUR OWN PANEL
+
+    dev.AddPanel(dev.Panel{Name: "Cache", Render: func(r *dev.Request) dev.Section {
+        n := len(r.Notes("Cache"))
+        return dev.Section{Summary: fmt.Sprintf("%d lookups", n), Table: …}
+    }})
+
+    dev.Note(ctx, "Cache", Lookup{Key: k, Hit: ok})   // during the request
+
+A Section holds Summary, Tone ("warn"/"error"), Stats, Text, View (a templ
+component), HTML and Table (Columns: Code, Lang "sql", Num, Bar; Tones per
+row). dev.Note and dev.AddPanel are no-ops outside nexus dev.
+
+Guide: docs/guide/debug-toolbar.md
+`,
 	"devstate": `
 DEV STATE (carrying in-memory state across a rebuild)
 

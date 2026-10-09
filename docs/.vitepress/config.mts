@@ -74,6 +74,7 @@ export default defineConfig({
           text: 'Development',
           items: [
             { text: 'The dev loop', link: '/guide/dev-loop' },
+            { text: 'Debug toolbar', link: '/guide/debug-toolbar' },
             { text: 'Dashboard', link: '/guide/dashboard' },
           ],
         },

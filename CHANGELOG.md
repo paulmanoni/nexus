@@ -6,6 +6,31 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [2.33.0] - 2026-10-09
+
+### Added
+
+- **Debug toolbar under `nexus dev`**, like Django's: every HTML page gets a handle on
+  its edge (time · queries) opening a drawer with the request's panels — Request
+  (status, handler, query, headers with secrets hidden), SQL (each statement in order,
+  highlighted, with a time bar, repeats flagged, the nexus ORM's N+1 named), Timeline
+  (the trace's spans) and Logs (records written with the request's context). The page's
+  fetch and XHR calls (Inertia visits too) are listed beside it. Server-rendered with
+  templ in a shadow DOM, in the `/__nexus` console's colours, light and dark. Never in a
+  production binary; `[runtime.toolbar] enabled = false` turns it off in dev.
+- **Custom toolbar panels:** `dev.AddPanel(dev.Panel{Name, Render})` and `dev.Note(ctx,
+  panel, v)` to record from request code; a panel returns a `dev.Section` (summary, tone,
+  stats, text, a templ `View`, HTML, a table with code, SQL, number and bar columns).
+- **GORM statements are traced:** each one run with a request's context
+  (`db.WithContext(ctx)`) is an `sql` span of its trace, as the nexus ORM's are — in the
+  dashboard's trace waterfall and the toolbar.
+- `trace.OnRoot(ctx, f)`: f is called with the root span of each request traced under ctx.
+
+### Fixed
+
+- A trace's spans that started within the same millisecond are listed in the order they
+  started (the dashboard's waterfall listed them in an arbitrary order).
+
 ## [2.32.1] - 2026-10-09
 
 ### Added
