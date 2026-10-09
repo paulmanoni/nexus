@@ -415,6 +415,8 @@ type instance struct {
 	errs *nexus.Error // the validation errors of the last event
 	tr   *tracker     // its Assigns (assign.go)
 
+	devPage string // nexus dev: the toolbar entry of the page load that opened the socket
+
 	lv    *LiveView             // what it embeds, if anything
 	id    string                // its id where a page embeds it
 	page  *instance             // the page that embeds it; nil for a page
@@ -918,6 +920,7 @@ func (d *liveDef) serve(ctx context.Context, rq liveRequest, lc *liveConn, in *i
 	page := strings.TrimSuffix(path, "/_live")
 	navigated := lc.target
 	lc.target = ""
+	in.devPage = rq.url.Query().Get("nx_toolbar")
 	active := time.Now()
 	render := func(ref int, invalid bool) liveReply {
 		msg, full, err := in.diffRender(ctx, &lc.tree)
@@ -984,10 +987,13 @@ func (d *liveDef) serve(ctx context.Context, rq liveRequest, lc *liveConn, in *i
 			send(liveReply{Error: nexus.ErrorOf(err).Error()})
 			return
 		}
-		if err := in.mount(withPageURL(ctx, in.url), props); err != nil {
+		mctx, done := d.span(ctx, in, "Mount")
+		if err := in.mount(withPageURL(mctx, in.url), props); err != nil {
+			done(err)
 			send(liveReply{Error: err.Error()})
 			return
 		}
+		done(nil)
 		body, root, table, err := in.renderTree(ctx, nil, nil)
 		if err != nil {
 			send(liveReply{Error: err.Error()})
@@ -1034,7 +1040,7 @@ func (d *liveDef) serve(ctx context.Context, rq liveRequest, lc *liveConn, in *i
 		in.url = u
 		props, err := in.routedProps(param, u)
 		if err == nil {
-			uctx, done := d.span(ctx, "Update")
+			uctx, done := d.span(ctx, in, "Update")
 			err = in.update(withPageURL(uctx, u), props)
 			done(err)
 		}

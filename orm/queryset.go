@@ -129,6 +129,14 @@ func (b badPrefetch) prefetchQuery() query { return query{} }
 // them all; relations PrefetchRelated names are not loaded.
 func (qs QuerySet[T]) Iter(ctx context.Context) iter.Seq2[T, error] {
 	return func(yield func(T, error) bool) {
+		ctx, ran := runs(ctx)
+		if ran != nil {
+			next := yield
+			yield = func(row T, err error) bool {
+				refused(ctx, qs.q.m.Name, ran, err)
+				return next(row, err)
+			}
+		}
 		var zero T
 		c, err := qs.m.conn(ctx)
 		if err != nil {
@@ -270,7 +278,9 @@ func (qs QuerySet[T]) notFound() error {
 }
 
 // Count is how many rows match.
-func (qs QuerySet[T]) Count(ctx context.Context) (int64, error) {
+func (qs QuerySet[T]) Count(ctx context.Context) (_ int64, err error) {
+	ctx, ran := runs(ctx)
+	defer func() { refused(ctx, qs.q.m.Name, ran, err) }()
 	c, err := qs.m.conn(ctx)
 	if err != nil {
 		return 0, err
@@ -307,7 +317,9 @@ func (qs QuerySet[T]) Count(ctx context.Context) (int64, error) {
 }
 
 // Exists is whether any row matches.
-func (qs QuerySet[T]) Exists(ctx context.Context) (bool, error) {
+func (qs QuerySet[T]) Exists(ctx context.Context) (_ bool, err error) {
+	ctx, ran := runs(ctx)
+	defer func() { refused(ctx, qs.q.m.Name, ran, err) }()
 	c, err := qs.m.conn(ctx)
 	if err != nil {
 		return false, err
@@ -382,7 +394,9 @@ func (qs QuerySet[T]) guardEvery(op, where string) error {
 
 // Delete removes the matching rows and says how many. With no condition it
 // fails with ErrUnfiltered unless the query is Unfiltered.
-func (qs QuerySet[T]) Delete(ctx context.Context) (int64, error) {
+func (qs QuerySet[T]) Delete(ctx context.Context) (_ int64, err error) {
+	ctx, ran := runs(ctx)
+	defer func() { refused(ctx, qs.q.m.Name, ran, err) }()
 	if qs.q.limit > 0 || qs.q.offset > 0 {
 		return 0, fmt.Errorf("orm: can't delete a sliced %s query", qs.name())
 	}
@@ -425,7 +439,9 @@ type Set map[string]any
 // Update writes values to the matching rows and says how many; fields
 // marked auto_now are set to now too. With no condition it fails with
 // ErrUnfiltered unless the query is Unfiltered.
-func (qs QuerySet[T]) Update(ctx context.Context, values Set) (int64, error) {
+func (qs QuerySet[T]) Update(ctx context.Context, values Set) (_ int64, err error) {
+	ctx, ran := runs(ctx)
+	defer func() { refused(ctx, qs.q.m.Name, ran, err) }()
 	if qs.q.limit > 0 || qs.q.offset > 0 {
 		return 0, fmt.Errorf("orm: can't update a sliced %s query", qs.name())
 	}
@@ -542,6 +558,14 @@ type Values[T, R any] struct {
 // Iter runs the query and yields its rows one at a time.
 func (vq Values[T, R]) Iter(ctx context.Context) iter.Seq2[R, error] {
 	return func(yield func(R, error) bool) {
+		ctx, ran := runs(ctx)
+		if ran != nil {
+			next := yield
+			yield = func(row R, err error) bool {
+				refused(ctx, vq.q.q.m.Name, ran, err)
+				return next(row, err)
+			}
+		}
 		var zero R
 		c, err := vq.q.m.conn(ctx)
 		if err != nil {
@@ -913,7 +937,9 @@ func (r Result) Float(key string) float64 {
 }
 
 // Aggregate computes aggregates over the matching rows.
-func (qs QuerySet[T]) Aggregate(ctx context.Context, aggs ...Agg) (Result, error) {
+func (qs QuerySet[T]) Aggregate(ctx context.Context, aggs ...Agg) (_ Result, err error) {
+	ctx, ran := runs(ctx)
+	defer func() { refused(ctx, qs.q.m.Name, ran, err) }()
 	c, err := qs.m.conn(ctx)
 	if err != nil {
 		return nil, err

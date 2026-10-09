@@ -75,6 +75,9 @@ func NewRootSpan(ctx context.Context, name, service, endpoint, transport string,
 		bus:      bus,
 	}
 	span.SetAttrs(attrs...)
+	if f, ok := ctx.Value(rootHookKey{}).(func(*Span)); ok {
+		f(span)
+	}
 	if bus != nil {
 		bus.Publish(Event{
 			TraceID:   span.TraceID,

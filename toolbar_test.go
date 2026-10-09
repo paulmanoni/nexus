@@ -67,7 +67,7 @@ func TestDevToolbar(t *testing.T) {
 
 	w := toolbarGet(app, "/pets", "document")
 	id := w.Header().Get(dev.HeaderName)
-	if id == "" || !strings.Contains(w.Body.String(), `data-nexus-toolbar="`+id+`"`) || !strings.HasSuffix(w.Body.String(), "</body></html>") {
+	if id == "" || !strings.Contains(w.Body.String(), `data-nexus-toolbar="`+id+`"`) || !strings.Contains(w.Body.String(), "toolbar.js\" data-nexus-toolbar=\""+id+"\" defer></script></body>") {
 		t.Fatalf("page: id %q, body %s", id, w.Body)
 	}
 
@@ -211,5 +211,45 @@ func TestDevToolbarUnderAnAppsCompression(t *testing.T) {
 	app.ServeHTTP(w, r)
 	if w.Header().Get("Content-Encoding") != "gzip" {
 		t.Errorf("fetch lost its compression: %q", w.Header().Get("Content-Encoding"))
+	}
+}
+
+func TestDevToolbarTracksAPagesLaterWork(t *testing.T) {
+	app := toolbarApp(t, "1")
+	page := toolbarGet(app, "/pets", "document").Header().Get(dev.HeaderName)
+
+	// A live event of the page, as view runs one over its socket.
+	ctx, done := dev.Track(trace.WithBus(context.Background(), app.bus), page, "LIVE", "PetsPage.Search")
+	ctx, _, finish := trace.NewRootSpan(ctx, "PetsPage.Search", "PetsPage", "PetsPage.Search", "live")
+	_, sp := trace.StartSpan(ctx, "sql", trace.Str("sql", "SELECT * FROM pets WHERE name LIKE ?"))
+	sp.End(nil)
+	finish(200, nil)
+	done(200, nil)
+
+	var got struct {
+		Next  int `json:"next"`
+		Items []struct {
+			ID    string `json:"id"`
+			Label string `json:"label"`
+		} `json:"items"`
+	}
+	w := toolbarGet(app, "/__nexus/toolbar/requests/"+page+"/children?after=0", "")
+	if err := json.Unmarshal(w.Body.Bytes(), &got); err != nil || got.Next != 1 || len(got.Items) != 1 ||
+		!strings.HasPrefix(got.Items[0].Label, "LIVE PetsPage.Search · 200") || !strings.HasSuffix(got.Items[0].Label, "· 1q") {
+		t.Fatalf("children = %s", w.Body)
+	}
+	if w := toolbarGet(app, "/__nexus/toolbar/requests/"+page+"/children?after=1", ""); !strings.Contains(w.Body.String(), `"items":[]`) {
+		t.Errorf("after the last: %s", w.Body)
+	}
+	d := toolbarGet(app, "/__nexus/toolbar/requests/"+got.Items[0].ID, "", "application/json")
+	if !strings.Contains(d.Body.String(), `"queries":1`) || !strings.Contains(d.Body.String(), "name LIKE ?") {
+		t.Errorf("entry = %s", d.Body)
+	}
+
+	// Work of a page the toolbar doesn't know runs untracked.
+	if ctx2, done2 := dev.Track(context.Background(), "unknown", "LIVE", "X"); dev.RequestFrom(ctx2) != nil {
+		t.Error("tracked under an unknown page")
+	} else {
+		done2(200, nil)
 	}
 }

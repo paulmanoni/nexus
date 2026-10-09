@@ -225,7 +225,10 @@ colours. GORM statements are recorded only with the request's context
 (`db.WithContext(ctx)`). Off: `[runtime.toolbar] enabled = false`. Custom panels:
 `dev.AddPanel(dev.Panel{Name, Render: func(*dev.Request) dev.Section})` + `dev.Note(ctx,
 panel, v)` from request code; Section = Summary/Tone/Stats/Text/View (templ)/HTML/Table
-(Columns Code/Lang "sql"/Num/Bar, Tones). Never in production binaries. `nexus docs toolbar`,
+(Columns Code/Lang "sql"/Num/Bar, Tones). Live views' socket work (connected Mount, events,
+Update, Info) shows as `LIVE Type.Event` entries under the page (runtime.js sends the page's
+toolbar id as `nx_toolbar`; `dev.Track(ctx, page, method, label)` for other work); queries
+the ORM refuses before sending show as red "refused" rows. Never in production binaries. `nexus docs toolbar`,
 docs/guide/debug-toolbar.md.
 
 ### Dev server logs (columnar, configurable — Django/Spring-style)

@@ -133,6 +133,21 @@
     if (e.key === 'Escape' && state.open) { state.open = false; save(); draw(); }
   });
 
+  // What the page does after its load — a live view's socket events — is
+  // listed as the server records it.
+  let after = 0;
+  const poll = async () => {
+    if (document.visibilityState !== 'visible') return;
+    try {
+      const res = await origFetch('/__nexus/toolbar/requests/' + pageId + '/children?after=' + after);
+      if (!res.ok) { clearInterval(timer); return; }
+      const body = await res.json();
+      after = body.next;
+      body.items.forEach((it) => add(it.id, it.label));
+    } catch (_) {}
+  };
+  const timer = setInterval(poll, 1500);
+
   window.__nxToolbar = { add, open: () => { state.open = true; draw(); } };
   add(pageId, `${location.pathname} (page)`);
   // On <html>, not <body>: in-app navigation replaces the body.

@@ -18,8 +18,9 @@ The handle's edge turns amber when a panel warns (repeated queries, a warning lo
 and red on an error (a 5xx, a failed query, an N+1).
 
 The dropdown at the top lists every request the page made: the page itself, then each
-`fetch` and XHR call as it answers — an Inertia visit, a form post, a JSON call. Pick
-one to see its panels.
+`fetch` and XHR call as it answers — an Inertia visit, a form post, a JSON call — and,
+on a live view, the work its socket does: the connected Mount, each event, each URL
+update and `Info`, as `LIVE Dashboard.Search` entries. Pick one to see its panels.
 
 ## What it shows
 
@@ -31,6 +32,11 @@ are recorded when they run with the request's context:
 db.GetDB().WithContext(ctx).Where("owner_id = ?", id).Find(&pets) // recorded
 db.GetDB().Where("owner_id = ?", id).Find(&pets)                  // not: no request
 ```
+
+**Queries the ORM refused.** A query the nexus ORM rejects before sending it — a
+value of the wrong kind for a field, a name it doesn't know, a field read into the
+wrong type — shows as a red row with the ORM's error, counted under "Refused by the
+ORM". Without it such a query would leave no trace when the caller drops the error.
 
 **Logs written with a context.** Records written through the app's logger (the
 `*slog.Logger` nexus provides, or `App.Logger()`) with the request's context are
@@ -91,6 +97,18 @@ func (c *Cache) Get(ctx context.Context, key string) ([]byte, bool) {
 `dev.Note` and `dev.AddPanel` do nothing outside `nexus dev`, so they can stay in
 production code.
 
+### Work a page starts outside a request
+
+Live views list their socket work under their page by themselves. Other work a page
+starts — over a socket of your own, say — joins the page's list with `dev.Track`, given
+the page load's toolbar ID (the `X-Nexus-Toolbar` header of its response):
+
+```go
+ctx, finish := dev.Track(ctx, page, "WS", "chat.send")
+err := handle(ctx, msg)
+finish(200, err)
+```
+
 ### What a panel can show
 
 `dev.Section` holds the panel's parts; each is optional and they show in this order:
@@ -118,8 +136,6 @@ under a name already used, replaces it.
 ## Limits
 
 - The toolbar keeps the latest 200 requests; an older one says it is no longer kept.
-- A live view's socket events are not HTTP requests, so they don't show; the page's
-  first render does.
 - GORM statements repeated in a request are flagged as repeated, but only the nexus ORM
   names an N+1 with its fix.
 - A request's spans come from the trace ring buffer: with a very small

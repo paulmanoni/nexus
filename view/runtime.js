@@ -1161,6 +1161,9 @@
         "?url=" + encodeURIComponent(location.pathname + location.search);
       if (join) url += "&join=" + encodeURIComponent(join);
       else if (state.resume) url += "&resume=" + encodeURIComponent(state.resume);
+      // nexus dev: the debug toolbar lists this socket's work under the page.
+      var toolbar = document.querySelector("script[data-nexus-toolbar]");
+      if (toolbar) url += "&nx_toolbar=" + encodeURIComponent(toolbar.getAttribute("data-nexus-toolbar"));
       join = null; // a join is good for the first connection only
       var ws = new WebSocket(url);
       state.ws = ws;

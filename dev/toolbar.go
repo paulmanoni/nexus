@@ -52,6 +52,7 @@ type Request struct {
 	traceIDs []string
 	logs     []LogRecord
 	notes    map[string][]any
+	children []string // what the page did after its load: Track's records
 }
 
 // LogRecord is a log record written while a request ran.
@@ -230,6 +231,63 @@ func (h *history) get(id string) *Request {
 
 var requests = &history{byID: map[string]*Request{}}
 
+// spanSource is the app's trace bus, which Toolbar was given.
+var spanSource struct {
+	sync.Mutex
+	s SpanSource
+}
+
+func spansOf(r *Request) {
+	spanSource.Lock()
+	s := spanSource.s
+	spanSource.Unlock()
+	if s == nil {
+		return
+	}
+	for _, id := range r.TraceIDs() {
+		r.Spans = append(r.Spans, s.Spans(id)...)
+	}
+}
+
+// Track records work a page started outside an HTTP request — a live
+// view's socket event — as an entry of that page's toolbar list: page is
+// the page load's toolbar ID, method and label how the entry reads
+// ("LIVE", "Dashboard.Search"). The work runs under the returned context;
+// finish ends the entry. A no-op when the page isn't kept, or outside
+// nexus dev.
+//
+//	ctx, finish := dev.Track(ctx, page, "LIVE", "Dashboard.Search")
+//	err := run(ctx)
+//	finish(200, err)
+func Track(ctx context.Context, page, method, label string) (context.Context, func(status int, err error)) {
+	parent := requests.get(page)
+	if parent == nil || !ToolbarEnabled() {
+		return ctx, func(int, error) {}
+	}
+	r := &Request{ID: newToolbarID(), Method: method, Path: label, Start: time.Now()}
+	ctx = context.WithValue(ctx, requestKey{}, r)
+	ctx = trace.OnRoot(ctx, func(s *trace.Span) {
+		r.mu.Lock()
+		r.traceIDs = append(r.traceIDs, s.TraceID)
+		r.mu.Unlock()
+	})
+	return ctx, func(status int, err error) {
+		r.Duration = time.Since(r.Start)
+		r.Status = status
+		if r.Status == 0 {
+			r.Status = http.StatusOK
+			if err != nil {
+				r.Status = http.StatusInternalServerError
+			}
+		}
+		spansOf(r)
+		requests.add(r)
+		parent.mu.Lock()
+		parent.children = append(parent.children, r.ID)
+		parent.mu.Unlock()
+	}
+}
+
 // HeaderName is the response header carrying a request's toolbar ID, which
 // the toolbar reads off fetch and XHR responses to list them.
 const HeaderName = "X-Nexus-Toolbar"
@@ -237,6 +295,9 @@ const HeaderName = "X-Nexus-Toolbar"
 // Toolbar is the whole-mux middleware of the debug toolbar: it records each
 // request, and puts the toolbar on every HTML page it answers.
 func Toolbar(spans SpanSource) httpx.HandlerFunc {
+	spanSource.Lock()
+	spanSource.s = spans
+	spanSource.Unlock()
 	return func(c *httpx.Ctx) {
 		path := c.Path()
 		if path == "/__nexus" || strings.HasPrefix(path, "/__nexus/") || c.Request.Header.Get("Upgrade") != "" {
@@ -271,11 +332,7 @@ func Toolbar(spans SpanSource) httpx.HandlerFunc {
 		defer func() {
 			r.Duration = time.Since(r.Start)
 			r.Status = c.Writer.Status()
-			if spans != nil {
-				for _, id := range r.TraceIDs() {
-					r.Spans = append(r.Spans, spans.Spans(id)...)
-				}
-			}
+			spansOf(r)
 			requests.add(r)
 			w.finish()
 		}()
@@ -367,13 +424,21 @@ func (w *injector) Hijack() (net.Conn, *bufio.ReadWriter, error) {
 	return nil, nil, errors.New("dev: the response writer can't be hijacked")
 }
 
-// finish sends a held page, with the toolbar when it is a whole document.
+// finish sends a held page, with the toolbar when it is a whole document:
+// its script goes in the <head>, which a live view (whose root is the
+// <body>) never re-renders, so the page's toolbar ID stays readable for
+// the socket.
 func (w *injector) finish() {
 	if !w.hold {
 		return
 	}
 	body := w.buf.Bytes()
-	if at := bytes.LastIndex(bytes.ToLower(body), []byte("</body>")); at >= 0 {
+	lower := bytes.ToLower(body)
+	if bytes.LastIndex(lower, []byte("</body>")) >= 0 {
+		at := bytes.Index(lower, []byte("</head>"))
+		if at < 0 {
+			at = bytes.LastIndex(lower, []byte("</body>"))
+		}
 		tag := `<script src="/__nexus/toolbar/toolbar.js" data-nexus-toolbar="` + w.id + `" defer></script>`
 		body = append(body[:at:at], append([]byte(tag), w.buf.Bytes()[at:]...)...)
 	}

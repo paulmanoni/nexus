@@ -251,6 +251,7 @@ type watching struct {
 }
 
 func watch(ctx context.Context, q string, args int) watching {
+	noteRun(ctx)
 	noteRepeat(ctx, q)
 	w := watching{ctx: ctx, q: q, args: args}
 	w.obs, _ = ctx.Value(observerKey{}).(Observer)

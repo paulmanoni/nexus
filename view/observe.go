@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/paulmanoni/nexus/v2"
+	"github.com/paulmanoni/nexus/v2/dev"
 	"github.com/paulmanoni/nexus/v2/registry"
 	"github.com/paulmanoni/nexus/v2/trace"
 )
@@ -48,11 +49,14 @@ func (d *liveDef) eventSummary() string {
 // took and how much travelled back. Without a trace bus (no dashboard) it
 // is the event alone.
 func (d *liveDef) observedEvent(ctx context.Context, in *instance, ev liveEvent, render func(int, bool) liveReply) liveReply {
-	if _, ok := trace.BusFromCtx(ctx); !ok {
-		return d.event(ctx, in, ev, render)
-	}
 	typ := strings.TrimPrefix(d.t.String(), "*")
 	name := typ + "." + ev.Event
+	ctx, tracked := dev.Track(ctx, in.devPage, "LIVE", name)
+	if _, ok := trace.BusFromCtx(ctx); !ok {
+		reply := d.event(ctx, in, ev, render)
+		tracked(replyStatus(reply))
+		return reply
+	}
 	ctx, span, finish := trace.NewRootSpan(ctx, name, typ, name, "live",
 		trace.Str("live.event", ev.Event))
 	start := time.Now()
@@ -63,22 +67,30 @@ func (d *liveDef) observedEvent(ctx context.Context, in *instance, ev liveEvent,
 		span.Set("live.render", map[bool]string{true: "full", false: "diff"}[reply.Full])
 		span.Set("live.bytes", len(b))
 	}
-	status := 200
-	var err error
-	if reply.Error != "" {
-		status, err = 500, errString(reply.Error)
-	} else if reply.Invalid {
-		status = 422
-	}
+	status, err := replyStatus(reply)
 	finish(status, err)
+	tracked(status, err)
 	return reply
 }
 
+// replyStatus is an event's outcome as an HTTP status.
+func replyStatus(reply liveReply) (int, error) {
+	switch {
+	case reply.Error != "":
+		return 500, errString(reply.Error)
+	case reply.Invalid:
+		return 422, nil
+	}
+	return 200, nil
+}
+
 // span starts a trace of its own for socket work that isn't a browser
-// event — a patch, a broadcast — so it isn't counted with every other
-// message the connection has carried since its upgrade request.
-func (d *liveDef) span(ctx context.Context, op string) (context.Context, func(error)) {
+// event — the connection's Mount, a patch, a broadcast — so it isn't
+// counted with every other message the connection has carried since its
+// upgrade request. Under nexus dev it is an entry of the page's toolbar.
+func (d *liveDef) span(ctx context.Context, in *instance, op string) (context.Context, func(error)) {
 	typ := strings.TrimPrefix(d.t.String(), "*")
+	ctx, tracked := dev.Track(ctx, in.devPage, "LIVE", typ+"."+op)
 	ctx, _, finish := trace.NewRootSpan(ctx, typ+"."+op, typ, typ+"."+op, "live")
 	return ctx, func(err error) {
 		status := 200
@@ -86,11 +98,12 @@ func (d *liveDef) span(ctx context.Context, op string) (context.Context, func(er
 			status = 500
 		}
 		finish(status, err)
+		tracked(status, err)
 	}
 }
 
 func (d *liveDef) inform(ctx context.Context, in *instance, msg Message, send func(liveReply) bool) bool {
-	ctx, done := d.span(ctx, "Info")
+	ctx, done := d.span(ctx, in, "Info")
 	defer done(nil)
 	return in.inform(ctx, msg, send)
 }

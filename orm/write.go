@@ -99,13 +99,17 @@ func (m *Manager[T]) afterCreate(ctx context.Context, row *T) error {
 }
 
 // Create inserts row and sets its new primary key.
-func (m *Manager[T]) Create(ctx context.Context, row *T) error {
+func (m *Manager[T]) Create(ctx context.Context, row *T) (err error) {
+	ctx, ran := runs(ctx)
+	defer func() { refused(ctx, m.meta.Name, ran, err) }()
 	return m.BulkCreate(ctx, []*T{row})
 }
 
 // BulkCreate inserts rows in as few statements as it can, setting their
 // primary keys, in batches of up to 500 (fewer for a wide model).
-func (m *Manager[T]) BulkCreate(ctx context.Context, rows []*T) error {
+func (m *Manager[T]) BulkCreate(ctx context.Context, rows []*T) (err error) {
+	ctx, ran := runs(ctx)
+	defer func() { refused(ctx, m.meta.Name, ran, err) }()
 	if len(rows) == 0 {
 		return nil
 	}

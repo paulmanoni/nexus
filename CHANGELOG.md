@@ -6,6 +6,26 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [2.33.2] - 2026-10-09
+
+### Added
+
+- **The debug toolbar lists a live view's socket work** under the page that opened it:
+  the connected Mount, each event, each URL update and `Info` is an entry of its own
+  (`LIVE Dashboard.Search · 200 · 12 ms · 3q`) with its SQL, timeline and logs, added to
+  the dropdown as it happens. `dev.Track(ctx, page, method, label)` records other work a
+  page starts outside an HTTP request the same way.
+- **Queries the ORM refuses show in the toolbar.** Under `nexus dev` a query the ORM
+  rejects before sending it (a field read into the wrong type, a value of the wrong kind
+  for a per-schema column, a misspelt name) is recorded on the request as a failed SQL row
+  with the ORM's error, and counted under "Refused by the ORM", instead of leaving no
+  trace. Ships as `orm/v0.7.2`.
+
+### Fixed
+
+- The toolbar's script goes in the page's `<head>`: a live view, whose root is the
+  `<body>`, re-rendered it away, so the socket couldn't name its page.
+
 ## [2.33.1] - 2026-10-09
 
 ### Fixed

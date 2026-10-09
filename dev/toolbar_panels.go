@@ -89,10 +89,11 @@ func sortedKeys[V any](m map[string]V) []string {
 
 // query is a statement a request ran, as its span recorded it.
 type query struct {
-	sql   string
-	ms    float64
-	err   string
-	start int64
+	sql     string
+	ms      float64
+	err     string
+	start   int64
+	refused bool // the ORM refused it: never sent
 }
 
 func queries(r *Request) []query {
@@ -101,7 +102,7 @@ func queries(r *Request) []query {
 		if sp.Name != "sql" {
 			continue
 		}
-		q := query{err: sp.Error, start: sp.StartMs, ms: float64(sp.DurationMs)}
+		q := query{err: sp.Error, start: sp.StartMs, ms: float64(sp.DurationMs), refused: sp.Attrs["orm.refused"] == true}
 		if s, ok := sp.Attrs["sql"].(string); ok {
 			q.sql = s
 		}
@@ -119,7 +120,13 @@ func sqlPanel(r *Request) Section {
 	qs := queries(r)
 	seen := map[string]int{}
 	var total, slowest float64
+	refusedN := 0
 	for _, q := range qs {
+		if q.refused {
+			refusedN++
+			q.ms = 0
+			continue
+		}
 		seen[q.sql]++
 		total += q.ms
 		slowest = max(slowest, q.ms)
@@ -130,15 +137,20 @@ func sqlPanel(r *Request) Section {
 			dup += n
 		}
 	}
-	s := Section{Summary: fmt.Sprintf("%d queries · %.1f ms", len(qs), total)}
+	s := Section{Summary: fmt.Sprintf("%d queries · %.1f ms", len(qs)-refusedN, total)}
 	s.Stats = []Stat{
-		{Label: "Queries", Value: strconv.Itoa(len(qs))},
+		{Label: "Queries", Value: strconv.Itoa(len(qs) - refusedN)},
 		{Label: "Total", Value: fmt.Sprintf("%.1f ms", total)},
 		{Label: "Slowest", Value: fmt.Sprintf("%.1f ms", slowest)},
 	}
 	if dup > 0 {
 		s.Tone = "warn"
 		s.Stats = append(s.Stats, Stat{Label: "Repeated", Value: strconv.Itoa(dup), Tone: "warn"})
+	}
+	if refusedN > 0 {
+		s.Tone = "error"
+		s.Summary += fmt.Sprintf(" · %d refused", refusedN)
+		s.Stats = append(s.Stats, Stat{Label: "Refused by the ORM", Value: strconv.Itoa(refusedN), Tone: "error"})
 	}
 	for _, sp := range r.Spans {
 		if q, ok := sp.Attrs["orm.repeated"].(string); ok {
@@ -159,7 +171,11 @@ func sqlPanel(r *Request) Section {
 		if q.err != "" {
 			sql += "\n-- " + q.err
 		}
-		t.Rows = append(t.Rows, []any{i + 1, fmt.Sprintf("%.2f", q.ms), seen[q.sql], sql})
+		ms, runs := fmt.Sprintf("%.2f", q.ms), seen[q.sql]
+		if q.refused {
+			ms = "0"
+		}
+		t.Rows = append(t.Rows, []any{i + 1, ms, runs, sql})
 		t.Tones = append(t.Tones, tone)
 	}
 	s.Table = t
@@ -236,6 +252,26 @@ func MountToolbar(r httpx.Router) {
 	r.GET("/__nexus/toolbar/toolbar.css", func(c *httpx.Ctx) {
 		c.Writer.Header().Set("Cache-Control", "no-cache")
 		c.Data(http.StatusOK, "text/css; charset=utf-8", toolbarCSS)
+	})
+	// What a page did after its load, from the after'th entry on.
+	r.GET("/__nexus/toolbar/requests/:id/children", func(c *httpx.Ctx) {
+		page := requests.get(c.Param("id"))
+		if page == nil {
+			c.JSON(http.StatusNotFound, httpx.H{"error": "request not kept"})
+			return
+		}
+		after, _ := strconv.Atoi(c.Query("after"))
+		page.mu.Lock()
+		ids := slices.Clone(page.children[min(max(after, 0), len(page.children)):])
+		next := len(page.children)
+		page.mu.Unlock()
+		items := []httpx.H{}
+		for _, id := range ids {
+			if r := requests.get(id); r != nil {
+				items = append(items, httpx.H{"id": r.ID, "label": label(r)})
+			}
+		}
+		c.JSON(http.StatusOK, httpx.H{"next": next, "items": items})
 	})
 	// A request's view: the drawer's markup, or JSON for tools.
 	r.GET("/__nexus/toolbar/requests/:id", func(c *httpx.Ctx) {
@@ -426,4 +462,9 @@ func sqlTokens(q string) []sqlToken {
 		}
 	}
 	return out
+}
+
+// label is how a request reads in the toolbar's list.
+func label(r *Request) string {
+	return fmt.Sprintf("%s %s · %d · %s · %dq", r.Method, r.Path, r.Status, ms(r.Duration), len(queries(r)))
 }
