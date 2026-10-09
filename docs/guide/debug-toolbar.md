@@ -25,7 +25,9 @@ update and `Info`, as `LIVE Dashboard.Search` entries. Pick one to see its panel
 Moving to another page without a page load — a live page navigating over its socket,
 an Inertia visit, an in-app link — pins the new page's entry (`LIVE /orders`, the
 Inertia visit, the fetched page), so the handle and the drawer show the page on
-screen. The list keeps every page visited since the last full page load.
+screen. Until that entry is in, the handle shows `loading /orders…` and the open drawer a
+loading strip over the previous page's panels. The list keeps every page visited since
+the last full page load.
 
 ## Rebuilds
 

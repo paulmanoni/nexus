@@ -50,8 +50,8 @@ pre { margin: 0; white-space: pre-wrap; word-break: break-word; font: 11.5px/1.5
   position: fixed; top: 0; right: 0; height: 100vh; width: min(920px, 100vw);
   display: flex; flex-direction: column; background: var(--bg);
   border-left: 1px solid #000; box-shadow: -12px 0 40px rgba(0,0,0,.28);
-  animation: slide .16s ease-out;
 }
+.drawer.opening { animation: slide .16s ease-out; }
 @keyframes slide { from { transform: translateX(24px); opacity: .6; } }
 .top {
   flex: none; display: flex; align-items: center; gap: 8px; height: 38px; padding: 0 10px 0 12px;
@@ -176,3 +176,12 @@ tr.warn .mini span { background: var(--warn); } tr.error .mini span { background
 .bstate.building { color: #fff; background: var(--acc); }
 .bstate.building .spin { border-color: #fff; border-right-color: transparent; margin-right: 6px; }
 .bstate.failed { color: #fff; background: var(--err); }
+
+/* A move to another page, until its entry is in. */
+.moving { flex: none; display: flex; align-items: center; gap: 8px; padding: 7px 12px; font-size: 12px;
+  background: var(--acc-soft); border-bottom: 1px solid var(--line); box-shadow: inset 3px 0 0 var(--acc);
+  animation: fadein .15s ease-out; }
+.moving .spin { margin-right: 0; }
+.view { transition: opacity .18s ease; }
+.view.stale { opacity: .45; pointer-events: none; }
+@keyframes fadein { from { opacity: .4; } }

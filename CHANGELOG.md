@@ -6,6 +6,21 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [2.33.5] - 2026-10-09
+
+### Added
+
+- **The debug toolbar shows a move between pages while it loads.** Until the new page's
+  entry is in, the handle reads `loading /orders…` with a spinner and the open drawer
+  shows a loading strip over the previous page's panels, dimmed; the toolbar asks for the
+  entry every 300ms meanwhile (giving up after 10s), so a live page's entry lands at once
+  rather than at the next 1.5s poll.
+
+### Fixed
+
+- Moving back to a page visited before pins the new visit's entry, not the earlier one.
+- The drawer no longer replays its slide-in on every redraw.
+
 ## [2.33.4] - 2026-10-09
 
 ### Fixed

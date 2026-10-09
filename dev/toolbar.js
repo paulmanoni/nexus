@@ -67,31 +67,61 @@
   // is in: want is the path the browser shows, waiting for its entry.
   let want = null;
 
-  function add(id, label, path, page) {
+  // http: an answer to the page's own fetch or XHR (an Inertia visit, a
+  // fetched page), in before the move it causes; else a socket's work,
+  // recorded after.
+  function add(id, label, path, page, http) {
     if (!id || state.list.some((e) => e.id === id)) return;
-    state.list.push({ id, label, path, page, at: Date.now() });
+    state.list.push({ id, label, path, page, http, at: Date.now() });
     if (page && want === path) pin(id);
     load(id).then(draw).catch(() => {});
   }
 
+  // pending is the navigation under way: the page the browser moved to,
+  // shown as loading until its entry is in (and polled for meanwhile).
+  let pending = null;
+  let fast = null;
+
+  function settle() {
+    pending = null;
+    clearInterval(fast);
+    fast = null;
+  }
+
   function pin(id) {
     want = null;
-    if (state.current === id) return;
+    const was = pending;
+    settle();
+    if (state.current === id && !was) return;
     state.current = id;
     draw();
   }
 
-  // An Inertia visit's answer is in before its navigate event; a live
-  // page's Mount arrives after it. So an entry for the path from the last
-  // moments is the one, else the next one to come — never an older visit
+  // An Inertia visit's or a fetched page's answer is in before the move's
+  // event, a live page's Mount after it: a fetch for the path from the last
+  // moments is the one, else the next entry to come — never an older visit
   // to the same page.
   function navigated() {
     want = location.pathname;
     for (let i = state.list.length - 1; i >= 0; i--) {
       const e = state.list[i];
       if (Date.now() - e.at > 3000) break;
-      if (e.page && e.path === want) return pin(e.id);
+      if (e.http && e.page && e.path === want) return pin(e.id);
     }
+    // Not in yet (a live page's Mount comes over the poll): show the move
+    // and ask for it often until it is, or give up after a while.
+    pending = { path: want, since: Date.now() };
+    clearInterval(fast);
+    fast = setInterval(() => {
+      if (!pending || Date.now() - pending.since > 10000) {
+        want = null;
+        settle();
+        draw();
+        return;
+      }
+      poll(true);
+    }, 300);
+    draw();
   }
   window.addEventListener('nx:navigate', navigated);
   window.addEventListener('popstate', () => setTimeout(navigated));
@@ -128,6 +158,8 @@
     }
   }
 
+  let opening = false; // the drawer slides in when opened, not on each redraw
+
   function draw() {
     const view = state.views[state.current];
     if (!state.open) {
@@ -139,22 +171,28 @@
       } else if (build.state === 'failed') {
         tone = 'error';
         label = 'build failed';
+      } else if (pending || !view) {
+        tone = 'busy';
+        label = `loading ${pending ? pending.path : ''}…`;
       }
       app.innerHTML = `<button class="handle ${esc(tone)}${state.hidden ? ' hidden' : ''}" title="nexus debug toolbar">
         ${mark(20)}${label ? `<span class="figs">${esc(label)}</span>` : ''}</button>`;
-      app.firstElementChild.onclick = () => { state.open = true; save(); draw(); };
+      app.firstElementChild.onclick = () => { state.open = true; opening = true; save(); draw(); };
       return;
     }
     const opts = state.list.map((e) =>
       `<option value="${esc(e.id)}"${e.id === state.current ? ' selected' : ''}>${esc(e.label)}</option>`).join('');
-    app.innerHTML = `<div class="drawer"><div class="top"><span class="brand">${mark(22)}nexus <small>debug</small></span><span class="bstate"></span>
+    app.innerHTML = `<div class="drawer${opening ? ' opening' : ''}"><div class="top"><span class="brand">${mark(22)}nexus <small>debug</small></span><span class="bstate"></span>
       <select title="Requests on this page">${opts}</select>
       <button data-act="hide" title="Show or hide the figures on the handle">${state.hidden ? 'Show figures' : 'Hide figures'}</button>
-      <button data-act="close" title="Close (Esc)">Close</button></div><div class="build"></div><div class="slot"></div></div>`;
+      <button data-act="close" title="Close (Esc)">Close</button></div><div class="build"></div>
+      ${pending ? `<div class="moving"><span class="spin"></span>Loading <b>${esc(pending.path)}</b>…</div>` : ''}<div class="slot"></div></div>`;
+    opening = false;
     paintBuild();
     const slot = app.querySelector('.slot');
     if (view) {
       showPanel(view);
+      view.classList.toggle('stale', !!pending);
       slot.replaceWith(view);
       view.querySelectorAll('nav button').forEach((b) => {
         b.onclick = () => { state.panel = b.dataset.panel; save(); showPanel(view); };
@@ -176,7 +214,7 @@
       if (id) {
         const path = new URL(res.url, location.href).pathname;
         const page = res.headers.get('X-Inertia') === 'true' || /text\/html/.test(res.headers.get('Content-Type') || '');
-        add(id, path, path, page);
+        add(id, path, path, page, true);
       }
     } catch (_) {}
     return res;
@@ -189,7 +227,7 @@
         if (id) {
           const path = new URL(this.responseURL || url, location.href).pathname;
           const page = this.getResponseHeader('X-Inertia') === 'true' || /text\/html/.test(this.getResponseHeader('Content-Type') || '');
-          add(id, `${method} ${path}`, path, page);
+          add(id, `${method} ${path}`, path, page, true);
         }
       } catch (_) {}
     });
@@ -203,8 +241,9 @@
   // What the page does after its load — a live view's socket events — is
   // listed as the server records it.
   let after = 0;
-  const poll = async () => {
-    if (document.visibilityState !== 'visible') return;
+  // force: a move the user just made, so asked for even in a hidden tab.
+  const poll = async (force) => {
+    if (!force && document.visibilityState !== 'visible') return;
     try {
       const res = await origFetch('/__nexus/toolbar/requests/' + pageId + '/children?after=' + after);
       if (!res.ok) { clearInterval(timer); return; }
