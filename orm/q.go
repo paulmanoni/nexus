@@ -505,6 +505,12 @@ func (b *builder) lookupParts(parts []string, lookup string, v any, key string, 
 				g, tsv, config := cur.m.searchFor(f)
 				return cur.search(cur.col(g), tsv, config, fmt.Sprint(v))
 			}
+			if i == len(parts)-1 {
+				var err error
+				if v, err = cur.m.outCond(f, lookup, v); err != nil {
+					return "", err
+				}
+			}
 			s, err := cur.transformed(cur.col(f), parts[i+1:], lookup, v, key)
 			return cur.nullSafe(s, f, lookup, v), err
 		}

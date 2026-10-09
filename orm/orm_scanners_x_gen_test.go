@@ -32,6 +32,7 @@ func init() {
 	orm.RegisterScanner[Settings]([]string{"id", "account_id", "theme"}, func() orm.RowScanner[Settings] { return new(ormScanSettings) })
 	orm.RegisterScanner[Spot]([]string{"id", "kind"}, func() orm.RowScanner[Spot] { return new(ormScanSpot) })
 	orm.RegisterScanner[Tag]([]string{"id", "name"}, func() orm.RowScanner[Tag] { return new(ormScanTag) })
+	orm.RegisterScanner[Ticket]([]string{"id", "status"}, func() orm.RowScanner[Ticket] { return new(ormScanTicket) })
 	orm.RegisterScanner[User]([]string{"id", "created_at", "updated_at", "name", "email", "age", "bio", "active"}, func() orm.RowScanner[User] { return new(ormScanUser) })
 	orm.RegisterScanner[UserStats]([]string{"id", "name"}, func() orm.RowScanner[UserStats] { return new(ormScanUserStats) })
 	orm.RegisterScanner[UserTier]([]string{"id", "name", "age", "active"}, func() orm.RowScanner[UserTier] { return new(ormScanUserTier) })
@@ -1055,6 +1056,47 @@ func (s TagFieldSet) Under(prefix string) TagFieldSet {
 // Books is the fields of Tag's Books, for lookups across the relation.
 func (s TagFieldSet) Books() BookFieldSet {
 	return BookFieldSet{}.Under(s.p + "books__")
+}
+
+type ormScanTicket struct {
+	c0   orm.Cell[int64]
+	c1   orm.Cell[string]
+	dest []any
+}
+
+func (s *ormScanTicket) Dest() []any {
+	if s.dest == nil {
+		s.dest = []any{&s.c0, &s.c1}
+	}
+	return s.dest
+}
+
+func (s *ormScanTicket) Bind(r *Ticket) {
+	s.c0.P = &r.ID
+	s.c1.P = (*string)(&r.Status)
+}
+
+func (s *ormScanTicket) Values(r *Ticket, dst []any) []any {
+	return append(dst[:0], r.ID, r.Status)
+}
+
+// TicketFields is Ticket's fields as typed lookups.
+var TicketFields = TicketFieldSet{}.Under("")
+
+// TicketFieldSet is Ticket's fields as typed lookups: TicketFields from the model itself, Under from a model related to it.
+type TicketFieldSet struct {
+	p      string
+	ID     orm.Field[int64]
+	Status orm.TextField[TicketStatus]
+}
+
+// Under is the set through a relation path, such as "author__".
+func (s TicketFieldSet) Under(prefix string) TicketFieldSet {
+	return TicketFieldSet{
+		p:      prefix,
+		ID:     orm.FieldAt[int64](prefix + "id"),
+		Status: orm.TextFieldAt[TicketStatus](prefix + "status"),
+	}
 }
 
 type ormScanUser struct {

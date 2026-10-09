@@ -6,6 +6,19 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [2.32.1] - 2026-10-09
+
+### Added
+
+- **Values per schema (`orm.SchemaValuer`, `orm.SchemaScanner`)**: a column type whose
+  database form depends on the schema — a status kept as a code on a legacy table and as
+  its name on the new one. The ORM calls `ValueFor(names)` for every value it sends of the
+  type (conditions, `__in` lists, `Update`/`Save`, `Create`) and `ScanFor(names, src)` for
+  every value it reads (model rows, `Values` into the type or a map or list, `RawOn`), so
+  one query serves both schemas and the type never guesses. Mixing forms is refused before
+  any SQL: a plain `int`/`string` passed for such a column, or `Values` reading it into
+  one, fails with the type to use. Ships as `orm/v0.7.1`.
+
 ## [2.32.0] - 2026-10-09
 
 ### Added

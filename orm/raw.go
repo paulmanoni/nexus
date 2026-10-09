@@ -175,7 +175,7 @@ func RawIterOn[R any](ctx context.Context, s Schema, sql string, args ...any) it
 			yield(zero, err)
 			return
 		}
-		rd, err := newReader(reflect.TypeFor[R](), cols, nil)
+		rd, err := newReader(reflect.TypeFor[R](), cols, nil, s.Names)
 		if err != nil {
 			rows.Close()
 			yield(zero, err)

@@ -195,33 +195,41 @@ func (m *Manager[T]) insert(ctx context.Context, c conn, rows []*T) error {
 	}
 	sb.WriteString("INSERT INTO " + table + " (" + strings.Join(cols, ", ") + ") VALUES ")
 	var vals []any
+	var outErr error
 	for r, row := range rows {
 		if r > 0 {
 			sb.WriteString(", ")
 		}
 		sb.WriteByte('(')
 		n := 0
-		mark := func(v any) {
+		mark := func(f *field, v any) {
 			if n > 0 {
 				sb.WriteString(", ")
+			}
+			v, err := m.meta.out(f, v)
+			if err != nil && outErr == nil {
+				outErr = err
 			}
 			sb.WriteString(b.arg(v))
 			n++
 		}
 		if w != nil {
 			vals = w.Values(row, vals)
-			for i := range m.meta.Fields {
+			for i, f := range m.meta.Fields {
 				if written[i] {
-					mark(vals[i])
+					mark(f, vals[i])
 				}
 			}
 		} else {
 			v := reflect.ValueOf(row).Elem()
 			for _, f := range fields {
-				mark(value(peek(v, f.Index, f.Type)))
+				mark(f, value(peek(v, f.Index, f.Type)))
 			}
 		}
 		sb.WriteByte(')')
+	}
+	if outErr != nil {
+		return outErr
 	}
 	s := sb.String()
 	pk := m.meta.PK

@@ -42,11 +42,15 @@ func peek(v reflect.Value, index []int, t reflect.Type) reflect.Value {
 // cell receives one column of a row whatever the driver hands it, NULL
 // included, and converts it into the field.
 type cell struct {
-	dst  reflect.Value
-	fast scanKind // dst's kind when the driver's common values set it directly
+	dst   reflect.Value
+	fast  scanKind // dst's kind when the driver's common values set it directly
+	names string   // the names set read under, for a SchemaScanner
 }
 
 func (c *cell) Scan(src any) error {
+	if c.fast == scanSchema {
+		return scanFor(c.dst, c.names, src)
+	}
 	// What assign does for the driver's usual values, without its checks:
 	// fast is only set for a type that is no Scanner nor pointer.
 	switch c.fast {
@@ -101,9 +105,17 @@ const (
 	scanBool
 	scanFloat
 	scanTime
+	scanSchema // a SchemaScanner: its ScanFor with the names set
 )
 
 func scanKindOf(t reflect.Type) scanKind {
+	base := t
+	if base.Kind() == reflect.Pointer {
+		base = base.Elem()
+	}
+	if reflect.PointerTo(base).Implements(schemaScannerType) {
+		return scanSchema
+	}
 	if reflect.PointerTo(t).Implements(scannerType) {
 		return scanSlow
 	}

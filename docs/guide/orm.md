@@ -161,6 +161,7 @@ with no field drops it.
   comma-separated text (`"7,9,11"`), for legacy tables that keep lists in a string:
   read and write `.V` (`orm.CSVOf(7, 9)`), marshalled as the list, NULL when nil, `""`
   when empty; reading trims spaces around the commas.
+- **Values that differ per schema:** see [Values per schema](#values-per-schema).
 - **Not columns:** relation fields like `Posts []Post`, unexported fields, and fields
   tagged `orm:"-"`.
 - **Legacy tables:** `orm.For[T](orm.Unmanaged())` (or `Meta().Unmanaged`) marks a table
@@ -691,6 +692,74 @@ users, err := orm.Of[User](Legacy).Filter(orm.Q{"groups__name": "staff"}).OrderB
   ```
 
 A model with no tag of a set reads the same under it as under the default names.
+
+### Values per schema
+
+A column can hold the same thing in two forms across schemas — a status kept as a
+code on a legacy table (`6`) and as its name on the new one (`"WAITING_TO_BE_VERIFIED"`).
+Give the field a type that knows both, and the ORM converts in both directions, told
+which schema each time:
+
+```go
+type LetterStatus string
+
+// Writing: conditions, __in lists, Update and Save, Create.
+func (s LetterStatus) ValueFor(names string) (driver.Value, error) {
+    if names == "legacy" {
+        code, ok := letterCode[s]
+        if !ok {
+            return nil, fmt.Errorf("no Django code for status %q", s)
+        }
+        return int64(code), nil
+    }
+    return string(s), nil
+}
+
+// Reading: model rows, Values (into the type, a map or a list), RawOn.
+func (s *LetterStatus) ScanFor(names string, src any) error {
+    if names == "legacy" {
+        code, ok := src.(int64)
+        if !ok {
+            return fmt.Errorf("status %v is no code", src)
+        }
+        *s = LetterStatus(statusFromCode[int(code)])
+        return nil
+    }
+    *s = LetterStatus(fmt.Sprint(src))
+    return nil
+}
+
+type Letter struct {
+    ID     int64
+    Status LetterStatus `gorm:"type:varchar(32)" legacy:"type:int"`
+}
+```
+
+One query then serves both schemas:
+
+```go
+q := orm.Of[Letter](schema).Exclude(orm.Q{"status__in": []LetterStatus{StatusWaiting}})
+// legacy: status IN (6)      default: status IN ('WAITING_TO_BE_VERIFIED')
+```
+
+- **Both methods are told the names set** (`""` the default), so the type never guesses
+  which form it holds. `ValueFor` alone works too (`orm.SchemaValuer`); reading then goes
+  through the type's `Scan`. `ScanFor` is `orm.SchemaScanner`.
+- **Mixing forms is refused**, before any SQL: a plain `int` or `string` passed for such
+  a column, or read out of one, would be right on one schema only.
+
+  ```
+  orm: Letter.Status is LetterStatus, whose value differs per schema: pass LetterStatus, not int (6)
+  orm: Values reads "status" into string, but the field is LetterStatus, whose value differs
+       per schema: read it into LetterStatus
+  ```
+  A map or a list reads the field's own type, so `Values[[]any]` gives `LetterStatus`
+  values. `orm.Raw` stays raw: it reads what the database holds.
+- **Errors from the type** carry the field: `orm: Letter.Status: no Django code for status "LOST"`.
+- **Rows of such a model** are read by the ORM rather than a generated scanner, which
+  knows no schemas; writes keep the generated writer.
+- **After the cutover**, delete the legacy branch of both methods (or the methods): the
+  queries don't change.
 
 ## Raw SQL
 
