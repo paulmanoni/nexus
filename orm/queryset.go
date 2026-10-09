@@ -582,7 +582,7 @@ func (vq Values[T, R]) Iter(ctx context.Context) iter.Seq2[R, error] {
 				return
 			}
 			for _, f := range rm.readFields() {
-				names = append(names, cmp.Or(f.Via, f.Column))
+				names = append(names, q.annotated(cmp.Or(f.Via, f.Column)))
 			}
 		}
 		if len(names) == 0 {
@@ -999,4 +999,26 @@ func (qs QuerySet[T]) Aggregate(ctx context.Context, aggs ...Agg) (_ Result, err
 		}
 	}
 	return out, rows.Err()
+}
+
+// annotated is the name a target struct's field reads: name itself when
+// the model or the query has it, else the annotation spelt like it but for
+// case and underscores — a field TotalPlaced reads an annotation named
+// totalPlaced as well as total_placed.
+func (q query) annotated(name string) string {
+	if _, ok := q.m.field(name); ok || strings.Contains(name, "__") {
+		return name
+	}
+	norm := func(s string) string { return strings.ToLower(strings.ReplaceAll(s, "_", "")) }
+	for _, a := range q.ann {
+		if a.name == name {
+			return name
+		}
+	}
+	for _, a := range q.ann {
+		if norm(a.name) == norm(name) {
+			return a.name
+		}
+	}
+	return name
 }

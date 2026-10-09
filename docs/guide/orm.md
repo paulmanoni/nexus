@@ -243,7 +243,8 @@ perTeam, _ := Users.Annotate("n", orm.Count("id")).Values[[]any]("team__name", "
 ```
 
 - **Targets:** a scalar for one name, a struct (fields matched by `orm:"path"` tag,
-  name or column), `map[string]any` keyed by the names as written, or `[]any` in
+  name or column; an annotation spelt like a field but for case and underscores —
+  `totalPlaced` for `TotalPlaced` — fills it too), `map[string]any` keyed by the names as written, or `[]any` in
   their order. A NULL is `nil` in a map or a list.
 - **Through rows held by many** (`roles__name`), there is a row per related row, and
   one with `nil` when there is none, as in Django.

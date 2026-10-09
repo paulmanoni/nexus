@@ -6,6 +6,15 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [2.33.6] - 2026-10-09
+
+### Changed
+
+- **`Values` into a struct matches an annotation spelt like a field but for case and
+  underscores.** A field `TotalPlaced` reads an annotation named `totalPlaced` as well as
+  `total_placed` (or `TotalPlaced`), when the model has no such column. Conditions still
+  name an annotation exactly as written. Ships as `orm/v0.7.3`.
+
 ## [2.33.5] - 2026-10-09
 
 ### Added
